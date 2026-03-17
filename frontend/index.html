@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SEESOUND — real-time audio frequency visualization" />
+    <title>SEESOUND v1.0</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+
+    <!-- App: canvas fills viewport, panels are overlays -->
+    <div id="app">
+
+      <!-- Centre: canvas area fills the space between the side panel -->
+      <div id="canvas-col">
+        <div id="canvas-wrapper" class="canvas-wrapper">
+          <canvas id="three-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Right: Settings panel -->
+      <div id="control-panel"></div>
+
+      <!-- Bottom floating overlay: Audio Player tab -->
+      <div id="audio-player" class="audio-player"></div>
+
+    </div>
+
+    <!-- WS status dot -->
+    <div id="ws-status" aria-hidden="true">
+      <span id="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

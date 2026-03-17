@@ -1,0 +1,45 @@
+{
+  "name": "preset1",
+  "params": {
+    "inputGain": 1,
+    "amplitudeThreshold": 100,
+    "brightnessFloor": 0,
+    "amplitudeToBrightness": 0.1,
+    "defaultParticleSize": 1,
+    "freqDepthEffect": 0,
+    "zDepth": 0,
+    "frequencySpread": 1.35,
+    "lowFrequencyCutoff": 64,
+    "highFrequencyCutoff": 12000,
+    "canvasWidth": 0,
+    "canvasHeight": 0,
+    "maxParticles": 1999872,
+    "blendMode": "screen",
+    "layoutMode": 1,
+    "persistMode": 1,
+    "tonicHz": 261.63,
+    "ruleBlocks": [
+      {
+        "id": "rule-mmv82xwm-7z",
+        "enabled": true,
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": ">",
+          "input": "amplitude",
+          "valueInput": "pan"
+        },
+        "actions": [
+          {
+            "operator": "add",
+            "output": "y",
+            "expression": "(amplitude) * 1"
+          }
+        ],
+        "order": 0
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "_disabled": []
+  }
+}
