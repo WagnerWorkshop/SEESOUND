@@ -183,12 +183,6 @@
   margin-bottom: 4px;
 }
 
-.cp-canvas-size-mode {
-  font-size: 10px;
-  color: var(--color-text-dim);
-  margin-bottom: 4px;
-}
-
 .cp-canvas-size-row {
   display: flex;
   align-items: center;
@@ -340,7 +334,6 @@
   border-radius: 50%;
   background: var(--color-accent);
   cursor: pointer;
-  margin-top: -3.5px;
   transition: transform var(--transition-fast);
 }
 
@@ -643,6 +636,15 @@ input[type=number]::-webkit-outer-spin-button {
   background: var(--color-surface-raise);
 }
 
+.cp-rule-empty {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 10px;
+  color: var(--color-text-dim);
+  background: color-mix(in srgb, var(--color-surface-raise) 85%, transparent);
+}
+
 .cp-rule-row-red {
   border-color: var(--color-danger);
   box-shadow: 0 0 0 1px rgba(248, 113, 113, .2) inset;
@@ -684,6 +686,11 @@ input[type=number]::-webkit-outer-spin-button {
   border-radius: var(--radius-sm);
   padding: 2px 4px;
   font-size: 10px;
+}
+
+.cp-rule-name {
+  min-width: 128px;
+  flex: 1 1 128px;
 }
 
 .cp-rule-input:focus {

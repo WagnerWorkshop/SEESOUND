@@ -148,26 +148,14 @@ export const PARAMS = [
         ],
     },
     {
-        key: 'layoutMode', group: 'mixing', label: 'Layout',
-        default: 10, unit: '',
-        desc: 'Linear (1): time on X, log₂-freq 16–20 kHz on Y. Stereo (10): pan on X, log₂-freq on Y.',
+        key: 'cameraProjection', group: 'mixing', label: 'Camera Projection',
+        default: 'axonometric', unit: '',
+        desc: 'Choose between axonometric (orthographic) and perspective camera projection.',
         isDropdown: true,
         dropdownOptions: [
-            { label: 'Linear', value: 1 },
-            { label: 'Stereo', value: 10 },
+            { label: 'Axonometric', value: 'axonometric' },
+            { label: 'Perspective', value: 'perspective' },
         ],
-    },
-    {
-        key: 'linearAutoWidthEnabled', group: 'mixing', label: 'Linear Auto Width',
-        min: 0, max: 1, step: 1, default: 1, unit: '',
-        desc: 'When on, Linear layout can auto-expand width by duration using the px/s scale below.',
-        isToggle: true, toggleLabels: ['Off', 'On'],
-    },
-    {
-        key: 'linearPixelsPerSecond', group: 'mixing', label: 'Linear Px Per Second',
-        min: 0.1, max: 200, step: 0.1, default: 1, unit: 'px/s',
-        desc: 'Linear auto width scale. Example: 4 means 4 pixels per second of audio.',
-        canDisable: false,
     },
     {
         key: 'persistMode', group: 'mixing', label: 'Persistence',
@@ -253,7 +241,10 @@ export function set(key, value) {
 
 export function setMany(updates) {
     const normalized = migrateRuleSchema(updates)
-    for (const [k, v] of Object.entries(normalized)) params[k] = v
+    for (const [k, v] of Object.entries(normalized)) {
+        params[k] = v
+        _notify(k, v)
+    }
     _notify('*', normalized)
 }
 
@@ -292,7 +283,7 @@ export function getSnapshot() {
 
 export async function listPresets() {
     try {
-        const r = await fetch(`${API}/api/presets`)
+        const r = await fetch(`${API}/api/presets`, { cache: 'no-store' })
         if (!r.ok) return []
         return (await r.json()).presets ?? []
     } catch { return [] }
@@ -308,7 +299,7 @@ export async function savePreset(name, paramsObj) {
 }
 
 export async function loadPreset(name) {
-    const r = await fetch(`${API}/api/presets/${encodeURIComponent(name)}`)
+    const r = await fetch(`${API}/api/presets/${encodeURIComponent(name)}`, { cache: 'no-store' })
     if (!r.ok) return null
     const data = await r.json()
     if (!data?.params) return data

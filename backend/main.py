@@ -5,9 +5,9 @@ FastAPI server with:
  • REST API for preset persistence (stored as JSON files)
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from pathlib import Path
 import time
@@ -94,6 +94,34 @@ async def delete_preset(name: str):
         raise HTTPException(status_code=404, detail=f"Preset '{name}' not found.")
     path.unlink()
     return {"ok": True, "deleted": name}
+
+
+@app.post("/api/audio/convert")
+async def convert_audio(file: UploadFile = File(...)):
+    """Convert uploaded audio to WAV (PCM16) for broad browser compatibility."""
+    try:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        # librosa loads most codecs available via backend ffmpeg/audioread stack.
+        audio, sr = librosa.load(BytesIO(raw), sr=None, mono=False)
+
+        out = BytesIO()
+        sf.write(out, audio.T if np.ndim(audio) > 1 else audio, sr or 44100, format="WAV", subtype="PCM_16")
+        wav_bytes = out.getvalue()
+        if not wav_bytes:
+            raise HTTPException(status_code=500, detail="Conversion produced no output.")
+
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={"Content-Disposition": f'inline; filename="{Path(file.filename or "audio").stem}.wav"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Audio conversion failed: {exc}") from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -328,6 +328,11 @@ export class ParticleSystem {
                 y: this._pos[i * 3 + 1],
                 z: this._pos[i * 3 + 2],
                 size: this._sz[i],
+                red: this._col[i * 3],
+                green: this._col[i * 3 + 1],
+                blue: this._col[i * 3 + 2],
+                opacity: this._alpha[i],
+                // Legacy aliases for older rule payloads.
                 r: this._col[i * 3],
                 g: this._col[i * 3 + 1],
                 b: this._col[i * 3 + 2],
@@ -341,10 +346,14 @@ export class ParticleSystem {
             this._pos[i * 3 + 1] = Number.isFinite(particle.y) ? particle.y : this._pos[i * 3 + 1]
             this._pos[i * 3 + 2] = Number.isFinite(particle.z) ? particle.z : this._pos[i * 3 + 2]
             this._sz[i] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : this._sz[i]
-            this._col[i * 3] = Number.isFinite(particle.r) ? Math.max(0, Math.min(1, particle.r)) : this._col[i * 3]
-            this._col[i * 3 + 1] = Number.isFinite(particle.g) ? Math.max(0, Math.min(1, particle.g)) : this._col[i * 3 + 1]
-            this._col[i * 3 + 2] = Number.isFinite(particle.b) ? Math.max(0, Math.min(1, particle.b)) : this._col[i * 3 + 2]
-            this._alpha[i] = Number.isFinite(particle.a) ? Math.max(0, Math.min(1, particle.a)) : this._alpha[i]
+            const pr = Number.isFinite(particle.red) ? particle.red : particle.r
+            const pg = Number.isFinite(particle.green) ? particle.green : particle.g
+            const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
+            const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
+            this._col[i * 3] = Number.isFinite(pr) ? Math.max(0, Math.min(1, pr)) : this._col[i * 3]
+            this._col[i * 3 + 1] = Number.isFinite(pg) ? Math.max(0, Math.min(1, pg)) : this._col[i * 3 + 1]
+            this._col[i * 3 + 2] = Number.isFinite(pb) ? Math.max(0, Math.min(1, pb)) : this._col[i * 3 + 2]
+            this._alpha[i] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : this._alpha[i]
             this._shape[i] = shapeToValue(particle.shapeType)
             touched++
         }
@@ -374,7 +383,6 @@ export class ParticleSystem {
         const nyquist = sampleRate / 2
         const binToHz = (b) => (b / freqData.length) * nyquist
 
-        const layoutMode = params.layoutMode  // 1 = Linear, 10 = Stereo
         const persistMode = params.persistMode ?? 0 // 0 = Momentary, 1 = Painting
         const gainMult = params.inputGain ?? 1
         const thresholdDb = params.amplitudeThreshold ?? -48
@@ -408,7 +416,6 @@ export class ParticleSystem {
 
         const hw = canvasW / 2
         const hh = canvasH / 2
-        const dur = ae.audioEl?.duration > 0 ? ae.audioEl.duration : 60
         const currentTime = ae.audioEl?.currentTime ?? 0
         const globalPan = ae.pan ?? 0
         let peakByte = 0
@@ -429,17 +436,7 @@ export class ParticleSystem {
             const freqNorm = Math.pow(rawNorm, spreadGamma)
             const y = (freqNorm * 2 - 1) * hh
 
-            let x = 0
-            if (layoutMode === 1) {
-                const tNorm = Math.min(1, currentTime / dur)
-                x = tNorm * canvasW - hw
-            } else if (hasStereoBins) {
-                const binPan = ae.getBinPan(i)
-                x = binPan * hw
-            } else {
-                const spread = (i / Math.max(1, N - 1)) * 2 - 1
-                x = spread * hw * 0.95 + globalPan * hw * 0.05
-            }
+            const x = 0
 
             const z = freqDepth > 0 ? -freqNorm * zDepth * 50 : 0
             const freqSizeMult = 1 + (1 - freqNorm) * freqDepth * 2
@@ -450,6 +447,11 @@ export class ParticleSystem {
                 y,
                 z,
                 size: Math.max(2.0, baseSize * freqSizeMult * (0.35 + energy * 1.35)),
+                red: brightness,
+                green: brightness,
+                blue: brightness,
+                opacity: Math.min(1, (0.08 + energy * 1.9) * alphaBoost),
+                // Legacy aliases for older rule payloads.
                 r: brightness,
                 g: brightness,
                 b: brightness,
@@ -484,10 +486,14 @@ export class ParticleSystem {
             this._pos[writeIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
             this._pos[writeIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
             this._sz[writeIndex] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(2.0, baseSize)
-            this._col[writeIndex * 3] = Number.isFinite(particle.r) ? Math.max(0, Math.min(1, particle.r)) : brightness
-            this._col[writeIndex * 3 + 1] = Number.isFinite(particle.g) ? Math.max(0, Math.min(1, particle.g)) : brightness
-            this._col[writeIndex * 3 + 2] = Number.isFinite(particle.b) ? Math.max(0, Math.min(1, particle.b)) : brightness
-            this._alpha[writeIndex] = Number.isFinite(particle.a) ? Math.max(0, Math.min(1, particle.a)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
+            const pr = Number.isFinite(particle.red) ? particle.red : particle.r
+            const pg = Number.isFinite(particle.green) ? particle.green : particle.g
+            const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
+            const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
+            this._col[writeIndex * 3] = Number.isFinite(pr) ? Math.max(0, Math.min(1, pr)) : brightness
+            this._col[writeIndex * 3 + 1] = Number.isFinite(pg) ? Math.max(0, Math.min(1, pg)) : brightness
+            this._col[writeIndex * 3 + 2] = Number.isFinite(pb) ? Math.max(0, Math.min(1, pb)) : brightness
+            this._alpha[writeIndex] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
             this._shape[writeIndex] = shapeToValue(particle.shapeType)
             writeIndex++
         }

@@ -25,12 +25,21 @@ const _outputEntries = [
     { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] },
     { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] },
     { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY] },
-    { id: 'r', type: 'number', range: [0, 1] },
-    { id: 'g', type: 'number', range: [0, 1] },
-    { id: 'b', type: 'number', range: [0, 1] },
-    { id: 'a', type: 'number', range: [0, 1] },
+    { id: 'red', type: 'number', range: [0, 1] },
+    { id: 'green', type: 'number', range: [0, 1] },
+    { id: 'blue', type: 'number', range: [0, 1] },
+    { id: 'opacity', type: 'number', range: [0, 1] }
+
+,
     { id: 'shapeType', type: 'enum', values: ['square', 'circle'] },
 ]
+
+const _legacyOutputAliases = Object.freeze({
+    r: 'red',
+    g: 'green',
+    b: 'blue',
+    a: 'opacity',
+})
 
 export const RULE_BLOCK_FIELDS = Object.freeze([
     'id',
@@ -136,6 +145,11 @@ function _validateExpression(expr, inMap) {
     return null
 }
 
+function _normalizeOutputId(id) {
+    if (typeof id !== 'string') return id
+    return _legacyOutputAliases[id] || id
+}
+
 /**
  * Validates a single rule block against canonical dictionaries.
  * Unknown ids are rejected with hard errors.
@@ -172,7 +186,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
     const actions = Array.isArray(rule.actions) ? rule.actions : []
     const setTargets = new Map()
     actions.forEach((action, actionIndex) => {
-        const output = action?.output
+        const output = _normalizeOutputId(action?.output)
         if (!output || !outMap.has(output)) {
             errors.push(`Unknown action output at index ${actionIndex}: ${String(output)}`)
             return
@@ -314,7 +328,7 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
             .filter((action) => action && typeof action === 'object')
             .map((action) => ({
                 operator: RULE_ACTION_OPERATORS.includes(action.operator) ? action.operator : 'set',
-                output: action.output,
+                output: _normalizeOutputId(action.output),
                 value: action.value,
                 input: action.input,
                 expression: action.expression,

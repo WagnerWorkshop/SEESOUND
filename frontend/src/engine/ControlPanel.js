@@ -44,6 +44,7 @@ import {
     RULE_ACTION_OPERATORS,
     annotateRuleContradictions,
 } from './rules/RuleDictionary.js'
+import { parseProjectText } from './project/ProjectIO.js'
 
 // Phase checklist workflow anchor:
 // Extend UI incrementally (dictionary -> schema -> compiler status -> builder) and verify each cluster.
@@ -165,7 +166,6 @@ const _rowSyncMap = new Map()
 function syncRow(p, row) {
     _rowSyncMap.get(p.key)?.(params[p.key])
 }
-
 // ── 4a  Standard slider (range input + value + default fields) ────────────
 
 function buildSliderRow(p) {
@@ -201,18 +201,6 @@ function buildSliderRow(p) {
     })
 
     const saveStar = el('button', 'cp-star-btn', { text: '★', title: 'Save current value as session default' })
-
-    function updateTrack(v) {
-        const pct = ((v - p.min) / (p.max - p.min)) * 100
-        if (!disabled.has(p.key)) {
-            slider.style.background =
-                `linear-gradient(90deg, var(--cp-accent) ${pct}%, var(--cp-border) ${pct}%)`
-        } else {
-            slider.style.background = 'var(--cp-border)'
-        }
-    }
-    updateTrack(params[p.key])
-
     slider.addEventListener('input', () => {
         const v = parseFloat(slider.value)
         set(p.key, v)
@@ -353,29 +341,38 @@ function buildToggleRow(p) {
 function buildPresetBar() {
     const bar = el('div', 'cp-preset-bar')
 
+    // ── Row 0: project save/load
+    const row0 = el('div', 'cp-preset-row')
+    const projectLabel = el('span', 'cp-preset-label', { text: 'PROJECT' })
+    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project' })
+    const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
+    const projectInput = el('input', '', { type: 'file', accept: '.json,.seesound-project,.seesound-project.json' })
+    projectInput.style.display = 'none'
+    row0.append(projectLabel, btnProjectSave, btnProjectLoad)
+
     // ── Row 1: select + Load + Delete
     const row1 = el('div', 'cp-preset-row')
     const lbl = el('span', 'cp-preset-label', { text: 'Preset' })
     const sel = el('select', 'cp-preset-sel')
-    const btnLoad = el('button', 'cp-preset-btn', { text: 'Load', title: 'Load selected preset' })
-    const btnDel = el('button', 'cp-preset-btn cp-preset-del', { text: '✕', title: 'Delete selected preset' })
+    const btnLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset' })
+    const btnDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
 
     row1.append(lbl, sel, btnLoad, btnDel)
 
     // ── Row 2: name input + Save
     const row2 = el('div', 'cp-preset-row')
-    const nameInput = el('input', 'cp-preset-name', { type: 'text', placeholder: 'Name…' })
-    const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: 'Save' })
+    const nameInput = el('input', 'cp-preset-name', { type: 'text', placeholder: 'preset_title' })
+    const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset' })
     row2.append(nameInput, btnSave)
 
-    bar.append(row1, row2)
+    bar.append(row0, row1, row2, projectInput)
 
     let presets = []
 
     async function refresh() {
         presets = await listPresets()
         const prev = sel.value
-        sel.innerHTML = '<option value="">— select —</option>'
+        sel.innerHTML = '<option value="">select</option>'
         for (const n of presets) {
             const o = el('option', '', { value: n, text: n })
             sel.appendChild(o)
@@ -392,8 +389,8 @@ function buildPresetBar() {
         const data = await loadPreset(sel.value)
         if (data?.params) {
             setMany(data.params)
-            // Sync all rows visually
             for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
+            _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
         }
     })
 
@@ -410,16 +407,45 @@ function buildPresetBar() {
         const name = nameInput.value.trim()
         if (!name) return
         if (presets.includes(name) && !confirm(`Overwrite preset "${name}"?`)) return
-        await savePreset(name, getSnapshot())
+        const latestRules = _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+        set('ruleBlocks', latestRules)
+        const snapshot = getSnapshot()
+        snapshot.ruleBlocks = latestRules
+        await savePreset(name, snapshot)
         await refresh()
         sel.value = name
+    })
+
+    btnProjectSave.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-save-request'))
+    })
+
+    btnProjectLoad.addEventListener('click', () => {
+        projectInput.click()
+    })
+
+    projectInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        try {
+            const text = await file.text()
+            const payload = parseProjectText(text)
+            window.dispatchEvent(new CustomEvent('seesound:project-load-request', {
+                detail: { payload, fileName: file.name },
+            }))
+        } catch (err) {
+            console.warn('[Project] load parse failed:', err)
+            alert('Failed to load project file.')
+        } finally {
+            projectInput.value = ''
+        }
     })
 
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnSave.click() })
 
     // Update save button style when name matches an existing preset
     nameInput.addEventListener('input', () => {
-        btnSave.textContent = presets.includes(nameInput.value.trim()) ? '↺ Overwrite' : 'Save'
+        btnSave.textContent = presets.includes(nameInput.value.trim()) ? 'OVERWRITE' : '🖫'
         btnSave.classList.toggle('cp-preset-overwrite', presets.includes(nameInput.value.trim()))
     })
 
@@ -430,45 +456,49 @@ function buildPresetBar() {
 function buildCanvasSizeBar() {
     const bar = el('div', 'cp-canvas-size')
     const title = el('div', 'cp-canvas-size-title', { text: 'Canvas Size' })
-    const mode = el('div', 'cp-canvas-size-mode')
     const row = el('div', 'cp-canvas-size-row')
 
-    const wLabel = el('label', 'cp-canvas-size-label', { text: 'W' })
-    const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '0', value: String(Math.max(0, Number(params.canvasWidth ?? 0))) })
-    const hLabel = el('label', 'cp-canvas-size-label', { text: 'H' })
-    const hInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '0', value: String(Math.max(0, Number(params.canvasHeight ?? 0))) })
-
+    const wLabel = el('label', 'cp-canvas-size-label', { text: '↔' })
+    const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '160', value: String(Math.max(160, Number(params.canvasWidth ?? 0) || 160)) })
+    const hLabel = el('label', 'cp-canvas-size-label', { text: '↕' })
+    const hInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '120', value: String(Math.max(120, Number(params.canvasHeight ?? 0) || 120)) })
     const applyBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply' })
-    const autoBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Auto' })
+
     const live = { w: 0, h: 0 }
 
     function render() {
-        const autoW = (Number(params.canvasWidth) || 0) <= 0
-        const autoH = (Number(params.canvasHeight) || 0) <= 0
-
         if (document.activeElement !== wInput) {
-            wInput.value = String(autoW ? Math.max(0, Math.floor(live.w || 0)) : Math.max(0, Math.floor(Number(params.canvasWidth) || 0)))
+            wInput.value = String(Math.max(160, Math.floor(live.w || Number(params.canvasWidth) || 160)))
         }
         if (document.activeElement !== hInput) {
-            hInput.value = String(autoH ? Math.max(0, Math.floor(live.h || 0)) : Math.max(0, Math.floor(Number(params.canvasHeight) || 0)))
+            hInput.value = String(Math.max(120, Math.floor(live.h || Number(params.canvasHeight) || 120)))
         }
-
-        mode.textContent = `Mode: ${autoW || autoH ? 'Auto (live)' : 'Manual'}${live.w > 0 && live.h > 0 ? ` — current ${Math.floor(live.w)}×${Math.floor(live.h)}` : ''}`
     }
 
     function applySize() {
-        const w = Math.max(0, Math.floor(Number(wInput.value) || 0))
-        const h = Math.max(0, Math.floor(Number(hInput.value) || 0))
-        setMany({ canvasWidth: w, canvasHeight: h })
+        const w = Math.max(160, Math.floor(Number(wInput.value) || 160))
+        const h = Math.max(120, Math.floor(Number(hInput.value) || 120))
+        set('canvasWidth', w)
+        set('canvasHeight', h)
     }
 
-    applyBtn.addEventListener('click', applySize)
-    wInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applySize() })
-    hInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applySize() })
-    autoBtn.addEventListener('click', () => {
-        setMany({ canvasWidth: 0, canvasHeight: 0 })
-        render()
+    wInput.addEventListener('change', applySize)
+    hInput.addEventListener('change', applySize)
+    wInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applySize()
+            wInput.blur()
+        }
     })
+    hInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applySize()
+            hInput.blur()
+        }
+    })
+    applyBtn.addEventListener('click', applySize)
 
     _rowSyncMap.set('canvasWidth', () => render())
     _rowSyncMap.set('canvasHeight', () => render())
@@ -482,8 +512,8 @@ function buildCanvasSizeBar() {
         render()
     })
 
-    row.append(wLabel, wInput, hLabel, hInput, applyBtn, autoBtn)
-    bar.append(title, mode, row)
+    row.append(wLabel, wInput, hLabel, hInput, applyBtn)
+    bar.append(title, row)
     render()
     return bar
 }
@@ -537,17 +567,17 @@ const _actionOps = [...RULE_ACTION_OPERATORS]
 
 let _ruleBuilderApi = null
 
-function _newRuleId() {
-    return `rule-${Date.now().toString(36)}-${Math.floor(Math.random() * 9999).toString(36)}`
+function _defaultRuleName(index = 0) {
+    return `rule-${Math.max(1, Math.floor(index) + 1)}`
 }
 
 function _defaultRule(index = 0) {
     return {
-        id: _newRuleId(),
+        id: _defaultRuleName(index),
         enabled: true,
         scope: 'spawnedOnly',
-        condition: { operator: '>', input: 'amplitude', value: 0.5 },
-        actions: [{ operator: 'set', output: 'a', value: 1.0 }],
+        condition: { operator: 'always' },
+        actions: [{ operator: 'set', output: 'opacity', value: 1.0 }],
         strength: 1,
         invert: false,
         order: index,
@@ -604,12 +634,12 @@ function _rowToRule(row, order) {
 }
 
 function _ruleToRow(rule, index) {
-    const action = Array.isArray(rule.actions) && rule.actions[0] ? rule.actions[0] : { operator: 'set', output: 'a', value: 1 }
+    const action = Array.isArray(rule.actions) && rule.actions[0] ? rule.actions[0] : { operator: 'set', output: 'opacity', value: 1 }
     const isShape = _isShapeOutput(action.output)
     const hasExpr = typeof action.expression === 'string' && action.expression.trim().length > 0
     const hasInput = typeof action.input === 'string' && action.input.trim().length > 0
     return {
-        id: rule.id || _newRuleId(),
+        id: (typeof rule.id === 'string' && rule.id.trim()) ? rule.id.trim() : _defaultRuleName(index),
         enabled: rule.enabled !== false,
         scope: _ruleScopes.includes(rule.scope) ? rule.scope : 'spawnedOnly',
         conditionOp: rule.condition?.operator || 'always',
@@ -617,7 +647,7 @@ function _ruleToRow(rule, index) {
         conditionRhsMode: rule.condition?.valueInput ? 'input' : 'literal',
         conditionRhsInput: _inputIds.includes(rule.condition?.valueInput) ? rule.condition.valueInput : 'amplitude',
         conditionRhsLiteral: Number.isFinite(Number(rule.condition?.value)) ? Number(rule.condition.value) : 0.5,
-        actionOutput: _outputIds.includes(action.output) ? action.output : 'a',
+        actionOutput: _outputIds.includes(action.output) ? action.output : 'opacity',
         actionOp: _actionOps.includes(action.operator) ? action.operator : 'set',
         actionValueMode: isShape ? 'shape' : (hasExpr ? 'expression' : (hasInput ? 'input' : 'literal')),
         actionInput: _inputIds.includes(action.input) ? action.input : 'amplitude',
@@ -646,7 +676,7 @@ function _makeSimpleRow(kind, index) {
         row.invert = false
     } else if (kind === 'louder-brighter') {
         row.conditionOp = 'always'
-        row.actionOutput = 'a'
+        row.actionOutput = 'opacity'
         row.actionOp = 'set'
         row.actionValueMode = 'input'
         row.actionInput = 'amplitude'
@@ -719,24 +749,24 @@ export function initRuleBuilder(container) {
     const badge = el('span', 'cp-rule-status cp-rule-status-stale', { text: 'stale' })
     header.append(title, badge)
 
-    const hint = el('div', 'cp-rule-hint', { text: 'Use quick presets first. Example: click "Louder -> Bigger", then tune threshold/strength.' })
+    const hint = el('div', 'cp-rule-hint', { text: 'Quick start: add a rule, then tune threshold and strength.' })
     const quick = el('div', 'cp-rule-quick')
-    const quickBig = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Louder -> Bigger' })
-    const quickBright = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Louder -> Brighter' })
-    const quickCircle = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Loud -> Circle' })
+    const quickBig = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->S] louder->bigger' })
+    const quickBright = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->A] louder->brighter' })
+    const quickCircle = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->Shape] loud->circle' })
     quick.append(quickBig, quickBright, quickCircle)
     const error = el('div', 'cp-rule-error')
 
     const rowsWrap = el('div', 'cp-rule-rows')
     const actions = el('div', 'cp-rule-actions')
-    const addBtn = el('button', 'cp-preset-btn cp-rule-add', { text: '+ Add Rule' })
+    const addBtn = el('button', 'cp-preset-btn cp-rule-add', { text: '+' })
     actions.appendChild(addBtn)
 
     section.append(header, hint, quick, error, rowsWrap, actions)
     container.appendChild(section)
 
     let rows = (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []).map(_ruleToRow)
-    if (rows.length === 0) rows = [_ruleToRow(_defaultRule(0), 0)]
+    let _syncingFromBuilder = false
 
     function renderCompile(state) {
         const status = state?.compileStatus || 'stale'
@@ -754,37 +784,61 @@ export function initRuleBuilder(container) {
         const annotated = annotateRuleContradictions(serialized)
         const red = new Set(annotated.redRuleIds)
         rows = rows.map((r) => ({ ...r, uiState: red.has(r.id) ? 'red' : 'normal' }))
+        _syncingFromBuilder = true
         set('ruleBlocks', annotated.rules)
+        _syncingFromBuilder = false
         renderCompile({ compileStatus: 'stale', compileError: null })
         drawRows()
     }
 
     function wireChange(handler) {
         return (evt) => {
-            handler(evt)
+            const changed = handler(evt)
+            if (changed === false) return
             pushRules()
         }
     }
 
     function drawRows() {
         rowsWrap.innerHTML = ''
+        if (rows.length === 0) {
+            rowsWrap.appendChild(el('div', 'cp-rule-empty', { text: 'No custom rules in this preset.' }))
+            return
+        }
         rows.forEach((row, i) => {
             const card = el('div', `cp-rule-row${row.uiState === 'red' ? ' cp-rule-row-red' : ''}`)
 
             const top = el('div', 'cp-rule-row-top')
             const idx = el('span', 'cp-rule-index', { text: `#${i + 1}` })
+            const name = el('input', 'cp-rule-input cp-rule-name', { type: 'text', value: row.id, placeholder: 'rule name' })
             const enable = el('input', 'cp-rule-toggle', { type: 'checkbox' })
             enable.checked = !!row.enabled
-            enable.addEventListener('change', wireChange(() => { row.enabled = enable.checked }))
+            enable.addEventListener('change', wireChange(() => {
+                row.enabled = enable.checked
+                return true
+            }))
+            name.addEventListener('keydown', wireChange((e) => {
+                if (e.key !== 'Enter') return false
+                e.preventDefault()
+                const next = String(name.value || '').trim()
+                row.id = next || _defaultRuleName(i)
+                name.value = row.id
+                name.blur()
+                return true
+            }))
             const scope = _createSelect(_ruleScopes.map(v => ({ value: v, label: v })), row.scope)
-            scope.addEventListener('change', wireChange(() => { row.scope = scope.value }))
+            scope.addEventListener('change', wireChange(() => {
+                row.scope = scope.value
+                return true
+            }))
             const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
-            const down = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Down' })
-            const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: 'Delete' })
+            const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
+            const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: '🗙' })
+            up.textContent = '↑'
             up.addEventListener('click', () => { if (i <= 0) return;[rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; pushRules() })
             down.addEventListener('click', () => { if (i >= rows.length - 1) return;[rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; pushRules() })
-            del.addEventListener('click', () => { rows.splice(i, 1); if (!rows.length) rows.push(_ruleToRow(_defaultRule(0), 0)); pushRules() })
-            top.append(idx, enable, scope, up, down, del)
+            del.addEventListener('click', () => { rows.splice(i, 1); pushRules() })
+            top.append(idx, name, enable, scope, up, down, del)
 
             const cond = el('div', 'cp-rule-line')
             cond.appendChild(el('span', 'cp-rule-k', { text: 'Condition' }))
@@ -800,11 +854,31 @@ export function initRuleBuilder(container) {
                 condLit.style.display = (!always && condMode.value === 'literal') ? '' : 'none'
                 condInp.style.display = (!always && condMode.value === 'input') ? '' : 'none'
             }
-            condOp.addEventListener('change', wireChange(() => { row.conditionOp = condOp.value; refreshCond() }))
-            condInput.addEventListener('change', wireChange(() => { row.conditionInput = condInput.value }))
-            condMode.addEventListener('change', wireChange(() => { row.conditionRhsMode = condMode.value; refreshCond() }))
-            condLit.addEventListener('input', wireChange(() => { row.conditionRhsLiteral = Number(condLit.value) }))
-            condInp.addEventListener('change', wireChange(() => { row.conditionRhsInput = condInp.value }))
+            condOp.addEventListener('change', wireChange(() => {
+                row.conditionOp = condOp.value
+                refreshCond()
+                return true
+            }))
+            condInput.addEventListener('change', wireChange(() => {
+                row.conditionInput = condInput.value
+                return true
+            }))
+            condMode.addEventListener('change', wireChange(() => {
+                row.conditionRhsMode = condMode.value
+                refreshCond()
+                return true
+            }))
+            condLit.addEventListener('keydown', wireChange((e) => {
+                if (e.key !== 'Enter') return false
+                e.preventDefault()
+                row.conditionRhsLiteral = Number(condLit.value)
+                condLit.blur()
+                return true
+            }))
+            condInp.addEventListener('change', wireChange(() => {
+                row.conditionRhsInput = condInp.value
+                return true
+            }))
             cond.append(condOp, condInput, condMode, condLit, condInp)
             refreshCond()
 
@@ -827,7 +901,7 @@ export function initRuleBuilder(container) {
             const invWrap = el('label', 'cp-rule-invert')
             const inv = el('input', '', { type: 'checkbox' })
             inv.checked = !!row.invert
-            invWrap.append(inv, el('span', '', { text: 'invert' }))
+            invWrap.append(inv, el('span', '', { text: '⇄ invert' }))
 
             const refreshAct = () => {
                 const shape = out.value === 'shapeType'
@@ -841,15 +915,53 @@ export function initRuleBuilder(container) {
                 invWrap.style.display = shape ? 'none' : ''
             }
 
-            out.addEventListener('change', wireChange(() => { row.actionOutput = out.value; refreshAct() }))
-            op.addEventListener('change', wireChange(() => { row.actionOp = op.value }))
-            mode.addEventListener('change', wireChange(() => { row.actionValueMode = mode.value; refreshAct() }))
-            valNum.addEventListener('input', wireChange(() => { row.actionLiteral = Number(valNum.value) }))
-            valInp.addEventListener('change', wireChange(() => { row.actionInput = valInp.value }))
-            valExpr.addEventListener('input', wireChange(() => { row.actionExpression = valExpr.value }))
-            valShape.addEventListener('change', wireChange(() => { row.actionLiteralShape = valShape.value }))
-            st.addEventListener('input', wireChange(() => { row.strength = Number(st.value) }))
-            inv.addEventListener('change', wireChange(() => { row.invert = inv.checked }))
+            out.addEventListener('change', wireChange(() => {
+                row.actionOutput = out.value
+                refreshAct()
+                return true
+            }))
+            op.addEventListener('change', wireChange(() => {
+                row.actionOp = op.value
+                return true
+            }))
+            mode.addEventListener('change', wireChange(() => {
+                row.actionValueMode = mode.value
+                refreshAct()
+                return true
+            }))
+            valNum.addEventListener('keydown', wireChange((e) => {
+                if (e.key !== 'Enter') return false
+                e.preventDefault()
+                row.actionLiteral = Number(valNum.value)
+                valNum.blur()
+                return true
+            }))
+            valInp.addEventListener('change', wireChange(() => {
+                row.actionInput = valInp.value
+                return true
+            }))
+            valExpr.addEventListener('keydown', wireChange((e) => {
+                if (e.key !== 'Enter') return false
+                e.preventDefault()
+                row.actionExpression = valExpr.value
+                valExpr.blur()
+                return true
+            }))
+            valShape.addEventListener('change', wireChange(() => {
+                row.actionLiteralShape = valShape.value
+                return true
+            }))
+            st.addEventListener('keydown', wireChange((e) => {
+                if (e.key !== 'Enter') return false
+                e.preventDefault()
+                row.strength = Number(st.value)
+                st.blur()
+                return true
+            }))
+            inv.addEventListener('change', wireChange(() => {
+                row.invert = inv.checked
+                return true
+            }))
 
             act.append(out, op, mode, valNum, valInp, valExpr, valShape, st, invWrap)
             refreshAct()
@@ -885,8 +997,18 @@ export function initRuleBuilder(container) {
             rows.push(_ruleToRow(initialRule || _defaultRule(rows.length), rows.length))
             pushRules()
         },
+        replaceFromRuleBlocks: (blocks) => {
+            rows = (Array.isArray(blocks) ? blocks : []).map(_ruleToRow)
+            drawRows()
+            renderCompile({ compileStatus: 'stale', compileError: null })
+        },
         renderCompileStatus: renderCompile,
     }
+
+    subscribe((_, key) => {
+        if (key !== 'ruleBlocks' || _syncingFromBuilder) return
+        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    })
 
     drawRows()
     pushRules()
@@ -909,7 +1031,7 @@ export function initControlPanel(container) {
 
     // ── Sidebar header (title + collapse + reset)
     const header = el('div', 'cp-header')
-    const collapseBtn = el('button', 'cp-collapse-btn', { text: '>', title: 'Collapse panel' })
+    const collapseBtn = el('button', 'cp-collapse-btn', { text: '»', title: 'Collapse panel' })
     const title = el('span', 'cp-title', { text: 'Parameters' })
     const resetBtn = el('button', 'cp-reset-btn', { text: '↺', title: 'Reset all to factory defaults' })
     header.append(collapseBtn, title, resetBtn)
@@ -935,7 +1057,7 @@ export function initControlPanel(container) {
     collapseBtn.addEventListener('click', () => {
         collapsed = !collapsed
         container.classList.toggle('cp-collapsed', collapsed)
-        collapseBtn.textContent = collapsed ? '»' : '«'
+        collapseBtn.textContent = collapsed ? '«' : '»'
         title.style.display = collapsed ? 'none' : ''
         resetBtn.style.display = collapsed ? 'none' : ''
         body.style.display = collapsed ? 'none' : ''

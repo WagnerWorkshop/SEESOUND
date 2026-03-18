@@ -9,7 +9,9 @@
  * Features
  * ─────────
  *  • File input (open audio file)
- *  • ▶/⏸ Play-Pause, ⏹ Stop, ⏪ −10 s, ⏩ +10 s
+ *  • > / || Play-Pause, [] Stop, <<10 / 10>> seek
+ *  • [PNG] save trigger
+ *  • [PAINT ALL] full-audio paint trigger
  *  • Progress bar (input[type=range], click/drag to seek)
  *  • MM:SS / MM:SS timestamp display
  *  • Collapsible panel (single left-side chevron button)
@@ -27,6 +29,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // § 1  Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { shouldConvertAudioFile, convertAudioFileToWav } from '../engine/audio/AudioImport.js'
 
 /** Format seconds → "M:SS" */
 function fmtTime(sec) {
@@ -78,7 +82,7 @@ export function initAudioPlayer(container) {
     const collapseBtn = el('button', 'audio-player__collapse-btn', {
         'aria-label': 'Collapse audio player', 'title': 'Collapse player'
     })
-    collapseBtn.textContent = '<'
+    collapseBtn.textContent = '«'
 
     // Body
     const body = el('div', 'audio-player__body')
@@ -90,7 +94,7 @@ export function initAudioPlayer(container) {
     const fileLabel = el('label', 'audio-player__file-label', {
         'for': 'audio-file-input', 'title': 'Open audio file'
     })
-    fileLabel.innerHTML = '📂 Open'
+    fileLabel.textContent = '♫'
     const fileName = el('span', 'audio-player__file-name', { text: 'No file loaded' })
     fileRow.append(fileInput, fileLabel, fileName)
 
@@ -100,24 +104,34 @@ export function initAudioPlayer(container) {
     const btnPlayPause = el('button', 'audio-player__btn audio-player__btn--play', {
         id: 'btn-play-pause', 'aria-label': 'Play', disabled: 'true'
     })
-    btnPlayPause.textContent = '▶  Play'
+    btnPlayPause.textContent = '▶'
 
     const btnStop = el('button', 'audio-player__btn', {
         id: 'btn-stop', 'aria-label': 'Stop', disabled: 'true', title: 'Stop (return to start)'
     })
-    btnStop.textContent = '⏹'
+    btnStop.textContent = '■'
 
     const btnBack = el('button', 'audio-player__btn', {
         id: 'btn-back', 'aria-label': '−10 seconds', disabled: 'true', title: '−10 s'
     })
-    btnBack.textContent = '−10s'
+    btnBack.textContent = '<<'
 
     const btnFwd = el('button', 'audio-player__btn', {
         id: 'btn-fwd', 'aria-label': '+10 seconds', disabled: 'true', title: '+10 s'
     })
-    btnFwd.textContent = '+10s'
+    btnFwd.textContent = '>>'
 
-    transport.append(btnPlayPause, btnStop, btnBack, btnFwd)
+    const btnPng = el('button', 'audio-player__btn', {
+        id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
+    })
+    btnPng.textContent = 'PNG'
+
+    const btnPaintAll = el('button', 'audio-player__btn', {
+        id: 'btn-paint-all', 'aria-label': 'Paint all', disabled: 'true', title: 'Run through full audio and stop'
+    })
+    btnPaintAll.textContent = 'PAINT ALL'
+
+    transport.append(btnPlayPause, btnStop, btnBack, btnFwd, btnPng, btnPaintAll)
 
     // Progress row
     const progressRow = el('div', 'audio-player__progress-row')
@@ -142,34 +156,63 @@ export function initAudioPlayer(container) {
     body.append(fileRow, transport, progressRow)
     container.append(collapseBtn, body)
 
-    // ── Enable controls after file load ──────────────────────────────────
-    function _enableControls() {
-        btnPlayPause.disabled = false
-        btnStop.disabled = false
-        btnBack.disabled = false
-        btnFwd.disabled = false
+    function _setBusy(busy, text = '') {
+        fileInput.disabled = busy
+        btnPlayPause.disabled = busy || !audioEl.src
+        btnStop.disabled = busy || !audioEl.src
+        btnBack.disabled = busy || !audioEl.src
+        btnFwd.disabled = busy || !audioEl.src
+        btnPaintAll.disabled = busy || !audioEl.src
+        if (busy && text) fileName.textContent = text
     }
 
-    // ── File input handler ────────────────────────────────────────────────
-    fileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0]
+    function _loadAudioFile(file, labelText = file?.name || 'Audio loaded') {
         if (!file) return
-        // Clean up previous object URL if any
         if (audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src)
         audioEl.src = URL.createObjectURL(file)
         audioEl.load()
-        fileName.textContent = file.name
-        // Reset UI
+        fileName.textContent = labelText
         isPlaying = false
-        btnPlayPause.textContent = '▶  Play'
+        btnPlayPause.textContent = '▶'
         btnPlayPause.classList.remove('audio-player__btn--active')
         seekBar.value = '0'
         _updateSeekTrack(0)
         timestamp.textContent = '0:00 / –:––'
         _enableControls()
         container.dispatchEvent(new CustomEvent('player:fileloaded', {
-            detail: { file, audioEl }, bubbles: true
+            detail: { file, audioEl }, bubbles: true,
         }))
+    }
+
+    // ── Enable controls after file load ──────────────────────────────────
+    function _enableControls() {
+        btnPlayPause.disabled = false
+        btnStop.disabled = false
+        btnBack.disabled = false
+        btnFwd.disabled = false
+        btnPaintAll.disabled = false
+    }
+
+    // ── File input handler ────────────────────────────────────────────────
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0]
+        if (!file) return
+        _setBusy(true, `Loading ${file.name}...`)
+        try {
+            const converted = shouldConvertAudioFile(file)
+                ? await (async () => {
+                    fileName.textContent = `Converting ${file.name}...`
+                    return convertAudioFileToWav(file)
+                })()
+                : file
+            _loadAudioFile(converted, converted.name)
+        } catch (err) {
+            console.warn('[AudioPlayer] conversion failed, using original file:', err)
+            _loadAudioFile(file, file.name)
+        } finally {
+            _setBusy(false)
+            fileInput.value = ''
+        }
     })
 
     // ── Play / Pause ──────────────────────────────────────────────────────
@@ -188,21 +231,21 @@ export function initAudioPlayer(container) {
 
     audioEl.addEventListener('play', () => {
         isPlaying = true
-        btnPlayPause.textContent = '⏸  Pause'
+        btnPlayPause.textContent = '⏸︎'
         btnPlayPause.classList.add('audio-player__btn--active')
         container.dispatchEvent(new CustomEvent('player:play', { detail: { audioEl }, bubbles: true }))
     })
 
     audioEl.addEventListener('pause', () => {
         isPlaying = false
-        btnPlayPause.textContent = '▶  Play'
+        btnPlayPause.textContent = '▶'
         btnPlayPause.classList.remove('audio-player__btn--active')
         container.dispatchEvent(new CustomEvent('player:pause', { detail: { audioEl }, bubbles: true }))
     })
 
     audioEl.addEventListener('ended', () => {
         isPlaying = false
-        btnPlayPause.textContent = '▶  Play'
+        btnPlayPause.textContent = '▶'
         btnPlayPause.classList.remove('audio-player__btn--active')
     })
 
@@ -222,6 +265,25 @@ export function initAudioPlayer(container) {
     })
     btnFwd.addEventListener('click', () => {
         audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 10)
+    })
+
+    btnPng.addEventListener('click', () => {
+        container.dispatchEvent(new CustomEvent('player:savepng', {
+            detail: { audioEl }, bubbles: true
+        }))
+    })
+
+    btnPaintAll.addEventListener('click', () => {
+        if (btnPaintAll.disabled) return
+        container.dispatchEvent(new CustomEvent('player:paintall', {
+            detail: { audioEl }, bubbles: true
+        }))
+    })
+
+    container.addEventListener('player:paintall-state', (e) => {
+        const running = !!e?.detail?.running
+        btnPaintAll.disabled = running || !audioEl.src
+        btnPaintAll.textContent = running ? 'PAINTING...' : 'PAINT ALL'
     })
 
     // ── Seek bar (user interaction) ───────────────────────────────────────
@@ -266,7 +328,7 @@ export function initAudioPlayer(container) {
     collapseBtn.addEventListener('click', () => {
         collapsed = !collapsed
         container.classList.toggle('audio-player--collapsed', collapsed)
-        collapseBtn.textContent = collapsed ? '>' : '<'
+        collapseBtn.textContent = collapsed ? '»' : '«'
         collapseBtn.title = collapsed ? 'Expand player' : 'Collapse player'
     })
 

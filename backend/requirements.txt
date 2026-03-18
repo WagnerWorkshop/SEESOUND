@@ -4,4 +4,5 @@ websockets
 numpy
 librosa
 soundfile
+python-multipart
 
