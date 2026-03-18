@@ -8,7 +8,7 @@
   --color-border: hsl(110, 9%, 25%);
   --color-border-faint: hsl(110, 9%, 20%);
   --color-accent: hsl(45, 90%, 35%);
-  --color-accent-dim: hsl(30, 90%, 50%);
+  --color-accent-dim: hsl(110, 20%, 50%);
   --color-accent-glow: hsla(30, 100%, 71%, 0.18);
   --color-text: hsl(30, 90%, 90%);
   --color-text-muted: hsl(30, 90%, 80%);
@@ -17,7 +17,7 @@
   --color-danger: hsl(0, 100%, 60%);
   --color-warn: hsl(60, 100%, 60%);
   --panel-width: 280px;
-  --player-height: 90px;
+  --player-height: 45px;
   --radius-sm: 4px;
   --radius-md: 7px;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;

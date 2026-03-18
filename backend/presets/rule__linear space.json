@@ -1,0 +1,161 @@
+{
+  "name": "rule__linear space",
+  "params": {
+    "inputGain": 0.3,
+    "amplitudeThreshold": 50,
+    "brightnessFloor": 0.05,
+    "amplitudeToBrightness": 0.86,
+    "defaultParticleSize": 1,
+    "freqDepthEffect": 100,
+    "zDepth": 0,
+    "frequencySpread": 2,
+    "lowFrequencyCutoff": 64,
+    "highFrequencyCutoff": 20000,
+    "canvasWidth": 1256,
+    "canvasHeight": 701,
+    "maxParticles": 1999872,
+    "blendMode": "screen",
+    "cameraProjection": "axonometric",
+    "cameraAxoPreset": "orthoXY",
+    "persistMode": 1,
+    "tonicHz": 261.63,
+    "ruleBlocks": [
+      {
+        "id": "x-set-time",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "x",
+            "input": "time"
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "x-divide-by-audio-length",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "divide",
+            "output": "x",
+            "expression": "(audioLengthSec) * 1.12"
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "y-set-norm-frequency",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "input": "normFreq"
+          }
+        ],
+        "order": 2
+      },
+      {
+        "id": "y-center-around-zero",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "subtract",
+            "output": "y",
+            "value": 0.5
+          }
+        ],
+        "order": 3
+      },
+      {
+        "id": "y-scale-to-canvas-height",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "y",
+            "expression": "(canvasHeightPx) * 1"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "x-center-around-zero",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "subtract",
+            "output": "x",
+            "value": 0.5
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "x-scale-to-canvas-width",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "x",
+            "expression": "(canvasWidthUnits) * 1"
+          }
+        ],
+        "order": 6
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "_disabled": []
+  }
+}

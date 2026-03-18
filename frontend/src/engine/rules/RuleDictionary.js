@@ -18,20 +18,28 @@ const _inputEntries = [
     { id: 'spectralFlux', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'spectralFlatness', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'inharmonicity', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'canvasWidthPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasHeightPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasWidthUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasHeightUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'audioLengthSec', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
 ]
 
 const _outputEntries = [
-    { id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] },
-    { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] },
-    { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] },
-    { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY] },
-    { id: 'red', type: 'number', range: [0, 1] },
-    { id: 'green', type: 'number', range: [0, 1] },
-    { id: 'blue', type: 'number', range: [0, 1] },
-    { id: 'opacity', type: 'number', range: [0, 1] }
-
-,
-    { id: 'shapeType', type: 'enum', values: ['square', 'circle'] },
+    { id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
+    { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
+    { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
+    { id: 'zoom', type: 'number', range: [0.05, 32], targets: ['camera'] },
+    { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles'] },
+    { id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
+    { id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'] },
+    { id: 'particleCount', type: 'number', range: [0, 1], targets: ['spawnedParticles'] },
+    { id: 'shapeType', type: 'enum', values: ['square', 'circle'], targets: ['spawnedParticles', 'allParticles'] },
 ]
 
 const _legacyOutputAliases = Object.freeze({
@@ -39,16 +47,26 @@ const _legacyOutputAliases = Object.freeze({
     g: 'green',
     b: 'blue',
     a: 'opacity',
+    backgroundRed: 'red',
+    backgroundGreen: 'green',
+    backgroundBlue: 'blue',
 })
+
+const _legacyBackgroundOutputs = Object.freeze(new Set(['backgroundRed', 'backgroundGreen', 'backgroundBlue']))
 
 export const RULE_BLOCK_FIELDS = Object.freeze([
     'id',
+    'group',
+    'subgroup',
     'enabled',
+    'target',
     'scope',
     'condition',
     'actions',
     'order',
 ])
+
+export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'background', 'camera'])
 
 export const RULE_SCOPES = Object.freeze(['spawnedOnly', 'allLivingFrame'])
 
@@ -58,6 +76,7 @@ export const RULE_ACTION_OPERATORS = Object.freeze([
     'subtract',
     'multiply',
     'divide',
+    'clamp',
 ])
 
 export const RULE_CONDITION_OPERATORS = Object.freeze([
@@ -150,6 +169,18 @@ function _normalizeOutputId(id) {
     return _legacyOutputAliases[id] || id
 }
 
+function _normalizeTarget(rule) {
+    if (RULE_TARGETS.includes(rule?.target)) return rule.target
+    if (rule?.scope === 'spawnedOnly') return 'spawnedParticles'
+    if (rule?.scope === 'allLivingFrame') return 'allParticles'
+    return 'spawnedParticles'
+}
+
+function _isOutputAllowedForTarget(outputMeta, target) {
+    const allowed = Array.isArray(outputMeta?.targets) ? outputMeta.targets : RULE_TARGETS
+    return allowed.includes(target)
+}
+
 /**
  * Validates a single rule block against canonical dictionaries.
  * Unknown ids are rejected with hard errors.
@@ -167,6 +198,11 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
 
     if (!RULE_SCOPES.includes(rule.scope)) {
         errors.push(`Unknown scope: ${String(rule.scope)}`)
+    }
+
+    const target = _normalizeTarget(rule)
+    if (!RULE_TARGETS.includes(target)) {
+        errors.push(`Unknown target: ${String(rule?.target)}`)
     }
 
     if (rule.condition?.operator && !RULE_CONDITION_OPERATORS.includes(rule.condition.operator)) {
@@ -193,6 +229,9 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
         }
 
         const outputMeta = outMap.get(output)
+        if (!_isOutputAllowedForTarget(outputMeta, target)) {
+            errors.push(`Output ${output} is not valid for target ${target} at index ${actionIndex}`)
+        }
         if (action?.operator && !RULE_ACTION_OPERATORS.includes(action.operator)) {
             errors.push(`Unknown action operator at index ${actionIndex}: ${String(action.operator)}`)
         }
@@ -256,7 +295,8 @@ export function annotateRuleContradictions(ruleBlocks) {
 
         actions.forEach((action) => {
             if (action?.operator !== 'set' || !_outputMap.has(action?.output)) return
-            const key = `${scope}:${action.output}`
+            const target = _normalizeTarget(rule)
+            const key = `${target}:${scope}:${action.output}`
             const prior = seen.get(key)
             if (prior) {
                 redRuleIds.add(prior.ruleId)
@@ -265,6 +305,7 @@ export function annotateRuleContradictions(ruleBlocks) {
                     color: 'red',
                     type: 'crossRuleConflict',
                     scope,
+                    target,
                     output: action.output,
                     overriddenRuleId: prior.ruleId,
                     winningRuleId: ruleId,
@@ -310,7 +351,10 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
     input.forEach((rule, index) => {
         const coerced = {
             id: typeof rule?.id === 'string' && rule.id.trim() ? rule.id.trim() : `rule-${index}`,
+            group: typeof rule?.group === 'string' ? rule.group : '',
+            subgroup: typeof rule?.subgroup === 'string' ? rule.subgroup : '',
             enabled: rule?.enabled !== false,
+            target: _normalizeTarget(rule),
             scope: RULE_SCOPES.includes(rule?.scope) ? rule.scope : 'spawnedOnly',
             condition: (rule?.condition && typeof rule.condition === 'object')
                 ? { ...rule.condition }
@@ -324,15 +368,25 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
             coerced.condition.operator = 'always'
         }
 
+        // Keep legacy scope for compatibility, derive from target for deterministic runtime.
+        coerced.scope = coerced.target === 'spawnedParticles' ? 'spawnedOnly' : 'allLivingFrame'
+
         coerced.actions = coerced.actions
             .filter((action) => action && typeof action === 'object')
-            .map((action) => ({
-                operator: RULE_ACTION_OPERATORS.includes(action.operator) ? action.operator : 'set',
-                output: _normalizeOutputId(action.output),
-                value: action.value,
-                input: action.input,
-                expression: action.expression,
-            }))
+            .map((action) => {
+                const rawOutput = action.output
+                if (_legacyBackgroundOutputs.has(rawOutput) && !rule?.target) {
+                    coerced.target = 'background'
+                    coerced.scope = 'allLivingFrame'
+                }
+                return {
+                    operator: RULE_ACTION_OPERATORS.includes(action.operator) ? action.operator : 'set',
+                    output: _normalizeOutputId(rawOutput),
+                    value: action.value,
+                    input: action.input,
+                    expression: action.expression,
+                }
+            })
 
         const verdict = validateRuleBlock(coerced, dictionaries)
         if (verdict.ok) {

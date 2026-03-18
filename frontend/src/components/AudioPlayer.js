@@ -96,7 +96,7 @@ export function initAudioPlayer(container) {
     })
     fileLabel.textContent = '♫'
     const fileName = el('span', 'audio-player__file-name', { text: 'No file loaded' })
-    fileRow.append(fileInput, fileLabel, fileName)
+    fileRow.append(fileInput, fileLabel)
 
     // Transport buttons
     const transport = el('div', 'audio-player__transport')
@@ -131,7 +131,15 @@ export function initAudioPlayer(container) {
     })
     btnPaintAll.textContent = 'PAINT ALL'
 
-    transport.append(btnPlayPause, btnStop, btnBack, btnFwd, btnPng, btnPaintAll)
+    const speedWrap = el('div', 'audio-player__speed-wrap')
+    const speedInput = el('input', 'audio-player__speed-input', {
+        type: 'number', min: '0.1', max: '16', step: '0.1', value: '1', 'aria-label': 'Playback speed multiplier',
+        title: 'Playback speed multiplier (0.1 to 16)'
+    })
+    const speedSuffix = el('span', 'audio-player__speed-suffix', { text: 'x' })
+    speedWrap.append(speedInput, speedSuffix)
+
+    transport.append(btnPlayPause, btnStop, btnBack, btnFwd, btnPng, btnPaintAll, speedWrap)
 
     // Progress row
     const progressRow = el('div', 'audio-player__progress-row')
@@ -152,9 +160,12 @@ export function initAudioPlayer(container) {
         id: 'audio-time', text: '–:–– / –:––', 'aria-live': 'polite'
     })
 
-    progressRow.append(seekBar, timestamp)
+    const progressMeta = el('div', 'audio-player__progress-meta')
+    progressMeta.append(fileName, timestamp)
+
+    progressRow.append(seekBar, progressMeta)
     body.append(fileRow, transport, progressRow)
-    container.append(collapseBtn, body)
+    container.append(body, collapseBtn)
 
     function _setBusy(busy, text = '') {
         fileInput.disabled = busy
@@ -163,7 +174,18 @@ export function initAudioPlayer(container) {
         btnBack.disabled = busy || !audioEl.src
         btnFwd.disabled = busy || !audioEl.src
         btnPaintAll.disabled = busy || !audioEl.src
+        speedInput.disabled = busy || !audioEl.src
         if (busy && text) fileName.textContent = text
+    }
+
+    function _applyPlaybackRate(raw) {
+        const next = Math.max(0.1, Math.min(16, Number(raw)))
+        if (!Number.isFinite(next)) return
+        audioEl.playbackRate = next
+        speedInput.value = String(Number(next.toFixed(2)))
+        container.dispatchEvent(new CustomEvent('player:playbackrate', {
+            detail: { rate: next }, bubbles: true,
+        }))
     }
 
     function _loadAudioFile(file, labelText = file?.name || 'Audio loaded') {
@@ -191,6 +213,7 @@ export function initAudioPlayer(container) {
         btnBack.disabled = false
         btnFwd.disabled = false
         btnPaintAll.disabled = false
+        speedInput.disabled = false
     }
 
     // ── File input handler ────────────────────────────────────────────────
@@ -283,7 +306,15 @@ export function initAudioPlayer(container) {
     container.addEventListener('player:paintall-state', (e) => {
         const running = !!e?.detail?.running
         btnPaintAll.disabled = running || !audioEl.src
+        speedInput.disabled = running || !audioEl.src
         btnPaintAll.textContent = running ? 'PAINTING...' : 'PAINT ALL'
+    })
+
+    speedInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return
+        e.preventDefault()
+        _applyPlaybackRate(speedInput.value)
+        speedInput.blur()
     })
 
     // ── Seek bar (user interaction) ───────────────────────────────────────

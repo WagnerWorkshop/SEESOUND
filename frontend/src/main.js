@@ -61,13 +61,17 @@ renderer.setClearColor(0x000000, 1)
 renderer.autoClear = true
 
 const scene = new THREE.Scene()
+const originAxes = new THREE.AxesHelper(180)
+originAxes.userData.excludeFromPng = true
+scene.add(originAxes)
 const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 5000)
 const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, 5000)
 let camera = cameraOrtho
 const orbitTarget = new THREE.Vector3(0, 0, 0)
+const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 0, 420)
 
 for (const c of [cameraOrtho, cameraPerspective]) {
-    c.position.set(0, 0, 10)
+    c.position.copy(DEFAULT_CAMERA_POS)
     c.up.set(0, 1, 0)
     c.lookAt(orbitTarget)
 }
@@ -91,9 +95,9 @@ function applyProjectionFromParams() {
 // Mouse camera controls:
 //  - Left drag: orbit around world origin
 //  - Right drag: rotate view around camera center (in-place look)
-//  - Wheel: orthographic zoom
+//  - Wheel: dolly camera forward/backward
 const orbitState = {
-    radius: 10,
+    radius: 420,
     azimuth: 0,
     elevation: 0,
 }
@@ -102,7 +106,7 @@ function syncOrbitFromCamera() {
     const x = camera.position.x - orbitTarget.x
     const y = camera.position.y - orbitTarget.y
     const z = camera.position.z - orbitTarget.z
-    const r = Math.sqrt(x * x + y * y + z * z) || 1
+    const r = Math.max(0.001, Math.sqrt(x * x + y * y + z * z) || 1)
     orbitState.radius = r
     orbitState.azimuth = Math.atan2(x, z)
     orbitState.elevation = Math.asin(Math.max(-1, Math.min(1, y / r)))
@@ -121,7 +125,7 @@ function applyOrbitToCamera() {
 function resetCameraPose() {
     orbitTarget.set(0, 0, 0)
     for (const c of [cameraOrtho, cameraPerspective]) {
-        c.position.set(0, 0, 10)
+        c.position.copy(DEFAULT_CAMERA_POS)
         c.up.set(0, 1, 0)
         c.rotation.set(0, 0, 0)
         c.zoom = 1
@@ -129,6 +133,32 @@ function resetCameraPose() {
         c.updateProjectionMatrix()
     }
     applyProjectionFromParams()
+    applyAxoPresetFromParams()
+    syncOrbitFromCamera()
+}
+
+function applyAxoPresetFromParams() {
+    if (params.cameraProjection === 'perspective') return
+    const preset = String(params.cameraAxoPreset || 'orthoXY')
+    const radius = Math.max(40, Number(orbitState.radius) || DEFAULT_CAMERA_POS.length())
+
+    let azimuth = 0
+    let elevation = 0
+    if (preset === 'isometric') {
+        azimuth = Math.PI / 4
+        elevation = Math.asin(1 / Math.sqrt(3))
+    } else if (preset === 'fortyFive') {
+        azimuth = Math.PI / 4
+        elevation = Math.PI / 4
+    } else if (preset === 'topXZ') {
+        azimuth = 0
+        elevation = Math.PI / 2 - 0.001
+    }
+
+    orbitState.radius = radius
+    orbitState.azimuth = azimuth
+    orbitState.elevation = elevation
+    applyOrbitToCamera()
     syncOrbitFromCamera()
 }
 
@@ -207,10 +237,88 @@ window.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault()
-    const factor = e.deltaY > 0 ? (1 / 1.1) : 1.1
-    camera.zoom = Math.max(0.2, Math.min(12, camera.zoom * factor))
-    camera.updateProjectionMatrix()
+    if (camera.isPerspectiveCamera) {
+        const dir = new THREE.Vector3()
+        camera.getWorldDirection(dir)
+        const speed = Math.max(2, orbitState.radius * 0.08)
+        const step = (e.deltaY > 0 ? 1 : -1) * speed
+        camera.position.addScaledVector(dir, step)
+        syncOrbitFromCamera()
+    } else {
+        const factor = e.deltaY > 0 ? 0.92 : 1.08
+        camera.zoom = Math.max(0.05, Math.min(64, camera.zoom * factor))
+        camera.updateProjectionMatrix()
+    }
 }, { passive: false })
+
+function applyRuleCameraOutput(output) {
+    if (!output) return
+    let posChanged = false
+    if (Number.isFinite(output.x)) {
+        camera.position.x = output.x
+        posChanged = true
+    }
+    if (Number.isFinite(output.y)) {
+        camera.position.y = output.y
+        posChanged = true
+    }
+    if (Number.isFinite(output.z)) {
+        camera.position.z = output.z
+        posChanged = true
+    }
+    if (posChanged) {
+        camera.lookAt(orbitTarget)
+        syncOrbitFromCamera()
+    }
+    if (Number.isFinite(output.zoom)) {
+        camera.zoom = Math.max(0.05, Math.min(64, output.zoom))
+        camera.updateProjectionMatrix()
+    }
+}
+
+function fitCameraToVisible() {
+    const bounds = ps.getVisibleBounds()
+    if (bounds.empty) {
+        resetCameraPose()
+        return
+    }
+
+    const pad = 1.18
+    const dpr = Math.max(1, Number(window.devicePixelRatio) || 1)
+    const canvasPxW = renderer.domElement.width / dpr
+    const canvasPxH = renderer.domElement.height / dpr
+    const w = Math.max(1, canvasPxW || Number(params.canvasWidth) || renderer.domElement.clientWidth || col.clientWidth || window.innerWidth)
+    const h = Math.max(1, canvasPxH || Number(params.canvasHeight) || renderer.domElement.clientHeight || col.clientHeight || window.innerHeight)
+    const aspect = w / h
+    const size = bounds.size
+    const center = bounds.center
+    const radius = Math.max(1, Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z) * 0.5)
+
+    orbitTarget.copy(center)
+
+    if (camera.isOrthographicCamera) {
+        const halfW = Math.max(size.x * 0.5, size.y * 0.5 * aspect, radius * 0.65)
+        const halfH = Math.max(size.y * 0.5, size.x * 0.5 / Math.max(0.001, aspect), radius * 0.65)
+        cameraOrtho.left = -halfW * pad
+        cameraOrtho.right = halfW * pad
+        cameraOrtho.top = halfH * pad
+        cameraOrtho.bottom = -halfH * pad
+        cameraOrtho.zoom = 1
+        cameraOrtho.updateProjectionMatrix()
+        orbitState.radius = Math.max(radius * 2.2, 60)
+        applyOrbitToCamera()
+    } else {
+        const fovY = THREE.MathUtils.degToRad(cameraPerspective.fov)
+        const fovX = 2 * Math.atan(Math.tan(fovY * 0.5) * cameraPerspective.aspect)
+        const distY = (size.y * 0.5 * pad) / Math.max(0.001, Math.tan(fovY * 0.5))
+        const distX = (size.x * 0.5 * pad) / Math.max(0.001, Math.tan(fovX * 0.5))
+        orbitState.radius = Math.max(radius * 1.35, distX, distY, 40)
+        applyOrbitToCamera()
+        cameraPerspective.updateProjectionMatrix()
+    }
+
+    syncOrbitFromCamera()
+}
 
 function resizeRenderer(w, h) {
     cameraOrtho.left = -w / 2
@@ -229,6 +337,7 @@ const initW = col.clientWidth || window.innerWidth
 const initH = col.clientHeight || window.innerHeight
 resizeRenderer(initW, initH)
 applyProjectionFromParams()
+applyAxoPresetFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -429,6 +538,19 @@ resetCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
 resetCameraBtn.style.cursor = 'pointer'
 resetCameraBtn.addEventListener('click', resetCameraPose)
 
+const fitCameraBtn = document.createElement('button')
+fitCameraBtn.type = 'button'
+fitCameraBtn.title = 'Fit to visible particles'
+fitCameraBtn.textContent = 'Fit'
+fitCameraBtn.style.height = '22px'
+fitCameraBtn.style.padding = '0 8px'
+fitCameraBtn.style.border = '1px solid var(--color-border, #444)'
+fitCameraBtn.style.borderRadius = '6px'
+fitCameraBtn.style.background = 'rgba(0,0,0,0.55)'
+fitCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
+fitCameraBtn.style.cursor = 'pointer'
+fitCameraBtn.addEventListener('click', fitCameraToVisible)
+
 const clearCanvasBtn = document.createElement('button')
 clearCanvasBtn.type = 'button'
 clearCanvasBtn.title = 'Clear canvas'
@@ -451,9 +573,9 @@ cameraReadout.style.background = 'rgba(0,0,0,0.35)'
 cameraReadout.style.padding = '4px 6px'
 cameraReadout.style.borderRadius = '4px'
 cameraReadout.style.pointerEvents = 'none'
-cameraReadout.textContent = 'cam p(0.00,0.00,10.00) r(0.00,0.00,0.00) pts 0 fft 0 amp 0.000 sc 0.000 sf 0.000 sfl 0.000 inh 0.000 ctx none cap 262144'
+cameraReadout.textContent = 'cam p(0.00,0.00,10.00) r(0.00,0.00,0.00) pts 0 fft 0 amp 0.000 sc 0.000 sf 0.000 sfl 0.000 inh 0.000 canv 0 × 0'
 
-cameraHud.append(resetCameraBtn, clearCanvasBtn, cameraReadout)
+cameraHud.append(resetCameraBtn, fitCameraBtn, clearCanvasBtn, cameraReadout)
 document.body.appendChild(cameraHud)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +585,44 @@ document.body.appendChild(cameraHud)
 let isPlaying = false
 let frameN = 0
 let paintAllRunId = 0
+let _currentAudioFileName = ''
+
+function _sanitizeFilePart(value, fallback = 'untitled') {
+    const text = String(value || '').trim()
+    const cleaned = text
+        .replace(/[\\/:*?"<>|]/g, '-')
+        .replace(/\s+/g, ' ')
+        .replace(/\.+$/g, '')
+        .trim()
+    return cleaned || fallback
+}
+
+function _nameWithoutExt(fileName) {
+    const name = String(fileName || '').trim()
+    return name.replace(/\.[^./\\]+$/g, '')
+}
+
+function _currentPresetTitle() {
+    const sel = document.querySelector('.cp-preset-bar .cp-preset-sel')
+    const typed = document.querySelector('.cp-preset-bar .cp-preset-name')
+    const selected = String(sel?.value || '').trim()
+    const typedName = String(typed?.value || '').trim()
+    return typedName || selected || 'preset'
+}
+
+function _currentAudioTitle() {
+    if (_currentAudioFileName) return _nameWithoutExt(_currentAudioFileName)
+    const src = String(ae?.audioEl?.currentSrc || ae?.audioEl?.src || '').trim()
+    if (!src) return 'audio'
+    try {
+        const url = new URL(src, window.location.href)
+        const leaf = decodeURIComponent((url.pathname.split('/').pop() || '').trim())
+        if (leaf) return _nameWithoutExt(leaf)
+    } catch {
+        // ignore parse failures and use fallback below
+    }
+    return 'audio'
+}
 
 async function _audioBlobFromElement(audioEl) {
     const src = audioEl?.src
@@ -477,14 +637,77 @@ function _defaultProjectName() {
     return `seesound-project-${stamp}.json`
 }
 
-function saveCanvasPng() {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const a = document.createElement('a')
-    a.href = renderer.domElement.toDataURL('image/png')
-    a.download = `seesound-${stamp}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+async function saveCanvasPng() {
+    const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+    const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+    const defaultPngName = `${audioTitle} - ${presetTitle}.png`
+    const requestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
+    const requestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+
+    const exportCanvas = document.createElement('canvas')
+    const exportRenderer = new THREE.WebGLRenderer({
+        canvas: exportCanvas,
+        antialias: true,
+        preserveDrawingBuffer: true,
+    })
+
+    try {
+        const maxTex = exportRenderer.capabilities.maxTextureSize || 8192
+        const exportW = Math.min(requestedW, maxTex)
+        const exportH = Math.min(requestedH, maxTex)
+        const exportDpr = Math.max(1, Number(renderer.getPixelRatio?.() || window.devicePixelRatio || 1))
+        const logicalW = Math.max(1, Math.floor(exportW / exportDpr))
+        const logicalH = Math.max(1, Math.floor(exportH / exportDpr))
+
+        // Match live point-size perception: use same DPR model as live renderer.
+        exportRenderer.setPixelRatio(exportDpr)
+        exportRenderer.setSize(logicalW, logicalH, false)
+
+        let exportCamera = camera.clone()
+        if (camera === cameraOrtho || exportCamera.isOrthographicCamera) {
+            // Preserve current ortho frustum/zoom so export matches live framing.
+            exportCamera = camera.clone()
+            exportCamera.updateProjectionMatrix()
+        } else if (exportCamera.isPerspectiveCamera) {
+            // Keep perspective framing behavior while adapting aspect to export target.
+            exportCamera.aspect = exportW / Math.max(1, exportH)
+            exportCamera.updateProjectionMatrix()
+        }
+
+        const hiddenForExport = []
+        scene.traverse((obj) => {
+            if (obj?.userData?.excludeFromPng && obj.visible) {
+                hiddenForExport.push(obj)
+                obj.visible = false
+            }
+        })
+
+        exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
+        exportRenderer.render(scene, exportCamera)
+
+        for (const obj of hiddenForExport) obj.visible = true
+
+        const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, 'image/png'))
+        if (!blob) throw new Error('PNG export failed (empty blob).')
+
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = defaultPngName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(a.href)
+
+        if (exportW !== requestedW || exportH !== requestedH) {
+            console.warn('[PNG] Export size clamped by GPU limits.', {
+                requested: { w: requestedW, h: requestedH },
+                exported: { w: exportW, h: exportH },
+                maxTextureSize: maxTex,
+            })
+        }
+    } finally {
+        exportRenderer.dispose()
+    }
 }
 
 function emitPaintAllState(playerEl, running) {
@@ -497,39 +720,78 @@ async function runPaintAll(playerEl, audioEl) {
     if (!(audioEl?.duration > 0)) return
 
     const runId = ++paintAllRunId
-    const prevRate = audioEl.playbackRate
-    const prevMuted = audioEl.muted
-    const prevVolume = audioEl.volume
-    const prevPreservesPitch = typeof audioEl.preservesPitch === 'boolean' ? audioEl.preservesPitch : null
-    const prevPersistMode = params.persistMode
+    const srcBlob = await _audioBlobFromElement(audioEl)
+    const srcUrl = srcBlob ? URL.createObjectURL(srcBlob) : (audioEl.currentSrc || audioEl.src)
+    if (!srcUrl) return
+
+    const paintAudio = new Audio()
+    paintAudio.crossOrigin = 'anonymous'
+    paintAudio.src = srcUrl
+    paintAudio.preload = 'auto'
+    paintAudio.currentTime = 0
+    paintAudio.muted = true
+    paintAudio.volume = 0
+    if (typeof paintAudio.preservesPitch === 'boolean') paintAudio.preservesPitch = false
+    paintAudio.playbackRate = 16
+    paintAudio.style.display = 'none'
+    document.body.appendChild(paintAudio)
+
+    const paintAe = new AudioEngine()
 
     emitPaintAllState(playerEl, true)
 
     try {
-        audioEl.pause()
-        isPlaying = false
-        audioEl.currentTime = 0
         ps.clear()
 
-        // Paint-all must accumulate by design, regardless of current live mode.
-        params.persistMode = 1
-        audioEl.muted = true
-        audioEl.volume = 0
-        if (prevPreservesPitch !== null) audioEl.preservesPitch = false
-        // Run at the browser's maximum reliable media rate.
-        audioEl.playbackRate = 16
+        await new Promise((resolve, reject) => {
+            const done = () => {
+                cleanup()
+                resolve()
+            }
+            const fail = () => {
+                cleanup()
+                reject(new Error('Paint-all audio metadata failed to load.'))
+            }
+            const cleanup = () => {
+                paintAudio.removeEventListener('loadedmetadata', done)
+                paintAudio.removeEventListener('canplay', done)
+                paintAudio.removeEventListener('error', fail)
+            }
+            paintAudio.addEventListener('loadedmetadata', done, { once: true })
+            paintAudio.addEventListener('canplay', done, { once: true })
+            paintAudio.addEventListener('error', fail, { once: true })
+            paintAudio.load()
+        })
 
-        ae.init(audioEl)
-        if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
-        await audioEl.play()
+        paintAe.init(paintAudio)
+        if (paintAe.ctx?.state === 'suspended') await paintAe.ctx.resume()
+
+        await paintAudio.play()
 
         let lastTime = -1
         let stalledFrames = 0
-        while (runId === paintAllRunId && !audioEl.ended) {
-            // No fixed sleep: process as quickly as the media pipeline advances.
+        while (runId === paintAllRunId && !paintAudio.ended) {
             await new Promise((resolve) => requestAnimationFrame(resolve))
 
-            const nowTime = Number(audioEl.currentTime) || 0
+            paintAe.update()
+
+            const w = renderer.domElement.width / window.devicePixelRatio
+            const h = renderer.domElement.height / window.devicePixelRatio
+            const paintParams = {
+                ...params,
+                // Paint-all must accumulate by design, regardless of current live mode.
+                persistMode: 1,
+                cameraState: {
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z,
+                    zoom: camera.zoom,
+                },
+            }
+            ps.update(paintAe, paintParams, w, h)
+            applyRuleCameraOutput(ps.getCameraOutput())
+
+            const nowTime = Number(paintAudio.currentTime) || 0
             if (nowTime > lastTime + 1e-4) {
                 lastTime = nowTime
                 stalledFrames = 0
@@ -537,24 +799,28 @@ async function runPaintAll(playerEl, audioEl) {
                 stalledFrames++
             }
 
-            if (audioEl.paused && !audioEl.ended) {
-                try { await audioEl.play() } catch { break }
+            if (paintAudio.paused && !paintAudio.ended) {
+                try { await paintAudio.play() } catch { break }
             }
 
             // If playback gets stuck near the end, force completion.
-            if (stalledFrames > 120 && nowTime >= Math.max(0, (audioEl.duration || 0) - 0.25)) {
-                audioEl.currentTime = audioEl.duration || nowTime
+            if (stalledFrames > 120 && nowTime >= Math.max(0, (paintAudio.duration || 0) - 0.25)) {
+                paintAudio.currentTime = paintAudio.duration || nowTime
                 break
             }
         }
     } finally {
-        audioEl.pause()
-        isPlaying = false
-        audioEl.playbackRate = prevRate
-        audioEl.muted = prevMuted
-        audioEl.volume = prevVolume
-        if (prevPreservesPitch !== null) audioEl.preservesPitch = prevPreservesPitch
-        params.persistMode = prevPersistMode
+        paintAudio.pause()
+        paintAudio.src = ''
+        paintAudio.remove()
+        if (srcBlob) URL.revokeObjectURL(srcUrl)
+        try { paintAe.source?.disconnect() } catch { }
+        try { paintAe.streamSource?.disconnect() } catch { }
+        try { paintAe.splitter?.disconnect() } catch { }
+        try { paintAe.analyserL?.disconnect() } catch { }
+        try { paintAe.analyserR?.disconnect() } catch { }
+        try { paintAe.analyser?.disconnect() } catch { }
+        try { await paintAe.ctx?.close() } catch { }
         emitPaintAllState(playerEl, false)
     }
 }
@@ -570,8 +836,21 @@ function animate() {
     if (isActuallyPlaying) {
         const w = renderer.domElement.width / window.devicePixelRatio
         const h = renderer.domElement.height / window.devicePixelRatio
-        ps.update(ae, params, w, h)
+        const updateParams = {
+            ...params,
+            cameraState: {
+                x: camera.position.x,
+                y: camera.position.y,
+                z: camera.position.z,
+                zoom: camera.zoom,
+            },
+        }
+        ps.update(ae, updateParams, w, h)
+        applyRuleCameraOutput(ps.getCameraOutput())
     }
+
+    const bg = ps.getBackgroundColor()
+    renderer.setClearColor(bg, 1)
 
     renderer.render(scene, camera)
 
@@ -583,7 +862,18 @@ function animate() {
         const px = camera.position.x.toFixed(2)
         const py = camera.position.y.toFixed(2)
         const pz = camera.position.z.toFixed(2)
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} ctx ${ae.ctxState} cap ${params.maxParticles}`
+        let canvW = 0
+        let canvH = 0
+        if (camera.isOrthographicCamera) {
+            canvW = Math.abs((camera.right - camera.left) / Math.max(0.01, camera.zoom))
+            canvH = Math.abs((camera.top - camera.bottom) / Math.max(0.01, camera.zoom))
+        } else {
+            const dist = Math.max(0.001, camera.position.distanceTo(orbitTarget))
+            const fovRad = THREE.MathUtils.degToRad(camera.fov)
+            canvH = (2 * Math.tan(fovRad * 0.5) * dist) / Math.max(0.01, camera.zoom)
+            canvW = canvH * camera.aspect
+        }
+        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)}`
     }
 }
 animate()
@@ -597,6 +887,7 @@ animate()
     const playerEl = document.getElementById('audio-player')
     const { audioEl } = initAudioPlayer(playerEl)
     ae.audioEl = audioEl   // give AudioEngine ref (used for currentTime/duration)
+    let loadedAudioFile = null
 
     // Keep render state aligned with true media playback state.
     audioEl.addEventListener('play', async () => {
@@ -615,23 +906,33 @@ animate()
     playerEl.addEventListener('player:play', () => { paintAllRunId++; isPlaying = true })
     playerEl.addEventListener('player:pause', () => { paintAllRunId++; isPlaying = false })
     playerEl.addEventListener('player:stop', () => { paintAllRunId++; isPlaying = false })
-    playerEl.addEventListener('player:savepng', () => {
-        saveCanvasPng()
+    playerEl.addEventListener('player:savepng', async () => {
+        await saveCanvasPng()
     })
     playerEl.addEventListener('player:paintall', async () => {
         await runPaintAll(playerEl, audioEl)
+    })
+    playerEl.addEventListener('player:playbackrate', (e) => {
+        const next = Number(e?.detail?.rate)
+        if (!Number.isFinite(next)) return
+        audioEl.playbackRate = Math.max(0.1, Math.min(16, next))
+    })
+    playerEl.addEventListener('player:fileloaded', (e) => {
+        const file = e?.detail?.file
+        loadedAudioFile = file instanceof File ? file : null
+        _currentAudioFileName = loadedAudioFile?.name || ''
     })
 
     const saveProject = async () => {
         try {
             const snapshot = getSnapshot()
-            const audioBlob = await _audioBlobFromElement(audioEl)
+            const audioBlob = loadedAudioFile || await _audioBlobFromElement(audioEl)
             const audioDataUrl = audioBlob ? await blobToDataUrl(audioBlob) : ''
             const payload = buildProjectPayload({
                 params: snapshot,
                 presetName: '',
                 audioDataUrl,
-                audioFileName: 'project-audio.wav',
+                audioFileName: loadedAudioFile?.name || 'project-audio.wav',
             })
             triggerProjectDownload(payload, _defaultProjectName())
         } catch (err) {
@@ -649,6 +950,8 @@ animate()
             if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
                 const fileName = payload?.audio?.fileName || 'project-audio.wav'
                 const file = dataUrlToFile(dataUrl, fileName)
+                loadedAudioFile = file
+                _currentAudioFileName = file?.name || ''
                 if (audioEl.src?.startsWith('blob:')) URL.revokeObjectURL(audioEl.src)
                 audioEl.src = URL.createObjectURL(file)
                 audioEl.load()
@@ -676,9 +979,8 @@ let _resizer = null
 let _syncingCanvasFromParams = false
 _resizer = initCanvasResizer({
     wrapper, column: col,
-    onResize(w, h, sx, sy) {
+    onResize(w, h) {
         resizeRenderer(w, h)
-        ps.rescale(sx, sy)
         emitCanvasSize(w, h)
         if (!_syncingCanvasFromParams) {
             const iw = Math.max(160, Math.floor(w || 160))
@@ -691,12 +993,21 @@ _resizer = initCanvasResizer({
 })
 
 function emitCanvasSize(w, h) {
+    const s = Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale) || 100)))
     window.dispatchEvent(new CustomEvent('seesound:canvas-size', {
         detail: {
             w,
             h,
+            s,
         },
     }))
+}
+
+function applyCanvasScaleFromParams() {
+    const scalePct = Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale) || 100)))
+    const scale = scalePct / 100
+    wrapper.style.transformOrigin = 'center center'
+    wrapper.style.transform = `scale(${scale})`
 }
 
 function getSafeCanvasSize() {
@@ -722,6 +1033,7 @@ function applyCanvasSizeFromParams() {
 }
 
 applyCanvasSizeFromParams()
+applyCanvasScaleFromParams()
 {
     const s = getSafeCanvasSize()
     if (Number(params.canvasWidth) !== s.w || Number(params.canvasHeight) !== s.h) {
@@ -731,7 +1043,9 @@ applyCanvasSizeFromParams()
 }
 subscribe((_, key) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
+    if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
+    if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {
         const nextCap = Math.max(4096, Math.floor(params.maxParticles || 4096))
         if (params.maxParticles !== nextCap) params.maxParticles = nextCap
@@ -770,3 +1084,5 @@ console.info(
 )
 
 console.log('%c SEESOUND v1.0 ready ', 'background:#111;color:#4ade80;padding:4px 8px;border-radius:4px;font-weight:bold')
+
+

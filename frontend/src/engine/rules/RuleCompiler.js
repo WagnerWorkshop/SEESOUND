@@ -23,6 +23,26 @@ const _helpers = Object.freeze({
     abs: Math.abs,
 })
 
+function _usesHsbOutput(rules) {
+    for (const rule of (rules || [])) {
+        const actions = Array.isArray(rule?.actions) ? rule.actions : []
+        for (const action of actions) {
+            if (action?.output === 'hue' || action?.output === 'saturation' || action?.output === 'brightness') return true
+        }
+    }
+    return false
+}
+
+function _usesOutput(rules, outputId) {
+    for (const rule of (rules || [])) {
+        const actions = Array.isArray(rule?.actions) ? rule.actions : []
+        for (const action of actions) {
+            if (action?.output === outputId) return true
+        }
+    }
+    return false
+}
+
 const _allowedConditionOps = new Set(['>', '>=', '<', '<=', '==', '!='])
 
 let _cache = {
@@ -78,6 +98,8 @@ function _compileAction(action) {
             return `target.${output} = (target.${output} ?? 0) * (${rhs});`
         case 'divide':
             return `if ((${rhs}) !== 0) target.${output} = (target.${output} ?? 0) / (${rhs});`
+        case 'clamp':
+            return `target.${output} = clamp((target.${output} ?? 0), -Math.abs(${rhs}), Math.abs(${rhs}));`
         default:
             return ''
     }
@@ -137,8 +159,10 @@ export function compileRules(ruleBlocks, dictionaries) {
     const sanitized = sanitizeRuleBlocks(ruleBlocks, dictionaries)
     const normalizedRules = sanitized.ruleBlocks
     const sortedRules = [...normalizedRules].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    const spawnedRules = sortedRules.filter((rule) => rule.scope === 'spawnedOnly')
-    const livingRules = sortedRules.filter((rule) => rule.scope === 'allLivingFrame')
+    const spawnedRules = sortedRules.filter((rule) => rule.target === 'spawnedParticles')
+    const livingRules = sortedRules.filter((rule) => rule.target === 'allParticles')
+    const backgroundRules = sortedRules.filter((rule) => rule.target === 'background')
+    const cameraRules = sortedRules.filter((rule) => rule.target === 'camera')
     const hash = hashRules(sortedRules)
 
     if (_cache.hash === hash) return _cache.result
@@ -146,13 +170,17 @@ export function compileRules(ruleBlocks, dictionaries) {
     const inputIds = getInputDictionary().entries.map((entry) => entry.id)
     const spawnBuild = buildSpawnFunction(spawnedRules, inputIds)
     const livingBuild = buildLivingFunction(livingRules, inputIds)
+    const bgBuild = _buildFunctionSource('applyBackgroundRules', backgroundRules, inputIds, true)
+    const camBuild = _buildFunctionSource('applyCameraRules', cameraRules, inputIds, true)
 
     const source = [
         `'use strict';`,
         'const { clamp, lerp, smoothstep, pow, min, max, abs } = helpers;',
         spawnBuild.source,
         livingBuild.source,
-        'return { applySpawnRules, applyLivingRules };',
+        bgBuild.source,
+        camBuild.source,
+        'return { applySpawnRules, applyLivingRules, applyBackgroundRules, applyCameraRules };',
     ].join('\n\n')
 
     try {
@@ -165,11 +193,18 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileTimeMs: Math.max(0, performance.now() - t0),
             spawnRuleCount: spawnedRules.length,
             livingRuleCount: livingRules.length,
+            backgroundRuleCount: backgroundRules.length,
+            cameraRuleCount: cameraRules.length,
+            usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesBackgroundHsb: _usesHsbOutput(backgroundRules),
+            usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             rejected: sanitized.rejected,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap],
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             applySpawnRules: typeof compiled.applySpawnRules === 'function' ? compiled.applySpawnRules : _NOOP_SPAWN,
             applyLivingRules: typeof compiled.applyLivingRules === 'function' ? compiled.applyLivingRules : _NOOP_LIVING,
+            applyBackgroundRules: typeof compiled.applyBackgroundRules === 'function' ? compiled.applyBackgroundRules : _NOOP_LIVING,
+            applyCameraRules: typeof compiled.applyCameraRules === 'function' ? compiled.applyCameraRules : _NOOP_LIVING,
         }
         _cache = { hash, result }
         return result
@@ -184,7 +219,12 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileTimeMs: Math.max(0, performance.now() - t0),
             spawnRuleCount: spawnedRules.length,
             livingRuleCount: livingRules.length,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap],
+            backgroundRuleCount: backgroundRules.length,
+            cameraRuleCount: cameraRules.length,
+            usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesBackgroundHsb: _usesHsbOutput(backgroundRules),
+            usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             rejected: sanitized.rejected,
         }

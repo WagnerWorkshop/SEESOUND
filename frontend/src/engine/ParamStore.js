@@ -118,20 +118,32 @@ export const PARAMS = [
     },
     {
         key: 'canvasWidth', group: 'geometry', label: 'Canvas Width',
-        min: 160, max: 12000, step: 1, default: 0, unit: 'px',
-        desc: 'Explicit canvas width in pixels. 0 keeps automatic sizing.',
+        min: 160, max: 12000, step: 1, default: 0, unit: 'u',
+        desc: 'Explicit canvas width in Three.js world units. 0 keeps automatic sizing.',
         canDisable: false,
     },
     {
         key: 'canvasHeight', group: 'geometry', label: 'Canvas Height',
-        min: 120, max: 8000, step: 1, default: 0, unit: 'px',
-        desc: 'Explicit canvas height in pixels. 0 keeps automatic sizing.',
+        min: 120, max: 8000, step: 1, default: 0, unit: 'u',
+        desc: 'Explicit canvas height in Three.js world units. 0 keeps automatic sizing.',
+        canDisable: false,
+    },
+    {
+        key: 'canvasScale', group: 'geometry', label: 'Canvas Scale',
+        min: 5, max: 400, step: 1, default: 100, unit: '%',
+        desc: 'Display zoom of the canvas on screen. Does not change render resolution.',
         canDisable: false,
     },
     {
         key: 'maxParticles', group: 'geometry', label: 'Max Particle Capacity',
-        min: 4096, max: 2000000, step: 1024, default: 262144, unit: '',
+        min: 4096, max: 8000000, step: 1024, default: 262144, unit: '',
         desc: 'Maximum total particle slots in GPU buffers. Higher values allow longer painting trails.',
+        canDisable: false,
+    },
+    {
+        key: 'particleRenderPercent', group: 'geometry', label: 'Particle Render %',
+        min: 1, max: 100, step: 1, default: 100, unit: '%',
+        desc: 'Bin thinning: only this percentage of FFT bins can spawn particles each frame (evenly distributed by bin index).',
         canDisable: false,
     },
 
@@ -155,6 +167,18 @@ export const PARAMS = [
         dropdownOptions: [
             { label: 'Axonometric', value: 'axonometric' },
             { label: 'Perspective', value: 'perspective' },
+        ],
+    },
+    {
+        key: 'cameraAxoPreset', group: 'mixing', label: 'Axo Default View',
+        default: 'orthoXY', unit: '',
+        desc: 'Default axonometric camera orientation preset.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: 'Ortho XY', value: 'orthoXY' },
+            { label: 'Isometric', value: 'isometric' },
+            { label: '45°', value: 'fortyFive' },
+            { label: 'Top (XZ)', value: 'topXZ' },
         ],
     },
     {

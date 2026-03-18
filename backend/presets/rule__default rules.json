@@ -1,0 +1,87 @@
+{
+  "name": "rule__default rules",
+  "params": {
+    "inputGain": 0.3,
+    "amplitudeThreshold": -10,
+    "brightnessFloor": 0.2,
+    "amplitudeToBrightness": 1.25,
+    "defaultParticleSize": 8.5,
+    "freqDepthEffect": 100,
+    "zDepth": 0,
+    "frequencySpread": 2,
+    "lowFrequencyCutoff": 64,
+    "highFrequencyCutoff": 12000,
+    "canvasWidth": 4000,
+    "canvasHeight": 1500,
+    "canvasScale": 30,
+    "maxParticles": 1999872,
+    "particleRenderPercent": 50,
+    "blendMode": "screen",
+    "cameraProjection": "axonometric",
+    "cameraAxoPreset": "orthoXY",
+    "persistMode": 1,
+    "tonicHz": 261.63,
+    "ruleBlocks": [
+      {
+        "id": "background hue",
+        "group": "Default",
+        "subgroup": "background color",
+        "enabled": false,
+        "target": "background",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "value": 50
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "background saturation",
+        "group": "Default",
+        "subgroup": "background color",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "value": 50
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "shape",
+        "group": "Default",
+        "subgroup": "",
+        "enabled": true,
+        "target": "allParticles",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "shapeType",
+            "value": "circle"
+          }
+        ],
+        "order": 2
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "_disabled": []
+  }
+}

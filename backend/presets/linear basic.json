@@ -1,0 +1,353 @@
+{
+  "name": "linear basic",
+  "params": {
+    "inputGain": 0.48,
+    "amplitudeThreshold": 0,
+    "brightnessFloor": 0,
+    "amplitudeToBrightness": 1.25,
+    "defaultParticleSize": 0.3,
+    "freqDepthEffect": 100,
+    "zDepth": 0,
+    "frequencySpread": 2,
+    "lowFrequencyCutoff": 64,
+    "highFrequencyCutoff": 16000,
+    "canvasWidth": 3000,
+    "canvasHeight": 1000,
+    "canvasScale": 40,
+    "maxParticles": 1999872,
+    "particleRenderPercent": 50,
+    "blendMode": "screen",
+    "cameraProjection": "axonometric",
+    "cameraAxoPreset": "orthoXY",
+    "persistMode": 1,
+    "tonicHz": 261.63,
+    "ruleBlocks": [
+      {
+        "id": "x-set-time",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "x",
+            "input": "time"
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "x-divide-by-audio-length",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "divide",
+            "output": "x",
+            "expression": "(audioLengthSec) * 1.12"
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "y-set-norm-frequency",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "input": "normFreq"
+          }
+        ],
+        "order": 2
+      },
+      {
+        "id": "y-center-around-zero",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "subtract",
+            "output": "y",
+            "value": 0.5
+          }
+        ],
+        "order": 3
+      },
+      {
+        "id": "y-scale-to-canvas-height",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "y",
+            "expression": "(canvasHeightPx) * 1"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "x-center-around-zero",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "subtract",
+            "output": "x",
+            "value": 0.5
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "x-scale-to-canvas-width",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "x",
+            "expression": "(canvasWidthUnits) * 1"
+          }
+        ],
+        "order": 6
+      },
+      {
+        "id": "amplitude brightness",
+        "group": "Appearance",
+        "subgroup": "brightness",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "input": "binEnergy"
+          }
+        ],
+        "order": 7
+      },
+      {
+        "id": "ear correction",
+        "group": "Appearance",
+        "subgroup": "brightness",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "opacity",
+            "expression": "(normFreq) * 2"
+          }
+        ],
+        "order": 8
+      },
+      {
+        "id": "ear correction-2",
+        "group": "Appearance",
+        "subgroup": "brightness",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "opacity",
+            "expression": "(normFreq) * 1"
+          }
+        ],
+        "order": 9
+      },
+      {
+        "id": "thinning",
+        "group": "Appearance",
+        "subgroup": "brightness",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "particleCount",
+            "input": "binEnergy"
+          }
+        ],
+        "order": 10
+      },
+      {
+        "id": "hue",
+        "group": "Appearance",
+        "subgroup": "color",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "expression": "(normFreq) * 360000"
+          }
+        ],
+        "order": 11
+      },
+      {
+        "id": "saturation",
+        "group": "Appearance",
+        "subgroup": "color",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "expression": "(binEnergy) * 10"
+          }
+        ],
+        "order": 12
+      },
+      {
+        "id": "background hue",
+        "group": "Default",
+        "subgroup": "background color",
+        "enabled": false,
+        "target": "background",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "value": 50
+          }
+        ],
+        "order": 13
+      },
+      {
+        "id": "background saturation",
+        "group": "Default",
+        "subgroup": "background color",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "value": 50
+          }
+        ],
+        "order": 14
+      },
+      {
+        "id": "soft",
+        "group": "Appearance",
+        "subgroup": "size",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "size",
+            "expression": "(binEnergy) * 6"
+          }
+        ],
+        "order": 15
+      },
+      {
+        "id": "shape",
+        "group": "Default",
+        "subgroup": "",
+        "enabled": true,
+        "target": "allParticles",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "shapeType",
+            "value": "circle"
+          }
+        ],
+        "order": 16
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "_disabled": []
+  }
+}

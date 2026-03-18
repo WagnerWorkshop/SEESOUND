@@ -95,8 +95,8 @@
   bottom: 2px;
   width: 8px;
   height: 8px;
-  border-right: 2px solid rgba(109, 120, 255, .6);
-  border-bottom: 2px solid rgba(109, 120, 255, .6);
+  border-right: 2px solid var(--color-border);
+  border-bottom: 2px solid var(--color-border);
   border-radius: 0 0 2px 0;
 }
 

@@ -40,7 +40,7 @@ import {
 import {
     getInputDictionary,
     getOutputDictionary,
-    RULE_SCOPES,
+    RULE_TARGETS,
     RULE_ACTION_OPERATORS,
     annotateRuleContradictions,
 } from './rules/RuleDictionary.js'
@@ -340,11 +340,17 @@ function buildToggleRow(p) {
 
 function buildPresetBar() {
     const bar = el('div', 'cp-preset-bar')
+    const RULE_PRESET_PREFIX = 'rule__'
+
+    function _commitPendingPanelEdits() {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.closest('.cp-body')) active.blur()
+    }
 
     // ── Row 0: project save/load
     const row0 = el('div', 'cp-preset-row')
     const projectLabel = el('span', 'cp-preset-label', { text: 'PROJECT' })
-    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project' })
+    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project (Ctrl+S / Ctrl+Shift+S)' })
     const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
     const projectInput = el('input', '', { type: 'file', accept: '.json,.seesound-project,.seesound-project.json' })
     projectInput.style.display = 'none'
@@ -357,22 +363,47 @@ function buildPresetBar() {
     const btnLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset' })
     const btnDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
 
-    row1.append(lbl, sel, btnLoad, btnDel)
+    row1.append(sel, btnLoad, btnDel)
 
     // ── Row 2: name input + Save
     const row2 = el('div', 'cp-preset-row')
     const nameInput = el('input', 'cp-preset-name', { type: 'text', placeholder: 'preset_title' })
-    const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset' })
+    const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset (Ctrl+P)' })
     row2.append(nameInput, btnSave)
 
     bar.append(row0, row1, row2, projectInput)
 
     let presets = []
 
+    async function saveRulePreset() {
+        _commitPendingPanelEdits()
+        const typed = nameInput.value.trim()
+        const selected = String(sel.value || '').trim()
+        const name = typed || selected
+        if (!name) {
+            alert('Enter or select a preset name first.')
+            nameInput.focus()
+            return false
+        }
+
+        if (!typed && selected) nameInput.value = selected
+
+        if (presets.includes(name) && !confirm(`Overwrite preset "${name}"?`)) return false
+
+        const latestRules = _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+        const snapshot = getSnapshot()
+        snapshot.ruleBlocks = latestRules
+        await savePreset(name, snapshot)
+        await refresh()
+        sel.value = name
+        return true
+    }
+
     async function refresh() {
-        presets = await listPresets()
+        const all = await listPresets()
+        presets = all.filter((name) => !String(name || '').startsWith(RULE_PRESET_PREFIX))
         const prev = sel.value
-        sel.innerHTML = '<option value="">select</option>'
+        sel.innerHTML = '<option value="">select preset</option>'
         for (const n of presets) {
             const o = el('option', '', { value: n, text: n })
             sel.appendChild(o)
@@ -404,16 +435,7 @@ function buildPresetBar() {
     })
 
     btnSave.addEventListener('click', async () => {
-        const name = nameInput.value.trim()
-        if (!name) return
-        if (presets.includes(name) && !confirm(`Overwrite preset "${name}"?`)) return
-        const latestRules = _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-        set('ruleBlocks', latestRules)
-        const snapshot = getSnapshot()
-        snapshot.ruleBlocks = latestRules
-        await savePreset(name, snapshot)
-        await refresh()
-        sel.value = name
+        await saveRulePreset()
     })
 
     btnProjectSave.addEventListener('click', () => {
@@ -443,11 +465,30 @@ function buildPresetBar() {
 
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnSave.click() })
 
-    // Update save button style when name matches an existing preset
-    nameInput.addEventListener('input', () => {
-        btnSave.textContent = presets.includes(nameInput.value.trim()) ? 'OVERWRITE' : '🖫'
-        btnSave.classList.toggle('cp-preset-overwrite', presets.includes(nameInput.value.trim()))
-    })
+    const shortcutAbortPrev = window.__seesoundShortcutAbort
+    if (shortcutAbortPrev && typeof shortcutAbortPrev.abort === 'function') shortcutAbortPrev.abort()
+    const shortcutAbort = new AbortController()
+    window.__seesoundShortcutAbort = shortcutAbort
+
+    document.addEventListener('keydown', async (e) => {
+        if (e.defaultPrevented) return
+        if (e.altKey) return
+        if (!(e.ctrlKey || e.metaKey)) return
+
+        const key = String(e.key || '').toLowerCase()
+        if (key === 's') {
+            e.preventDefault()
+            e.stopPropagation()
+            window.dispatchEvent(new CustomEvent('seesound:project-save-request'))
+            return
+        }
+
+        if (key === 'p' && !e.shiftKey) {
+            e.preventDefault()
+            e.stopPropagation()
+            await saveRulePreset()
+        }
+    }, { signal: shortcutAbort.signal })
 
     refresh()
     return bar
@@ -462,9 +503,11 @@ function buildCanvasSizeBar() {
     const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '160', value: String(Math.max(160, Number(params.canvasWidth ?? 0) || 160)) })
     const hLabel = el('label', 'cp-canvas-size-label', { text: '↕' })
     const hInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '120', value: String(Math.max(120, Number(params.canvasHeight ?? 0) || 120)) })
+    const sLabel = el('label', 'cp-canvas-size-label', { text: '%' })
+    const sInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '5', max: '400', value: String(Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale ?? 100) || 100)))) })
     const applyBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply' })
 
-    const live = { w: 0, h: 0 }
+    const live = { w: 0, h: 0, s: 100 }
 
     function render() {
         if (document.activeElement !== wInput) {
@@ -473,13 +516,18 @@ function buildCanvasSizeBar() {
         if (document.activeElement !== hInput) {
             hInput.value = String(Math.max(120, Math.floor(live.h || Number(params.canvasHeight) || 120)))
         }
+        if (document.activeElement !== sInput) {
+            sInput.value = String(Math.max(5, Math.min(400, Math.floor(live.s || Number(params.canvasScale) || 100))))
+        }
     }
 
     function applySize() {
         const w = Math.max(160, Math.floor(Number(wInput.value) || 160))
         const h = Math.max(120, Math.floor(Number(hInput.value) || 120))
+        const s = Math.max(5, Math.min(400, Math.floor(Number(sInput.value) || 100)))
         set('canvasWidth', w)
         set('canvasHeight', h)
+        set('canvasScale', s)
     }
 
     wInput.addEventListener('change', applySize)
@@ -498,21 +546,31 @@ function buildCanvasSizeBar() {
             hInput.blur()
         }
     })
+    sInput.addEventListener('change', applySize)
+    sInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applySize()
+            sInput.blur()
+        }
+    })
     applyBtn.addEventListener('click', applySize)
 
     _rowSyncMap.set('canvasWidth', () => render())
     _rowSyncMap.set('canvasHeight', () => render())
+    _rowSyncMap.set('canvasScale', () => render())
 
     subscribe((_, key) => {
-        if (key === 'canvasWidth' || key === 'canvasHeight') render()
+        if (key === 'canvasWidth' || key === 'canvasHeight' || key === 'canvasScale') render()
     })
     window.addEventListener('seesound:canvas-size', (e) => {
         live.w = Number(e?.detail?.w) || live.w
         live.h = Number(e?.detail?.h) || live.h
+        live.s = Number(e?.detail?.s) || live.s
         render()
     })
 
-    row.append(wLabel, wInput, hLabel, hInput, applyBtn)
+    row.append(wLabel, wInput, hLabel, hInput, sLabel, sInput, applyBtn)
     bar.append(title, row)
     render()
     return bar
@@ -562,8 +620,15 @@ const _inputIds = getInputDictionary().entries.map((e) => e.id)
 const _outputMeta = getOutputDictionary().entries
 const _outputIds = _outputMeta.map((e) => e.id)
 const _conditionOps = ['always', '>', '>=', '<', '<=', '==', '!=']
-const _ruleScopes = [...RULE_SCOPES]
+const _ruleTargets = [...RULE_TARGETS]
 const _actionOps = [...RULE_ACTION_OPERATORS]
+
+const _targetLabels = {
+    spawnedParticles: 'spawned particles',
+    allParticles: 'all particles',
+    background: 'background',
+    camera: 'camera',
+}
 
 let _ruleBuilderApi = null
 
@@ -571,11 +636,17 @@ function _defaultRuleName(index = 0) {
     return `rule-${Math.max(1, Math.floor(index) + 1)}`
 }
 
+function _newRuleUid() {
+    return `rule-ui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 function _defaultRule(index = 0) {
     return {
         id: _defaultRuleName(index),
+        group: '',
+        subgroup: '',
         enabled: true,
-        scope: 'spawnedOnly',
+        target: 'spawnedParticles',
         condition: { operator: 'always' },
         actions: [{ operator: 'set', output: 'opacity', value: 1.0 }],
         strength: 1,
@@ -586,6 +657,85 @@ function _defaultRule(index = 0) {
 
 function _isShapeOutput(outputId) {
     return outputId === 'shapeType'
+}
+
+function _normalizeTarget(rule) {
+    const rawTarget = typeof rule?.target === 'string' ? rule.target : ''
+    if (_ruleTargets.includes(rawTarget)) return rawTarget
+    if (rule?.scope === 'allLivingFrame') return 'allParticles'
+    return 'spawnedParticles'
+}
+
+function _outputIdsForTarget(target) {
+    return _outputMeta
+        .filter((entry) => !Array.isArray(entry.targets) || entry.targets.includes(target))
+        .map((entry) => entry.id)
+}
+
+function _ensureValidOutputForTarget(row) {
+    const allowed = _outputIdsForTarget(row.target)
+    if (allowed.length === 0) {
+        row.actionOutput = 'opacity'
+        return
+    }
+    if (!allowed.includes(row.actionOutput)) row.actionOutput = allowed[0]
+}
+
+function _parseInputScaleExpression(expr) {
+    const raw = typeof expr === 'string' ? expr.trim() : ''
+    if (!raw) return null
+
+    // Canonical generated form: (inputId) * scalar
+    const scaled = raw.match(/^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\*\s*(-?\d+(?:\.\d+)?)$/)
+    if (scaled) {
+        const input = scaled[1]
+        const scale = Number(scaled[2])
+        if (_inputIds.includes(input) && Number.isFinite(scale)) {
+            return {
+                input,
+                strength: Math.abs(scale),
+                invert: scale < 0,
+            }
+        }
+    }
+
+    // Canonical reciprocal form: strength / max(1e-6, (inputId))
+    const reciprocal = raw.match(/^\(?\s*(-?\d+(?:\.\d+)?)\s*\)?\s*\/\s*max\(\s*1e-6\s*,\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\)$/)
+    if (reciprocal) {
+        const strength = Number(reciprocal[1])
+        const input = reciprocal[2]
+        if (_inputIds.includes(input) && Number.isFinite(strength)) {
+            return {
+                input,
+                strength: Math.abs(strength),
+                invert: true,
+            }
+        }
+    }
+
+    // Also accept direct input reference: inputId or (inputId)
+    const direct = raw.match(/^\(?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)?$/)
+    if (direct) {
+        const input = direct[1]
+        if (_inputIds.includes(input)) {
+            return {
+                input,
+                strength: 1,
+                invert: false,
+            }
+        }
+    }
+
+    return null
+}
+
+function _refreshSelectOptions(select, options, selectedValue) {
+    select.innerHTML = ''
+    for (const optionDef of options) {
+        const option = el('option', '', { value: optionDef.value, text: optionDef.label })
+        if (String(optionDef.value) === String(selectedValue)) option.selected = true
+        select.appendChild(option)
+    }
 }
 
 function _rowToRule(row, order) {
@@ -602,20 +752,19 @@ function _rowToRule(row, order) {
     }
 
     const strength = Number.isFinite(Number(row.strength)) ? Number(row.strength) : 1
-    const sign = row.invert ? -1 : 1
-
     if (_isShapeOutput(row.actionOutput)) {
         action.value = row.actionLiteralShape === 'circle' ? 'circle' : 'square'
     } else if (row.actionValueMode === 'expression') {
         action.expression = row.actionExpression || '0'
     } else if (row.actionValueMode === 'input') {
         const source = row.actionInput || 'amplitude'
-        if (strength === 1 && sign === 1 && row.actionOp === 'set') action.input = source
-        else action.expression = `(${source}) * ${strength * sign}`
+        if (!row.invert && strength === 1 && row.actionOp === 'set') action.input = source
+        else if (row.invert) action.expression = `${strength} / max(1e-6, (${source}))`
+        else action.expression = `(${source}) * ${strength}`
     } else {
         const value = Number(row.actionLiteral)
         if (Number.isFinite(value)) {
-            action.value = value * strength * sign
+            action.value = value
         } else {
             action.value = 0
         }
@@ -623,8 +772,10 @@ function _rowToRule(row, order) {
 
     return {
         id: row.id,
+        group: row.group,
+        subgroup: row.subgroup,
         enabled: !!row.enabled,
-        scope: row.scope,
+        target: row.target,
         condition,
         actions: [action],
         strength,
@@ -638,10 +789,17 @@ function _ruleToRow(rule, index) {
     const isShape = _isShapeOutput(action.output)
     const hasExpr = typeof action.expression === 'string' && action.expression.trim().length > 0
     const hasInput = typeof action.input === 'string' && action.input.trim().length > 0
+    const parsedExprInput = hasExpr ? _parseInputScaleExpression(action.expression) : null
+    const inferredInput = parsedExprInput?.input || (_inputIds.includes(action.input) ? action.input : 'amplitude')
+    const inferredStrength = parsedExprInput ? parsedExprInput.strength : (Number.isFinite(Number(rule.strength)) ? Number(rule.strength) : 1)
+    const inferredInvert = parsedExprInput ? parsedExprInput.invert : !!rule.invert
     return {
+        _uid: typeof rule._uid === 'string' && rule._uid ? rule._uid : _newRuleUid(),
         id: (typeof rule.id === 'string' && rule.id.trim()) ? rule.id.trim() : _defaultRuleName(index),
+        group: typeof rule.group === 'string' ? rule.group : '',
+        subgroup: typeof rule.subgroup === 'string' ? rule.subgroup : '',
         enabled: rule.enabled !== false,
-        scope: _ruleScopes.includes(rule.scope) ? rule.scope : 'spawnedOnly',
+        target: _normalizeTarget(rule),
         conditionOp: rule.condition?.operator || 'always',
         conditionInput: _inputIds.includes(rule.condition?.input) ? rule.condition.input : 'amplitude',
         conditionRhsMode: rule.condition?.valueInput ? 'input' : 'literal',
@@ -649,50 +807,16 @@ function _ruleToRow(rule, index) {
         conditionRhsLiteral: Number.isFinite(Number(rule.condition?.value)) ? Number(rule.condition.value) : 0.5,
         actionOutput: _outputIds.includes(action.output) ? action.output : 'opacity',
         actionOp: _actionOps.includes(action.operator) ? action.operator : 'set',
-        actionValueMode: isShape ? 'shape' : (hasExpr ? 'expression' : (hasInput ? 'input' : 'literal')),
-        actionInput: _inputIds.includes(action.input) ? action.input : 'amplitude',
+        actionValueMode: isShape ? 'shape' : (parsedExprInput ? 'input' : (hasExpr ? 'expression' : (hasInput ? 'input' : 'literal'))),
+        actionInput: inferredInput,
         actionLiteral: Number.isFinite(Number(action.value)) ? Number(action.value) : 1,
         actionLiteralShape: action.value === 'circle' ? 'circle' : 'square',
         actionExpression: hasExpr ? action.expression : '',
-        strength: Number.isFinite(Number(rule.strength)) ? Number(rule.strength) : 1,
-        invert: !!rule.invert,
+        strength: inferredStrength,
+        invert: inferredInvert,
         uiState: rule.uiState || 'normal',
         order: Number.isFinite(rule.order) ? Number(rule.order) : index,
     }
-}
-
-function _makeSimpleRow(kind, index) {
-    const row = _ruleToRow(_defaultRule(index), index)
-    if (kind === 'louder-bigger') {
-        row.conditionOp = '>'
-        row.conditionInput = 'amplitude'
-        row.conditionRhsMode = 'literal'
-        row.conditionRhsLiteral = 0.05
-        row.actionOutput = 'size'
-        row.actionOp = 'set'
-        row.actionValueMode = 'input'
-        row.actionInput = 'amplitude'
-        row.strength = 24
-        row.invert = false
-    } else if (kind === 'louder-brighter') {
-        row.conditionOp = 'always'
-        row.actionOutput = 'opacity'
-        row.actionOp = 'set'
-        row.actionValueMode = 'input'
-        row.actionInput = 'amplitude'
-        row.strength = 1
-        row.invert = false
-    } else if (kind === 'loud-circle') {
-        row.conditionOp = '>'
-        row.conditionInput = 'amplitude'
-        row.conditionRhsMode = 'literal'
-        row.conditionRhsLiteral = 0.5
-        row.actionOutput = 'shapeType'
-        row.actionOp = 'set'
-        row.actionValueMode = 'shape'
-        row.actionLiteralShape = 'circle'
-    }
-    return row
 }
 
 function _ruleSummary(row) {
@@ -706,10 +830,10 @@ function _ruleSummary(row) {
     } else if (row.actionValueMode === 'expression') {
         rhs = row.actionExpression || '0'
     } else if (row.actionValueMode === 'input') {
-        const sign = row.invert ? '-' : ''
-        rhs = `${sign}${row.actionInput} × ${Number(row.strength).toFixed(2)}`
+        if (row.invert) rhs = `${Number(row.strength).toFixed(2)} / ${row.actionInput}`
+        else rhs = `${row.actionInput} × ${Number(row.strength).toFixed(2)}`
     } else {
-        rhs = `${Number(row.actionLiteral).toFixed(2)} × ${Number(row.invert ? -row.strength : row.strength).toFixed(2)}`
+        rhs = `${Number(row.actionLiteral).toFixed(2)}`
     }
 
     return `When ${cond}, ${row.actionOp} ${row.actionOutput} using ${rhs}`
@@ -749,24 +873,66 @@ export function initRuleBuilder(container) {
     const badge = el('span', 'cp-rule-status cp-rule-status-stale', { text: 'stale' })
     header.append(title, badge)
 
-    const hint = el('div', 'cp-rule-hint', { text: 'Quick start: add a rule, then tune threshold and strength.' })
-    const quick = el('div', 'cp-rule-quick')
-    const quickBig = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->S] louder->bigger' })
-    const quickBright = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->A] louder->brighter' })
-    const quickCircle = el('button', 'cp-preset-btn cp-rule-mini', { text: '[A->Shape] loud->circle' })
-    quick.append(quickBig, quickBright, quickCircle)
     const error = el('div', 'cp-rule-error')
 
     const rowsWrap = el('div', 'cp-rule-rows')
+    const rulePresetBar = el('div', 'cp-rule-preset')
+    const rulePresetSel = el('select', 'cp-preset-sel')
+    const rulePresetName = el('input', 'cp-preset-name', { type: 'text', placeholder: 'single_rule_preset' })
+    const rulePresetSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save selected rule as preset' })
+    const rulePresetLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset (append)' })
+    const rulePresetDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
+    rulePresetBar.append(rulePresetSel, rulePresetLoad, rulePresetDel, rulePresetName, rulePresetSave)
     const actions = el('div', 'cp-rule-actions')
     const addBtn = el('button', 'cp-preset-btn cp-rule-add', { text: '+' })
     actions.appendChild(addBtn)
 
-    section.append(header, hint, quick, error, rowsWrap, actions)
+    section.append(header, error, rulePresetBar, rowsWrap, actions)
     container.appendChild(section)
 
     let rows = (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []).map(_ruleToRow)
     let _syncingFromBuilder = false
+    let _dragRowIndex = -1
+    let _dragSelectionUids = []
+    let _dragGroupName = ''
+    let _lastSelectedIndex = -1
+    const _manualGroups = new Map()
+    const _groupOrder = []
+    const _collapsedGroups = new Set()
+    const _collapsedSubgroups = new Set()
+    const _collapsedRuleUids = new Set()
+    const _selectedRuleUids = new Set()
+    let _selectedGroupName = ''
+    let _selectedSubgroup = null
+    const RULE_PRESET_PREFIX = 'rule__'
+    let _rulePresetNames = []
+
+    function _commitPendingRuleEdits() {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.closest('.cp-rule-section')) active.blur()
+    }
+
+    function _nextUniqueRuleId(seed) {
+        const used = new Set(rows.map((r) => String(r.id || '').trim()).filter(Boolean))
+        const base = String(seed || '').trim() || _defaultRuleName(rows.length)
+        if (!used.has(base)) return base
+        let n = 2
+        while (used.has(`${base}-${n}`)) n++
+        return `${base}-${n}`
+    }
+
+    function _duplicateRowAt(index) {
+        if (index < 0 || index >= rows.length) return
+        const source = rows[index]
+        const copy = {
+            ...source,
+            _uid: _newRuleUid(),
+            id: _nextUniqueRuleId(source.id || _defaultRuleName(rows.length)),
+            uiState: 'normal',
+        }
+        rows.splice(index + 1, 0, copy)
+        pushRules()
+    }
 
     function renderCompile(state) {
         const status = state?.compileStatus || 'stale'
@@ -780,6 +946,11 @@ export function initRuleBuilder(container) {
     }
 
     function pushRules() {
+        const uidSet = new Set(rows.map((r) => r._uid))
+        for (const uid of [..._selectedRuleUids]) if (!uidSet.has(uid)) _selectedRuleUids.delete(uid)
+        for (const uid of [..._collapsedRuleUids]) if (!uidSet.has(uid)) _collapsedRuleUids.delete(uid)
+
+        for (const row of rows) _ensureValidOutputForTarget(row)
         const serialized = rows.map((r, i) => _rowToRule(r, i))
         const annotated = annotateRuleContradictions(serialized)
         const red = new Set(annotated.redRuleIds)
@@ -799,178 +970,838 @@ export function initRuleBuilder(container) {
         }
     }
 
-    function drawRows() {
-        rowsWrap.innerHTML = ''
-        if (rows.length === 0) {
-            rowsWrap.appendChild(el('div', 'cp-rule-empty', { text: 'No custom rules in this preset.' }))
+    function _norm(value) {
+        return String(value || '').trim()
+    }
+
+    function _subgroupKey(groupName, subgroupName) {
+        return `${_norm(groupName)}::${_norm(subgroupName)}`
+    }
+
+    function _ensureManualGroup(groupName, subgroupName = '') {
+        const g = _norm(groupName)
+        if (!g) return
+        if (!_manualGroups.has(g)) _manualGroups.set(g, new Set())
+        if (subgroupName !== undefined) _manualGroups.get(g).add(_norm(subgroupName))
+    }
+
+    function _syncManualGroupsFromRows() {
+        for (const row of rows) {
+            const g = _norm(row.group)
+            if (!g) continue
+            _ensureManualGroup(g, _norm(row.subgroup))
+            if (!_groupOrder.includes(g)) _groupOrder.push(g)
+        }
+    }
+
+    function _isInteractiveTarget(target) {
+        const node = target instanceof Element ? target : null
+        if (!node) return false
+        return !!node.closest('input,select,button,textarea,label,.cp-rule-slot-add')
+    }
+
+    function _setSingleSelection(index) {
+        if (index < 0 || index >= rows.length) return
+        _selectedRuleUids.clear()
+        _selectedRuleUids.add(rows[index]._uid)
+        _lastSelectedIndex = index
+        _selectedGroupName = ''
+        _selectedSubgroup = null
+    }
+
+    function _selectRangeTo(index) {
+        if (index < 0 || index >= rows.length) return
+        if (_lastSelectedIndex < 0 || _lastSelectedIndex >= rows.length) {
+            _setSingleSelection(index)
             return
         }
-        rows.forEach((row, i) => {
-            const card = el('div', `cp-rule-row${row.uiState === 'red' ? ' cp-rule-row-red' : ''}`)
+        const lo = Math.min(_lastSelectedIndex, index)
+        const hi = Math.max(_lastSelectedIndex, index)
+        _selectedRuleUids.clear()
+        for (let i = lo; i <= hi; i++) _selectedRuleUids.add(rows[i]._uid)
+        _selectedGroupName = ''
+        _selectedSubgroup = null
+    }
 
-            const top = el('div', 'cp-rule-row-top')
-            const idx = el('span', 'cp-rule-index', { text: `#${i + 1}` })
-            const name = el('input', 'cp-rule-input cp-rule-name', { type: 'text', value: row.id, placeholder: 'rule name' })
-            const enable = el('input', 'cp-rule-toggle', { type: 'checkbox' })
-            enable.checked = !!row.enabled
-            enable.addEventListener('change', wireChange(() => {
-                row.enabled = enable.checked
-                return true
-            }))
-            name.addEventListener('keydown', wireChange((e) => {
-                if (e.key !== 'Enter') return false
-                e.preventDefault()
-                const next = String(name.value || '').trim()
-                row.id = next || _defaultRuleName(i)
-                name.value = row.id
-                name.blur()
-                return true
-            }))
-            const scope = _createSelect(_ruleScopes.map(v => ({ value: v, label: v })), row.scope)
-            scope.addEventListener('change', wireChange(() => {
-                row.scope = scope.value
-                return true
-            }))
-            const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
-            const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
-            const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: '🗙' })
-            up.textContent = '↑'
-            up.addEventListener('click', () => { if (i <= 0) return;[rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; pushRules() })
-            down.addEventListener('click', () => { if (i >= rows.length - 1) return;[rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; pushRules() })
-            del.addEventListener('click', () => { rows.splice(i, 1); pushRules() })
-            top.append(idx, name, enable, scope, up, down, del)
+    function _toggleSelection(index) {
+        if (index < 0 || index >= rows.length) return
+        const uid = rows[index]._uid
+        if (_selectedRuleUids.has(uid)) _selectedRuleUids.delete(uid)
+        else _selectedRuleUids.add(uid)
+        _lastSelectedIndex = index
+        _selectedGroupName = ''
+        _selectedSubgroup = null
+    }
 
-            const cond = el('div', 'cp-rule-line')
-            cond.appendChild(el('span', 'cp-rule-k', { text: 'Condition' }))
-            const condOp = _createSelect(_conditionOps.map(v => ({ value: v, label: v })), row.conditionOp)
-            const condInput = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionInput)
-            const condMode = _createSelect([{ value: 'literal', label: 'literal' }, { value: 'input', label: 'input' }], row.conditionRhsMode)
-            const condLit = _createInputNumber(row.conditionRhsLiteral)
-            const condInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionRhsInput)
-            const refreshCond = () => {
-                const always = condOp.value === 'always'
-                condInput.style.display = always ? 'none' : ''
-                condMode.style.display = always ? 'none' : ''
-                condLit.style.display = (!always && condMode.value === 'literal') ? '' : 'none'
-                condInp.style.display = (!always && condMode.value === 'input') ? '' : 'none'
+    function _handleRuleSelect(index, evt) {
+        if (index < 0 || index >= rows.length) return
+        const withCtrl = !!(evt.ctrlKey || evt.metaKey)
+        if (evt.shiftKey) _selectRangeTo(index)
+        else if (withCtrl) _toggleSelection(index)
+        else _setSingleSelection(index)
+        drawRows()
+    }
+
+    function _selectIndices(indices, evt) {
+        const unique = [...new Set((indices || []).filter((idx) => idx >= 0 && idx < rows.length))].sort((a, b) => a - b)
+        if (unique.length === 0) return
+        const withCtrl = !!(evt?.ctrlKey || evt?.metaKey)
+
+        if (evt?.shiftKey && _lastSelectedIndex >= 0 && _lastSelectedIndex < rows.length) {
+            const target = unique[unique.length - 1]
+            const lo = Math.min(_lastSelectedIndex, target)
+            const hi = Math.max(_lastSelectedIndex, target)
+            _selectedRuleUids.clear()
+            for (let i = lo; i <= hi; i++) _selectedRuleUids.add(rows[i]._uid)
+            drawRows()
+            return
+        }
+
+        if (withCtrl) {
+            for (const idx of unique) {
+                const uid = rows[idx]._uid
+                if (_selectedRuleUids.has(uid)) _selectedRuleUids.delete(uid)
+                else _selectedRuleUids.add(uid)
             }
-            condOp.addEventListener('change', wireChange(() => {
-                row.conditionOp = condOp.value
-                refreshCond()
-                return true
-            }))
-            condInput.addEventListener('change', wireChange(() => {
-                row.conditionInput = condInput.value
-                return true
-            }))
-            condMode.addEventListener('change', wireChange(() => {
-                row.conditionRhsMode = condMode.value
-                refreshCond()
-                return true
-            }))
-            condLit.addEventListener('keydown', wireChange((e) => {
-                if (e.key !== 'Enter') return false
-                e.preventDefault()
-                row.conditionRhsLiteral = Number(condLit.value)
-                condLit.blur()
-                return true
-            }))
-            condInp.addEventListener('change', wireChange(() => {
-                row.conditionRhsInput = condInp.value
-                return true
-            }))
-            cond.append(condOp, condInput, condMode, condLit, condInp)
-            refreshCond()
+        } else {
+            _selectedRuleUids.clear()
+            for (const idx of unique) _selectedRuleUids.add(rows[idx]._uid)
+        }
 
-            const act = el('div', 'cp-rule-line')
-            act.appendChild(el('span', 'cp-rule-k', { text: 'Action' }))
-            const out = _createSelect(_outputIds.map(v => ({ value: v, label: v })), row.actionOutput)
-            const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
-            const mode = _createSelect([
-                { value: 'literal', label: 'literal' },
-                { value: 'input', label: 'input' },
-                { value: 'expression', label: 'expression' },
-                { value: 'shape', label: 'shape type' },
-            ], row.actionValueMode)
-            const valNum = _createInputNumber(row.actionLiteral)
-            const valInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.actionInput)
-            const valExpr = el('input', 'cp-rule-input cp-rule-expr', { type: 'text', value: row.actionExpression, placeholder: 'amplitude * 0.8' })
-            const valShape = _createSelect([{ value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], row.actionLiteralShape)
+        _lastSelectedIndex = unique[unique.length - 1]
+        drawRows()
+    }
 
-            const st = _createInputNumber(row.strength, '0.1')
-            const invWrap = el('label', 'cp-rule-invert')
-            const inv = el('input', '', { type: 'checkbox' })
-            inv.checked = !!row.invert
-            invWrap.append(inv, el('span', '', { text: '⇄ invert' }))
+    function _isTypingTarget(node) {
+        const elNode = node instanceof Element ? node : null
+        if (!elNode) return false
+        return !!elNode.closest('input,textarea,select,[contenteditable="true"]')
+    }
 
-            const refreshAct = () => {
-                const shape = out.value === 'shapeType'
-                if (shape) mode.value = 'shape'
-                mode.style.display = shape ? 'none' : ''
-                valNum.style.display = (!shape && mode.value === 'literal') ? '' : 'none'
-                valInp.style.display = (!shape && mode.value === 'input') ? '' : 'none'
-                valExpr.style.display = (!shape && mode.value === 'expression') ? '' : 'none'
-                valShape.style.display = shape ? '' : 'none'
-                st.style.display = shape ? 'none' : ''
-                invWrap.style.display = shape ? 'none' : ''
+    function _removeRowsByIndices(indices) {
+        const unique = [...new Set((indices || []).filter((idx) => idx >= 0 && idx < rows.length))].sort((a, b) => a - b)
+        if (unique.length === 0) return false
+        for (let k = unique.length - 1; k >= 0; k--) rows.splice(unique[k], 1)
+        _selectedRuleUids.clear()
+        _selectedGroupName = ''
+        _selectedSubgroup = null
+        return true
+    }
+
+    function _deleteSelected() {
+        const selected = _selectedIndices()
+        if (selected.length > 0) {
+            _removeRowsByIndices(selected)
+            pushRules()
+            return true
+        }
+
+        if (_selectedSubgroup && _selectedSubgroup.group) {
+            const g = _selectedSubgroup.group
+            const s = _selectedSubgroup.subgroup
+            const key = _subgroupKey(g, s)
+            const subgroupIndices = []
+            for (let i = 0; i < rows.length; i++) {
+                if (_norm(rows[i].group) === g && _norm(rows[i].subgroup) === s) subgroupIndices.push(i)
             }
 
-            out.addEventListener('change', wireChange(() => {
-                row.actionOutput = out.value
-                refreshAct()
-                return true
-            }))
-            op.addEventListener('change', wireChange(() => {
-                row.actionOp = op.value
-                return true
-            }))
-            mode.addEventListener('change', wireChange(() => {
-                row.actionValueMode = mode.value
-                refreshAct()
-                return true
-            }))
-            valNum.addEventListener('keydown', wireChange((e) => {
-                if (e.key !== 'Enter') return false
-                e.preventDefault()
-                row.actionLiteral = Number(valNum.value)
-                valNum.blur()
-                return true
-            }))
-            valInp.addEventListener('change', wireChange(() => {
-                row.actionInput = valInp.value
-                return true
-            }))
-            valExpr.addEventListener('keydown', wireChange((e) => {
-                if (e.key !== 'Enter') return false
-                e.preventDefault()
-                row.actionExpression = valExpr.value
-                valExpr.blur()
-                return true
-            }))
-            valShape.addEventListener('change', wireChange(() => {
-                row.actionLiteralShape = valShape.value
-                return true
-            }))
-            st.addEventListener('keydown', wireChange((e) => {
-                if (e.key !== 'Enter') return false
-                e.preventDefault()
-                row.strength = Number(st.value)
-                st.blur()
-                return true
-            }))
-            inv.addEventListener('change', wireChange(() => {
-                row.invert = inv.checked
-                return true
-            }))
+            const removedRules = _removeRowsByIndices(subgroupIndices)
+            if (_manualGroups.has(g)) {
+                const subs = _manualGroups.get(g)
+                subs.delete(s)
+                if (subs.size === 0) _manualGroups.delete(g)
+            }
+            _collapsedSubgroups.delete(key)
+            _selectedSubgroup = null
+            _selectedGroupName = ''
 
-            act.append(out, op, mode, valNum, valInp, valExpr, valShape, st, invWrap)
-            refreshAct()
+            if (removedRules) pushRules()
+            else drawRows()
+            return true
+        }
 
-            const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
+        if (_selectedGroupName) {
+            const g = _selectedGroupName
+            const groupIndices = []
+            for (let i = 0; i < rows.length; i++) {
+                if (_norm(rows[i].group) === g) groupIndices.push(i)
+            }
 
-            card.append(top, cond, act, summary)
-            rowsWrap.appendChild(card)
+            const removedRules = _removeRowsByIndices(groupIndices)
+            _manualGroups.delete(g)
+            const orderIdx = _groupOrder.indexOf(g)
+            if (orderIdx >= 0) _groupOrder.splice(orderIdx, 1)
+            _collapsedGroups.delete(g)
+            for (const key of [..._collapsedSubgroups]) {
+                if (key.startsWith(`${g}::`)) _collapsedSubgroups.delete(key)
+            }
+            _selectedGroupName = ''
+            _selectedSubgroup = null
+
+            if (removedRules) pushRules()
+            else drawRows()
+            return true
+        }
+
+        return false
+    }
+
+    function _selectedIndices() {
+        const out = []
+        for (let i = 0; i < rows.length; i++) {
+            if (_selectedRuleUids.has(rows[i]._uid)) out.push(i)
+        }
+        return out
+    }
+
+    function _rulePresetShortName(fullName) {
+        return fullName.startsWith(RULE_PRESET_PREFIX) ? fullName.slice(RULE_PRESET_PREFIX.length) : fullName
+    }
+
+    async function _refreshRulePresets() {
+        const all = await listPresets()
+        _rulePresetNames = all.filter((name) => String(name || '').startsWith(RULE_PRESET_PREFIX))
+        const prev = String(rulePresetSel.value || '')
+        rulePresetSel.innerHTML = '<option value="">rule presets</option>'
+        for (const full of _rulePresetNames) {
+            const opt = el('option', '', { value: full, text: _rulePresetShortName(full) })
+            rulePresetSel.appendChild(opt)
+        }
+        if (prev && _rulePresetNames.includes(prev)) rulePresetSel.value = prev
+    }
+
+    async function _saveSelectedRulePreset() {
+        _commitPendingRuleEdits()
+        const selected = _selectedIndices()
+        if (selected.length < 1) {
+            alert('Select one or more rules to save as a rule preset.')
+            return
+        }
+        const baseName = String(rulePresetName.value || _rulePresetShortName(String(rulePresetSel.value || ''))).trim()
+        if (!baseName) {
+            alert('Enter a single-rule preset name first.')
+            rulePresetName.focus()
+            return
+        }
+        const fullName = `${RULE_PRESET_PREFIX}${baseName}`
+        if (_rulePresetNames.includes(fullName) && !confirm(`Overwrite single-rule preset "${baseName}"?`)) return
+
+        const selectedRules = selected.map((idx, order) => _rowToRule(rows[idx], order))
+        const snapshot = getSnapshot()
+        snapshot.ruleBlocks = selectedRules
+        await savePreset(fullName, snapshot)
+        await _refreshRulePresets()
+        rulePresetSel.value = fullName
+        rulePresetName.value = baseName
+    }
+
+    async function _loadSingleRulePreset(fullName) {
+        if (!fullName) return
+        const data = await loadPreset(fullName)
+        const incoming = Array.isArray(data?.params?.ruleBlocks) ? data.params.ruleBlocks : []
+        if (incoming.length === 0) {
+            alert('Selected rule preset has no rule block.')
+            return
+        }
+        for (const rule of incoming) rows.push(_ruleToRow(rule, rows.length))
+        pushRules()
+    }
+
+    function _moveSelectionTo(targetIndex, nextGroup = '', nextSubgroup = '') {
+        let indices = _dragSelectionUids
+            .map((uid) => rows.findIndex((r) => r._uid === uid))
+            .filter((idx) => idx >= 0)
+            .sort((a, b) => a - b)
+
+        if (indices.length === 0) {
+            indices = _selectedIndices()
+        }
+        if (indices.length === 0 && _dragRowIndex >= 0 && _dragRowIndex < rows.length) {
+            indices = [_dragRowIndex]
+        }
+        if (indices.length === 0) return
+
+        const selected = new Set(indices)
+        if (targetIndex >= 0 && targetIndex <= rows.length) {
+            const prev = targetIndex - 1
+            if (selected.has(targetIndex) || (prev >= 0 && selected.has(prev))) {
+                _dragRowIndex = -1
+                _dragSelectionUids = []
+                return
+            }
+        }
+
+        const moved = indices.map((idx) => rows[idx])
+        for (let k = indices.length - 1; k >= 0; k--) rows.splice(indices[k], 1)
+
+        let to = Math.max(0, Math.min(rows.length, targetIndex))
+        for (const idx of indices) if (idx < to) to--
+
+        const g = _norm(nextGroup)
+        const s = _norm(nextSubgroup)
+        for (const row of moved) {
+            row.group = g
+            row.subgroup = s
+        }
+
+        rows.splice(to, 0, ...moved)
+        _ensureManualGroup(g, s)
+        _selectedRuleUids.clear()
+        for (const row of moved) _selectedRuleUids.add(row._uid)
+        _lastSelectedIndex = rows.findIndex((r) => r._uid === moved[moved.length - 1]._uid)
+        _dragRowIndex = -1
+        _dragSelectionUids = []
+        pushRules()
+    }
+
+    function _syncGroupOrder(grouping) {
+        const names = [...grouping.keys()]
+        for (const name of names) {
+            if (!_groupOrder.includes(name)) _groupOrder.push(name)
+        }
+        for (let i = _groupOrder.length - 1; i >= 0; i--) {
+            if (!names.includes(_groupOrder[i])) _groupOrder.splice(i, 1)
+        }
+    }
+
+    function _applyGroupOrderToRows() {
+        const rank = new Map(_groupOrder.map((name, idx) => [name, idx + 1]))
+        rows = rows
+            .map((row, idx) => ({ row, idx }))
+            .sort((a, b) => {
+                const ra = rank.get(_norm(a.row.group)) ?? 0
+                const rb = rank.get(_norm(b.row.group)) ?? 0
+                if (ra !== rb) return ra - rb
+                return a.idx - b.idx
+            })
+            .map((entry) => entry.row)
+    }
+
+    function _moveGroupBefore(fromGroup, toGroup) {
+        const from = _norm(fromGroup)
+        const to = _norm(toGroup)
+        if (!from || !to || from === to) return
+        const fromIdx = _groupOrder.indexOf(from)
+        const toIdx = _groupOrder.indexOf(to)
+        if (fromIdx < 0 || toIdx < 0) return
+        _groupOrder.splice(fromIdx, 1)
+        const nextTo = _groupOrder.indexOf(to)
+        _groupOrder.splice(nextTo < 0 ? _groupOrder.length : nextTo, 0, from)
+        _applyGroupOrderToRows()
+        pushRules()
+    }
+
+    function _moveDraggedTo(targetIndex, nextGroup = '', nextSubgroup = '') {
+        _moveSelectionTo(targetIndex, nextGroup, nextSubgroup)
+    }
+
+    function _insertNewRuleAt(targetIndex, nextGroup = '', nextSubgroup = '') {
+        const row = _ruleToRow(_defaultRule(rows.length), rows.length)
+        row.group = _norm(nextGroup)
+        row.subgroup = _norm(nextSubgroup)
+        const to = Math.max(0, Math.min(rows.length, targetIndex))
+        rows.splice(to, 0, row)
+        _ensureManualGroup(row.group, row.subgroup)
+        pushRules()
+    }
+
+    function _moveWithinGroup(index, direction) {
+        if (index < 0 || index >= rows.length) return
+        const baseGroup = _norm(rows[index].group)
+        const sameGroup = []
+        for (let i = 0; i < rows.length; i++) {
+            if (_norm(rows[i].group) === baseGroup) sameGroup.push(i)
+        }
+        const localIdx = sameGroup.indexOf(index)
+        if (localIdx < 0) return
+        const swapLocalIdx = localIdx + direction
+        if (swapLocalIdx < 0 || swapLocalIdx >= sameGroup.length) return
+        const swapWith = sameGroup[swapLocalIdx]
+            ;[rows[index], rows[swapWith]] = [rows[swapWith], rows[index]]
+        pushRules()
+    }
+
+    function _buildRuleCard(row, i) {
+        const selected = _selectedRuleUids.has(row._uid)
+        const card = el('div', `cp-rule-row${row.uiState === 'red' ? ' cp-rule-row-red' : ''}${selected ? ' cp-rule-row-selected' : ''}`)
+        card.draggable = true
+        card.dataset.ruleIndex = String(i)
+        card.dataset.ruleUid = row._uid
+        card.addEventListener('click', (evt) => {
+            if (_isInteractiveTarget(evt.target)) return
+            const node = evt.target instanceof Element ? evt.target : null
+            if (!node) return
+            const onSurface =
+                node === card ||
+                node.classList.contains('cp-rule-row-top') ||
+                node.classList.contains('cp-rule-body') ||
+                node.classList.contains('cp-rule-line')
+            if (!onSurface) return
+            _handleRuleSelect(i, evt)
         })
+        card.addEventListener('dragstart', (evt) => {
+            if (!_selectedRuleUids.has(row._uid)) _setSingleSelection(i)
+            _dragSelectionUids = _selectedIndices().map((idx) => rows[idx]._uid)
+            _dragRowIndex = i
+            if (evt.dataTransfer) {
+                evt.dataTransfer.effectAllowed = 'move'
+                evt.dataTransfer.setData('text/plain', row._uid)
+            }
+            card.classList.add('cp-rule-row-dragging')
+        })
+        card.addEventListener('dragend', () => {
+            _dragRowIndex = -1
+            _dragSelectionUids = []
+            card.classList.remove('cp-rule-row-dragging')
+        })
+
+        const top = el('div', 'cp-rule-row-top')
+        const collapsed = _collapsedRuleUids.has(row._uid)
+        const fold = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: collapsed ? '▸' : '▾', title: collapsed ? 'Expand rule' : 'Collapse rule' })
+        fold.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (_collapsedRuleUids.has(row._uid)) _collapsedRuleUids.delete(row._uid)
+            else _collapsedRuleUids.add(row._uid)
+            drawRows()
+        })
+        const idx = el('span', 'cp-rule-index', { text: `#${i + 1}` })
+        const name = el('input', 'cp-rule-input cp-rule-name', { type: 'text', value: row.id, placeholder: 'rule name' })
+        const enable = el('input', 'cp-rule-toggle', { type: 'checkbox' })
+        enable.checked = !!row.enabled
+        enable.addEventListener('change', wireChange(() => {
+            row.enabled = enable.checked
+            return true
+        }))
+        name.addEventListener('keydown', wireChange((e) => {
+            if (e.key !== 'Enter') return false
+            e.preventDefault()
+            const next = String(name.value || '').trim()
+            row.id = next || _defaultRuleName(i)
+            name.value = row.id
+            name.blur()
+            return true
+        }))
+        const target = _createSelect(_ruleTargets.map(v => ({ value: v, label: _targetLabels[v] || v })), row.target)
+        const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
+        const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
+        const dup = el('button', 'cp-preset-btn cp-rule-mini', { text: '⧉' })
+        dup.title = 'Duplicate rule'
+        const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: '🗙' })
+        up.textContent = '↑'
+        up.addEventListener('click', () => _moveWithinGroup(i, -1))
+        down.addEventListener('click', () => _moveWithinGroup(i, +1))
+        dup.addEventListener('click', () => _duplicateRowAt(i))
+        del.addEventListener('click', () => {
+            const indices = _selectedIndices()
+            if (indices.length > 1 && _selectedRuleUids.has(row._uid)) {
+                for (let k = indices.length - 1; k >= 0; k--) rows.splice(indices[k], 1)
+                _selectedRuleUids.clear()
+                pushRules()
+                return
+            }
+            rows.splice(i, 1)
+            _selectedRuleUids.delete(row._uid)
+            _collapsedRuleUids.delete(row._uid)
+            pushRules()
+        })
+        top.append(fold, idx, name, enable, target, up, down, dup, del)
+
+        const cond = el('div', 'cp-rule-line')
+        cond.appendChild(el('span', 'cp-rule-k', { text: 'Condition' }))
+        const condOp = _createSelect(_conditionOps.map(v => ({ value: v, label: v })), row.conditionOp)
+        const condInput = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionInput)
+        const condMode = _createSelect([{ value: 'literal', label: 'literal' }, { value: 'input', label: 'input' }], row.conditionRhsMode)
+        const condLit = _createInputNumber(row.conditionRhsLiteral)
+        const condInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionRhsInput)
+        const refreshCond = () => {
+            const always = condOp.value === 'always'
+            condInput.style.display = always ? 'none' : ''
+            condMode.style.display = always ? 'none' : ''
+            condLit.style.display = (!always && condMode.value === 'literal') ? '' : 'none'
+            condInp.style.display = (!always && condMode.value === 'input') ? '' : 'none'
+        }
+        condOp.addEventListener('change', wireChange(() => {
+            row.conditionOp = condOp.value
+            refreshCond()
+            return true
+        }))
+        condInput.addEventListener('change', wireChange(() => {
+            row.conditionInput = condInput.value
+            return true
+        }))
+        condMode.addEventListener('change', wireChange(() => {
+            row.conditionRhsMode = condMode.value
+            refreshCond()
+            return true
+        }))
+        condLit.addEventListener('keydown', wireChange((e) => {
+            if (e.key !== 'Enter') return false
+            e.preventDefault()
+            row.conditionRhsLiteral = Number(condLit.value)
+            condLit.blur()
+            return true
+        }))
+        condInp.addEventListener('change', wireChange(() => {
+            row.conditionRhsInput = condInp.value
+            return true
+        }))
+        cond.append(condOp, condInput, condMode, condLit, condInp)
+        refreshCond()
+
+        const act = el('div', 'cp-rule-line')
+        act.appendChild(el('span', 'cp-rule-k', { text: 'Action' }))
+        _ensureValidOutputForTarget(row)
+        const out = _createSelect(_outputIdsForTarget(row.target).map(v => ({ value: v, label: v })), row.actionOutput)
+        const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
+        const mode = _createSelect([
+            { value: 'literal', label: 'literal' },
+            { value: 'input', label: 'input' },
+            { value: 'expression', label: 'expression' },
+            { value: 'shape', label: 'shape type' },
+        ], row.actionValueMode)
+        const valNum = _createInputNumber(row.actionLiteral)
+        const valInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.actionInput)
+        const valExpr = el('input', 'cp-rule-input cp-rule-expr', { type: 'text', value: row.actionExpression, placeholder: 'amplitude * 0.8' })
+        const valShape = _createSelect([{ value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], row.actionLiteralShape)
+
+        const st = _createInputNumber(row.strength, '0.1')
+        const invWrap = el('label', 'cp-rule-invert')
+        const inv = el('input', '', { type: 'checkbox' })
+        inv.checked = !!row.invert
+        invWrap.append(inv, el('span', '', { text: '⇄ invert' }))
+
+        const refreshAct = () => {
+            _ensureValidOutputForTarget(row)
+            const allowedOutputs = _outputIdsForTarget(row.target).map((v) => ({ value: v, label: v }))
+            _refreshSelectOptions(out, allowedOutputs, row.actionOutput)
+            const shape = out.value === 'shapeType'
+            if (shape) mode.value = 'shape'
+            mode.style.display = shape ? 'none' : ''
+            valNum.style.display = (!shape && mode.value === 'literal') ? '' : 'none'
+            valInp.style.display = (!shape && mode.value === 'input') ? '' : 'none'
+            valExpr.style.display = (!shape && mode.value === 'expression') ? '' : 'none'
+            valShape.style.display = shape ? '' : 'none'
+            const inputMode = !shape && mode.value === 'input'
+            st.style.display = inputMode ? '' : 'none'
+            invWrap.style.display = inputMode ? '' : 'none'
+        }
+
+        out.addEventListener('change', wireChange(() => {
+            row.actionOutput = out.value
+            refreshAct()
+            return true
+        }))
+        target.addEventListener('change', wireChange(() => {
+            row.target = target.value
+            _ensureValidOutputForTarget(row)
+            refreshAct()
+            return true
+        }))
+        op.addEventListener('change', wireChange(() => {
+            row.actionOp = op.value
+            return true
+        }))
+        mode.addEventListener('change', wireChange(() => {
+            row.actionValueMode = mode.value
+            refreshAct()
+            return true
+        }))
+        valNum.addEventListener('keydown', wireChange((e) => {
+            if (e.key !== 'Enter') return false
+            e.preventDefault()
+            row.actionLiteral = Number(valNum.value)
+            valNum.blur()
+            return true
+        }))
+        valInp.addEventListener('change', wireChange(() => {
+            row.actionInput = valInp.value
+            return true
+        }))
+        valExpr.addEventListener('keydown', wireChange((e) => {
+            if (e.key !== 'Enter') return false
+            e.preventDefault()
+            row.actionExpression = valExpr.value
+            valExpr.blur()
+            return true
+        }))
+        valShape.addEventListener('change', wireChange(() => {
+            row.actionLiteralShape = valShape.value
+            return true
+        }))
+        st.addEventListener('keydown', wireChange((e) => {
+            if (e.key !== 'Enter') return false
+            e.preventDefault()
+            row.strength = Number(st.value)
+            st.blur()
+            return true
+        }))
+        inv.addEventListener('change', wireChange(() => {
+            row.invert = inv.checked
+            return true
+        }))
+
+        act.append(out, op, mode, valNum, valInp, valExpr, valShape, st, invWrap)
+        refreshAct()
+
+        const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
+
+        const body = el('div', 'cp-rule-body')
+        body.append(cond, act, summary)
+        if (collapsed) body.style.display = 'none'
+        card.append(top, body)
+        return card
+    }
+
+    function _buildDropSlot(targetIndex, groupName = '', subgroupName = '') {
+        const slot = el('div', 'cp-rule-slot')
+        const plus = el('button', 'cp-rule-slot-add', { type: 'button', text: '+' })
+        plus.title = 'Add rule here'
+        plus.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            _insertNewRuleAt(targetIndex, groupName, subgroupName)
+        })
+        slot.addEventListener('dragover', (e) => {
+            e.preventDefault()
+            slot.classList.add('cp-rule-slot-active')
+        })
+        slot.addEventListener('dragleave', () => {
+            slot.classList.remove('cp-rule-slot-active')
+        })
+        slot.addEventListener('drop', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            slot.classList.remove('cp-rule-slot-active')
+            _moveDraggedTo(targetIndex, groupName, subgroupName)
+        })
+        slot.appendChild(plus)
+        return slot
+    }
+
+    function _buildLane(indices, groupName = '', subgroupName = '') {
+        const lane = el('div', 'cp-rule-lane')
+        if (indices.length === 0) {
+            lane.appendChild(_buildDropSlot(rows.length, groupName, subgroupName))
+            return lane
+        }
+
+        lane.appendChild(_buildDropSlot(indices[0], groupName, subgroupName))
+        for (const idx of indices) {
+            lane.appendChild(_buildRuleCard(rows[idx], idx))
+            lane.appendChild(_buildDropSlot(idx + 1, groupName, subgroupName))
+        }
+        return lane
+    }
+
+    function _wireAreaDrop(node, groupName = '', subgroupName = '') {
+        node.addEventListener('dragover', (e) => {
+            e.preventDefault()
+            node.classList.add('cp-rule-dropzone-active')
+        })
+        node.addEventListener('dragleave', () => {
+            node.classList.remove('cp-rule-dropzone-active')
+        })
+        node.addEventListener('drop', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            node.classList.remove('cp-rule-dropzone-active')
+            _moveDraggedTo(rows.length, groupName, subgroupName)
+        })
+    }
+
+    function drawRows() {
+        rowsWrap.innerHTML = ''
+        _syncManualGroupsFromRows()
+
+        const grouping = new Map()
+        const ungrouped = []
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i]
+            const g = _norm(row.group)
+            const s = _norm(row.subgroup)
+            if (!g) {
+                ungrouped.push(i)
+                continue
+            }
+            if (!grouping.has(g)) grouping.set(g, new Map())
+            const sg = grouping.get(g)
+            if (!sg.has(s)) sg.set(s, [])
+            sg.get(s).push(i)
+        }
+
+        for (const [g, subs] of _manualGroups.entries()) {
+            if (!grouping.has(g)) grouping.set(g, new Map())
+            const map = grouping.get(g)
+            for (const s of subs) {
+                if (!map.has(s)) map.set(s, [])
+            }
+        }
+        _syncGroupOrder(grouping)
+
+        const board = el('div', 'cp-rule-groups')
+
+        const ungroupedWrap = el('div', 'cp-rule-group cp-rule-ungrouped')
+        const ungroupedHeader = el('div', 'cp-rule-group-header')
+        ungroupedHeader.appendChild(el('div', 'cp-rule-group-title', { text: 'Ungrouped' }))
+        ungroupedWrap.append(ungroupedHeader, _buildLane(ungrouped, '', ''))
+        board.appendChild(ungroupedWrap)
+
+        for (const groupName of _groupOrder) {
+            const subgroupMap = grouping.get(groupName)
+            if (!subgroupMap) continue
+            const groupIndices = []
+            for (const list of subgroupMap.values()) groupIndices.push(...list)
+            const groupSelected =
+                _selectedGroupName === groupName ||
+                (groupIndices.length > 0 && groupIndices.every((idx) => _selectedRuleUids.has(rows[idx]._uid)))
+            const gWrap = el('div', 'cp-rule-group')
+            gWrap.draggable = true
+            const gHeader = el(`div`, `cp-rule-group-header${groupSelected ? ' cp-rule-group-header-selected' : ''}`)
+            const isGroupOpen = !_collapsedGroups.has(groupName)
+            const gChevron = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: isGroupOpen ? '▾' : '▸' })
+            const gTitle = el('div', 'cp-rule-group-title', { text: groupName })
+            const createSub = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+ Sub' })
+            gChevron.title = isGroupOpen ? 'Collapse group' : 'Expand group'
+            gChevron.addEventListener('click', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (_collapsedGroups.has(groupName)) _collapsedGroups.delete(groupName)
+                else _collapsedGroups.add(groupName)
+                drawRows()
+            })
+            gHeader.addEventListener('click', (e) => {
+                if (_isInteractiveTarget(e.target)) return
+                if (e.target !== gHeader) return
+                _selectedGroupName = groupName
+                _selectedSubgroup = null
+                if (groupIndices.length > 0) _selectIndices(groupIndices, e)
+                else {
+                    _selectedRuleUids.clear()
+                    _lastSelectedIndex = -1
+                    drawRows()
+                }
+            })
+            createSub.addEventListener('click', () => {
+                const raw = prompt(`Create subgroup inside "${groupName}"`, 'subgroup')
+                const name = String(raw || '').trim()
+                if (!name) return
+                _ensureManualGroup(groupName, name)
+                drawRows()
+            })
+            createSub.addEventListener('click', (e) => e.stopPropagation())
+            createSub.addEventListener('dblclick', (e) => e.stopPropagation())
+
+            gTitle.title = 'Double-click to rename group'
+            gTitle.addEventListener('dblclick', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const raw = prompt('Rename group', groupName)
+                const next = _norm(raw)
+                if (!next || next === groupName) return
+                for (const row of rows) {
+                    if (_norm(row.group) === groupName) row.group = next
+                }
+                if (_manualGroups.has(groupName)) {
+                    const subs = _manualGroups.get(groupName)
+                    _manualGroups.delete(groupName)
+                    _manualGroups.set(next, subs)
+                }
+                if (_collapsedGroups.delete(groupName)) _collapsedGroups.add(next)
+                const movedKeys = [..._collapsedSubgroups].filter((k) => k.startsWith(`${groupName}::`))
+                for (const k of movedKeys) {
+                    _collapsedSubgroups.delete(k)
+                    _collapsedSubgroups.add(k.replace(`${groupName}::`, `${next}::`))
+                }
+                pushRules()
+            })
+
+            gWrap.addEventListener('dragstart', (evt) => {
+                _dragGroupName = groupName
+                if (evt.dataTransfer) {
+                    evt.dataTransfer.effectAllowed = 'move'
+                    evt.dataTransfer.setData('text/plain', `group:${groupName}`)
+                }
+                gWrap.classList.add('cp-rule-group-dragging')
+            })
+            gWrap.addEventListener('dragend', () => {
+                _dragGroupName = ''
+                gWrap.classList.remove('cp-rule-group-dragging')
+            })
+            gWrap.addEventListener('dragover', (e) => {
+                if (!_dragGroupName) return
+                e.preventDefault()
+                gWrap.classList.add('cp-rule-group-drop-target')
+            })
+            gWrap.addEventListener('dragleave', () => {
+                gWrap.classList.remove('cp-rule-group-drop-target')
+            })
+            gWrap.addEventListener('drop', (e) => {
+                if (!_dragGroupName) return
+                e.preventDefault()
+                gWrap.classList.remove('cp-rule-group-drop-target')
+                _moveGroupBefore(_dragGroupName, groupName)
+            })
+
+            const gHeaderActions = el('span', 'cp-rule-group-actions')
+            gHeaderActions.appendChild(createSub)
+            gHeader.append(gChevron, gTitle, gHeaderActions)
+
+            const gBody = el('div', 'cp-rule-group-body')
+            if (!isGroupOpen) gBody.style.display = 'none'
+            _wireAreaDrop(gBody, groupName, '')
+
+            const rootRows = subgroupMap.get('') || []
+            gBody.appendChild(_buildLane(rootRows, groupName, ''))
+
+            const subWrap = el('div', 'cp-rule-subgroups')
+            for (const [subName, indices] of subgroupMap.entries()) {
+                if (_norm(subName) === '') continue
+                const subSelected =
+                    (_selectedSubgroup && _selectedSubgroup.group === groupName && _selectedSubgroup.subgroup === subName) ||
+                    (indices.length > 0 && indices.every((idx) => _selectedRuleUids.has(rows[idx]._uid)))
+                const sWrap = el('div', 'cp-rule-subgroup')
+                const sHeader = el(`div`, `cp-rule-subgroup-title${subSelected ? ' cp-rule-subgroup-title-selected' : ''}`)
+                const subKey = _subgroupKey(groupName, subName)
+                const isSubOpen = !_collapsedSubgroups.has(subKey)
+                const sChevron = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: isSubOpen ? '▾' : '▸' })
+                const sText = el('span', '', { text: subName })
+                sChevron.title = isSubOpen ? 'Collapse subgroup' : 'Expand subgroup'
+                sHeader.append(sChevron, sText)
+                sChevron.addEventListener('click', (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (_collapsedSubgroups.has(subKey)) _collapsedSubgroups.delete(subKey)
+                    else _collapsedSubgroups.add(subKey)
+                    drawRows()
+                })
+                sHeader.addEventListener('click', (e) => {
+                    if (_isInteractiveTarget(e.target)) return
+                    if (e.target !== sHeader) return
+                    _selectedSubgroup = { group: groupName, subgroup: subName }
+                    _selectedGroupName = ''
+                    if (indices.length > 0) _selectIndices(indices, e)
+                    else {
+                        _selectedRuleUids.clear()
+                        _lastSelectedIndex = -1
+                        drawRows()
+                    }
+                })
+
+                const sBody = el('div', 'cp-rule-subgroup-body')
+                if (!isSubOpen) sBody.style.display = 'none'
+                _wireAreaDrop(sBody, groupName, subName)
+                sBody.appendChild(_buildLane(indices, groupName, subName))
+                sWrap.append(sHeader, sBody)
+                subWrap.appendChild(sWrap)
+            }
+
+            gBody.appendChild(subWrap)
+            gWrap.append(gHeader, gBody)
+            board.appendChild(gWrap)
+        }
+
+        rowsWrap.appendChild(board)
     }
 
     addBtn.addEventListener('click', () => {
@@ -978,18 +1809,69 @@ export function initRuleBuilder(container) {
         pushRules()
     })
 
-    quickBig.addEventListener('click', () => {
-        rows.push(_makeSimpleRow('louder-bigger', rows.length))
+    rulePresetSel.addEventListener('change', () => {
+        const full = String(rulePresetSel.value || '')
+        if (!full) return
+        rulePresetName.value = _rulePresetShortName(full)
+    })
+    rulePresetSave.addEventListener('click', async () => {
+        await _saveSelectedRulePreset()
+    })
+    rulePresetLoad.addEventListener('click', async () => {
+        await _loadSingleRulePreset(String(rulePresetSel.value || ''))
+    })
+    rulePresetDel.addEventListener('click', async () => {
+        const full = String(rulePresetSel.value || '')
+        if (!full) return
+        const short = _rulePresetShortName(full)
+        if (!confirm(`Delete single-rule preset "${short}"?`)) return
+        await deletePreset(full)
+        await _refreshRulePresets()
+        rulePresetName.value = ''
+    })
+
+    const addGroupBtn = el('button', 'cp-preset-btn cp-rule-add-group', { text: 'New Group' })
+    addGroupBtn.addEventListener('click', () => {
+        const raw = prompt('New group name', 'group')
+        const groupName = _norm(raw)
+        if (!groupName) return
+        _ensureManualGroup(groupName, '')
+        drawRows()
+    })
+    actions.appendChild(addGroupBtn)
+
+    const groupSelectedBtn = el('button', 'cp-preset-btn cp-rule-add-group', { text: 'Group Selection' })
+    groupSelectedBtn.addEventListener('click', () => {
+        const selected = _selectedIndices()
+        if (selected.length === 0) {
+            alert('Select one or more rules first.')
+            return
+        }
+        const raw = prompt('New group name for selected rules', 'group')
+        const groupName = _norm(raw)
+        if (!groupName) return
+        for (const idx of selected) {
+            rows[idx].group = groupName
+            rows[idx].subgroup = ''
+        }
+        _ensureManualGroup(groupName, '')
+        if (!_groupOrder.includes(groupName)) _groupOrder.push(groupName)
         pushRules()
     })
-    quickBright.addEventListener('click', () => {
-        rows.push(_makeSimpleRow('louder-brighter', rows.length))
-        pushRules()
-    })
-    quickCircle.addEventListener('click', () => {
-        rows.push(_makeSimpleRow('loud-circle', rows.length))
-        pushRules()
-    })
+    actions.appendChild(groupSelectedBtn)
+
+    const deleteAbortPrev = window.__seesoundRuleDeleteAbort
+    if (deleteAbortPrev && typeof deleteAbortPrev.abort === 'function') deleteAbortPrev.abort()
+    const deleteAbort = new AbortController()
+    window.__seesoundRuleDeleteAbort = deleteAbort
+    document.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented) return
+        if (!(e.key === 'Delete' || e.key === 'Backspace')) return
+        if (_isTypingTarget(e.target)) return
+        if (!_deleteSelected()) return
+        e.preventDefault()
+        e.stopPropagation()
+    }, { signal: deleteAbort.signal })
 
     _ruleBuilderApi = {
         serialize: () => rows.map((r, i) => _rowToRule(r, i)),
@@ -999,6 +1881,19 @@ export function initRuleBuilder(container) {
         },
         replaceFromRuleBlocks: (blocks) => {
             rows = (Array.isArray(blocks) ? blocks : []).map(_ruleToRow)
+            _manualGroups.clear()
+            _groupOrder.length = 0
+            _collapsedGroups.clear()
+            _collapsedSubgroups.clear()
+            _collapsedRuleUids.clear()
+            _selectedRuleUids.clear()
+            _selectedGroupName = ''
+            _selectedSubgroup = null
+            _lastSelectedIndex = -1
+            _dragRowIndex = -1
+            _dragSelectionUids = []
+            _dragGroupName = ''
+            _syncManualGroupsFromRows()
             drawRows()
             renderCompile({ compileStatus: 'stale', compileError: null })
         },
@@ -1011,6 +1906,7 @@ export function initRuleBuilder(container) {
     })
 
     drawRows()
+    _refreshRulePresets()
     pushRules()
     window.addEventListener('seesound:rule-compile-state', (e) => renderCompile(e.detail || {}))
     return _ruleBuilderApi
@@ -1043,7 +1939,7 @@ export function initControlPanel(container) {
 
     for (let i = 0; i < PARAM_GROUPS.length; i++) {
         const g = PARAM_GROUPS[i]
-        const groupParams = PARAMS.filter(p => p.group === g.id && p.key !== 'canvasWidth' && p.key !== 'canvasHeight')
+        const groupParams = PARAMS.filter(p => p.group === g.id && p.key !== 'canvasWidth' && p.key !== 'canvasHeight' && p.key !== 'canvasScale')
         if (groupParams.length === 0) continue
         body.appendChild(buildGroup(g, groupParams, i < 3))
     }

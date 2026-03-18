@@ -53,6 +53,55 @@ function shapeToValue(shapeType) {
     return 0
 }
 
+function clamp01(value) {
+    return Math.max(0, Math.min(1, value))
+}
+
+function normalizeHue(hue) {
+    if (!Number.isFinite(hue)) return null
+    const unitHue = Math.abs(hue) > 1 ? hue / 360 : hue
+    return ((unitHue % 1) + 1) % 1
+}
+
+function rgbToHsv(r, g, b) {
+    const rr = clamp01(r)
+    const gg = clamp01(g)
+    const bb = clamp01(b)
+    const max = Math.max(rr, gg, bb)
+    const min = Math.min(rr, gg, bb)
+    const delta = max - min
+    let h = 0
+    if (delta > 1e-6) {
+        if (max === rr) h = ((gg - bb) / delta) % 6
+        else if (max === gg) h = ((bb - rr) / delta) + 2
+        else h = ((rr - gg) / delta) + 4
+        h /= 6
+        if (h < 0) h += 1
+    }
+    const s = max <= 1e-6 ? 0 : delta / max
+    const v = max
+    return { h, s, v }
+}
+
+function hsvToRgb(h, s, v) {
+    const hh = normalizeHue(h) ?? 0
+    const ss = clamp01(s)
+    const vv = clamp01(v)
+    const i = Math.floor(hh * 6)
+    const f = hh * 6 - i
+    const p = vv * (1 - ss)
+    const q = vv * (1 - f * ss)
+    const t = vv * (1 - (1 - f) * ss)
+    switch (i % 6) {
+        case 0: return { r: vv, g: t, b: p }
+        case 1: return { r: q, g: vv, b: p }
+        case 2: return { r: p, g: vv, b: t }
+        case 3: return { r: p, g: q, b: vv }
+        case 4: return { r: t, g: p, b: vv }
+        default: return { r: vv, g: p, b: q }
+    }
+}
+
 const POINT_VERTEX_SHADER = `
 attribute float psize;
 attribute vec3 color;
@@ -120,6 +169,8 @@ export class ParticleSystem {
         scene.add(this._mesh)
         this._mat = mat
         this._lastBlending = mat.blending
+        this._background = new THREE.Color(0, 0, 0)
+        this._cameraOutput = { x: null, y: null, z: null, zoom: null }
         this._compiledRules = compileRules([])
         this._ruleCompileState = this._compiledRules
         this._frameCounter = 0
@@ -310,15 +361,81 @@ export class ParticleSystem {
         return this._ruleCompileState
     }
 
+    getBackgroundColor() {
+        return this._background
+    }
+
+    getCameraOutput() {
+        return this._cameraOutput
+    }
+
+    _buildRuleInputs(ae, extra = {}) {
+        return {
+            amplitude: ae.amplitude ?? 0,
+            bass: ae.bass ?? 0,
+            mid: ae.mid ?? 0,
+            high: ae.high ?? 0,
+            peakFreq: ae.peakFreq ?? 0,
+            pan: ae.pan ?? 0,
+            time: Number(extra.time) || 0,
+            deltaTime: Number(extra.deltaTime) || 0,
+            spectralCentroid: ae.spectralCentroid ?? 0,
+            spectralFlux: ae.spectralFlux ?? 0,
+            spectralFlatness: ae.spectralFlatness ?? 0,
+            inharmonicity: ae.inharmonicity ?? 0,
+            canvasWidthPx: Number(extra.canvasWidthPx) || 0,
+            canvasHeightPx: Number(extra.canvasHeightPx) || 0,
+            canvasWidthUnits: Number(extra.canvasWidthUnits) || 0,
+            canvasHeightUnits: Number(extra.canvasHeightUnits) || 0,
+            canvasBoundaryLeft: Number(extra.canvasBoundaryLeft) || 0,
+            canvasBoundaryRight: Number(extra.canvasBoundaryRight) || 0,
+            canvasBoundaryTop: Number(extra.canvasBoundaryTop) || 0,
+            canvasBoundaryBottom: Number(extra.canvasBoundaryBottom) || 0,
+            audioLengthSec: Number(extra.audioLengthSec) || 0,
+            binEnergy: Number(extra.binEnergy) || 0,
+            frequencyHz: Number(extra.frequencyHz) || 0,
+            normFreq: Number(extra.normFreq) || 0,
+        }
+    }
+
+    getVisibleBounds() {
+        const n = Math.max(0, this._visibleCount)
+        if (n === 0) {
+            return {
+                empty: true,
+                min: new THREE.Vector3(),
+                max: new THREE.Vector3(),
+                center: new THREE.Vector3(),
+                size: new THREE.Vector3(),
+            }
+        }
+
+        const min = new THREE.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)
+        const max = new THREE.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY)
+        for (let i = 0; i < n; i++) {
+            const x = this._pos[i * 3]
+            const y = this._pos[i * 3 + 1]
+            const z = this._pos[i * 3 + 2]
+            if (x < min.x) min.x = x
+            if (y < min.y) min.y = y
+            if (z < min.z) min.z = z
+            if (x > max.x) max.x = x
+            if (y > max.y) max.y = y
+            if (z > max.z) max.z = z
+        }
+
+        const center = min.clone().add(max).multiplyScalar(0.5)
+        const size = max.clone().sub(min)
+        return { empty: false, min, max, center, size }
+    }
+
     applySpawnRulesToParticle(ctx) {
         this._compiledRules.applySpawnRules(ctx)
     }
 
     applyLivingRulesToRange(ctx, start, end) {
-        const maxTouches = Math.max(0, Math.floor(ctx?.params?.ruleLivingMaxPerFrame ?? 4096))
-        const stride = Math.max(1, Math.floor(ctx?.params?.ruleLivingStride ?? 1))
-        const cadence = Math.max(1, Math.floor(ctx?.params?.ruleLivingCadence ?? 1))
-        if ((this._frameCounter % cadence) !== 0) return 0
+        const maxTouches = Math.max(0, end - start)
+        const stride = 1
 
         let touched = 0
         for (let i = start; i < end; i += stride) {
@@ -350,14 +467,75 @@ export class ParticleSystem {
             const pg = Number.isFinite(particle.green) ? particle.green : particle.g
             const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
             const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
-            this._col[i * 3] = Number.isFinite(pr) ? Math.max(0, Math.min(1, pr)) : this._col[i * 3]
-            this._col[i * 3 + 1] = Number.isFinite(pg) ? Math.max(0, Math.min(1, pg)) : this._col[i * 3 + 1]
-            this._col[i * 3 + 2] = Number.isFinite(pb) ? Math.max(0, Math.min(1, pb)) : this._col[i * 3 + 2]
+            let nextR = Number.isFinite(pr) ? clamp01(pr) : this._col[i * 3]
+            let nextG = Number.isFinite(pg) ? clamp01(pg) : this._col[i * 3 + 1]
+            let nextB = Number.isFinite(pb) ? clamp01(pb) : this._col[i * 3 + 2]
+            if (this._compiledRules.usesParticleHsb) {
+                const baseHsv = rgbToHsv(nextR, nextG, nextB)
+                const hh = normalizeHue(particle.hue)
+                const ss = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : baseHsv.s
+                const vv = Number.isFinite(particle.brightness) ? clamp01(particle.brightness) : baseHsv.v
+                const rgb = hsvToRgb(hh ?? baseHsv.h, ss, vv)
+                nextR = rgb.r
+                nextG = rgb.g
+                nextB = rgb.b
+            }
+            this._col[i * 3] = nextR
+            this._col[i * 3 + 1] = nextG
+            this._col[i * 3 + 2] = nextB
             this._alpha[i] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : this._alpha[i]
             this._shape[i] = shapeToValue(particle.shapeType)
             touched++
         }
         return touched
+    }
+
+    applyBackgroundRules(ctx) {
+        const bg = this._background
+        const hsv = rgbToHsv(bg.r, bg.g, bg.b)
+        const state = {
+            red: bg.r,
+            green: bg.g,
+            blue: bg.b,
+            hue: hsv.h,
+            saturation: hsv.s,
+            brightness: hsv.v,
+            backgroundRed: bg.r,
+            backgroundGreen: bg.g,
+            backgroundBlue: bg.b,
+        }
+        this._compiledRules.applyBackgroundRules(ctx, state)
+
+        let outR = Number.isFinite(state.red) ? clamp01(state.red) : bg.r
+        let outG = Number.isFinite(state.green) ? clamp01(state.green) : bg.g
+        let outB = Number.isFinite(state.blue) ? clamp01(state.blue) : bg.b
+        if (this._compiledRules.usesBackgroundHsb) {
+            const base = rgbToHsv(outR, outG, outB)
+            const hh = normalizeHue(state.hue)
+            const ss = Number.isFinite(state.saturation) ? clamp01(state.saturation) : base.s
+            const vv = Number.isFinite(state.brightness) ? clamp01(state.brightness) : base.v
+            const rgb = hsvToRgb(hh ?? base.h, ss, vv)
+            outR = rgb.r
+            outG = rgb.g
+            outB = rgb.b
+        }
+        bg.setRGB(outR, outG, outB)
+    }
+
+    applyCameraRules(ctx, currentCamera) {
+        const state = {
+            x: currentCamera?.x ?? 0,
+            y: currentCamera?.y ?? 0,
+            z: currentCamera?.z ?? 0,
+            zoom: currentCamera?.zoom ?? 1,
+        }
+        this._compiledRules.applyCameraRules(ctx, state)
+        this._cameraOutput = {
+            x: Number.isFinite(state.x) ? state.x : null,
+            y: Number.isFinite(state.y) ? state.y : null,
+            z: Number.isFinite(state.z) ? state.z : null,
+            zoom: Number.isFinite(state.zoom) ? state.zoom : null,
+        }
     }
 
     /**
@@ -394,10 +572,16 @@ export class ParticleSystem {
         const lowCut = Math.max(FREQ_MIN_HZ, Math.min(FREQ_MAX_HZ, Number(params.lowFrequencyCutoff ?? FREQ_MIN_HZ)))
         const highCutRaw = Math.max(FREQ_MIN_HZ, Math.min(FREQ_MAX_HZ, Number(params.highFrequencyCutoff ?? FREQ_MAX_HZ)))
         const highCut = Math.max(lowCut, highCutRaw)
+        const renderPctRaw = Number(params.particleRenderPercent)
+        const renderPct = Number.isFinite(renderPctRaw) ? Math.max(1, Math.min(100, Math.floor(renderPctRaw))) : 100
         const brightFloor = Math.max(0, Math.min(1, params.brightnessFloor ?? 0.2))
         const ampToBright = Math.max(0, params.amplitudeToBrightness ?? 1.25)
         const blendStr = params.blendMode ?? 'screen'
         const hasStereoBins = !!(ae.analyserL && ae.analyserR && ae.getBinPan)
+        const shouldRenderBin = renderPct >= 100
+            ? (() => true)
+            // Evenly distributed bin thinning: e.g., 70% keeps about 7 of every 10 bins.
+            : ((binIndex) => (((binIndex * renderPct) % 100) < renderPct))
 
         // Adjust Three.js blending mode
         const blendMap = {
@@ -416,7 +600,12 @@ export class ParticleSystem {
 
         const hw = canvasW / 2
         const hh = canvasH / 2
+        const boundaryLeft = -hw
+        const boundaryRight = hw
+        const boundaryTop = hh
+        const boundaryBottom = -hh
         const currentTime = ae.audioEl?.currentTime ?? 0
+        const audioLengthSec = ae.audioEl?.duration ?? 0
         const globalPan = ae.pan ?? 0
         let peakByte = 0
         for (let i = 0; i < N; i++) if (freqData[i] > peakByte) peakByte = freqData[i]
@@ -456,31 +645,37 @@ export class ParticleSystem {
                 g: brightness,
                 b: brightness,
                 a: Math.min(1, (0.08 + energy * 1.9) * alphaBoost),
+                particleCount: 1,
                 shapeType: 'square',
             }
 
             if (params.ruleEngineEnabled !== false && this._compiledRules.spawnRuleCount > 0) {
                 this.applySpawnRulesToParticle({
-                    inputs: {
-                        amplitude: ae.amplitude ?? 0,
+                    inputs: this._buildRuleInputs(ae, {
                         binEnergy: energy,
                         frequencyHz: hz,
                         normFreq: freqNorm,
-                        bass: ae.bass ?? 0,
-                        mid: ae.mid ?? 0,
-                        high: ae.high ?? 0,
-                        peakFreq: ae.peakFreq ?? 0,
-                        pan: globalPan,
                         time: currentTime,
                         deltaTime,
-                        spectralCentroid: ae.spectralCentroid ?? 0,
-                        spectralFlux: ae.spectralFlux ?? 0,
-                        spectralFlatness: ae.spectralFlatness ?? 0,
-                        inharmonicity: ae.inharmonicity ?? 0,
-                    },
+                        canvasWidthPx: canvasW,
+                        canvasHeightPx: canvasH,
+                        canvasWidthUnits: canvasW,
+                        canvasHeightUnits: canvasH,
+                        canvasBoundaryLeft: boundaryLeft,
+                        canvasBoundaryRight: boundaryRight,
+                        canvasBoundaryTop: boundaryTop,
+                        canvasBoundaryBottom: boundaryBottom,
+                        audioLengthSec,
+                    }),
                     particle,
                 })
             }
+
+            // Rule output `particleCount` behaves as per-bin spawn probability.
+            // 0 => never spawn, 1 => always spawn, 0..1 => probabilistic spawn.
+            const spawnProb = Number.isFinite(particle.particleCount) ? clamp01(particle.particleCount) : 1
+            if (spawnProb <= 0) return
+            if (spawnProb < 1 && Math.random() > spawnProb) return
 
             this._pos[writeIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
             this._pos[writeIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
@@ -490,9 +685,22 @@ export class ParticleSystem {
             const pg = Number.isFinite(particle.green) ? particle.green : particle.g
             const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
             const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
-            this._col[writeIndex * 3] = Number.isFinite(pr) ? Math.max(0, Math.min(1, pr)) : brightness
-            this._col[writeIndex * 3 + 1] = Number.isFinite(pg) ? Math.max(0, Math.min(1, pg)) : brightness
-            this._col[writeIndex * 3 + 2] = Number.isFinite(pb) ? Math.max(0, Math.min(1, pb)) : brightness
+            let nextR = Number.isFinite(pr) ? clamp01(pr) : brightness
+            let nextG = Number.isFinite(pg) ? clamp01(pg) : brightness
+            let nextB = Number.isFinite(pb) ? clamp01(pb) : brightness
+            if (this._compiledRules.usesParticleHsb) {
+                const baseHsv = rgbToHsv(nextR, nextG, nextB)
+                const hh = normalizeHue(particle.hue)
+                const ss = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : baseHsv.s
+                const vv = Number.isFinite(particle.brightness) ? clamp01(particle.brightness) : baseHsv.v
+                const rgb = hsvToRgb(hh ?? baseHsv.h, ss, vv)
+                nextR = rgb.r
+                nextG = rgb.g
+                nextB = rgb.b
+            }
+            this._col[writeIndex * 3] = nextR
+            this._col[writeIndex * 3 + 1] = nextG
+            this._col[writeIndex * 3 + 2] = nextB
             this._alpha[writeIndex] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
             this._shape[writeIndex] = shapeToValue(particle.shapeType)
             writeIndex++
@@ -501,6 +709,7 @@ export class ParticleSystem {
         for (let i = 0; i < N; i++) {
             const hz = binToHz(i)
             if (hz < lowCut || hz > highCut) continue
+            if (!shouldRenderBin(i)) continue
 
             const byte = freqData[i]
             const raw = byte / 255
@@ -519,7 +728,7 @@ export class ParticleSystem {
             const indices = []
             for (let i = 0; i < N; i++) {
                 const hz = binToHz(i)
-                if (hz >= lowCut && hz <= highCut && freqData[i] > 0) indices.push(i)
+                if (hz >= lowCut && hz <= highCut && freqData[i] > 0 && shouldRenderBin(i)) indices.push(i)
             }
             indices.sort((a, b) => freqData[b] - freqData[a])
             const fallbackCount = Math.min(96, indices.length)
@@ -546,21 +755,60 @@ export class ParticleSystem {
         if (params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visibleCount > 0) {
             this.applyLivingRulesToRange({
                 params,
-                inputs: {
-                    amplitude: ae.amplitude ?? 0,
-                    bass: ae.bass ?? 0,
-                    mid: ae.mid ?? 0,
-                    high: ae.high ?? 0,
-                    peakFreq: ae.peakFreq ?? 0,
-                    pan: globalPan,
+                inputs: this._buildRuleInputs(ae, {
                     time: currentTime,
                     deltaTime,
-                    spectralCentroid: ae.spectralCentroid ?? 0,
-                    spectralFlux: ae.spectralFlux ?? 0,
-                    spectralFlatness: ae.spectralFlatness ?? 0,
-                    inharmonicity: ae.inharmonicity ?? 0,
-                },
+                    canvasWidthPx: canvasW,
+                    canvasHeightPx: canvasH,
+                    canvasWidthUnits: canvasW,
+                    canvasHeightUnits: canvasH,
+                    canvasBoundaryLeft: boundaryLeft,
+                    canvasBoundaryRight: boundaryRight,
+                    canvasBoundaryTop: boundaryTop,
+                    canvasBoundaryBottom: boundaryBottom,
+                    audioLengthSec,
+                }),
             }, 0, this._visibleCount)
+        }
+
+        if (params.ruleEngineEnabled !== false && this._compiledRules.backgroundRuleCount > 0) {
+            this.applyBackgroundRules({
+                params,
+                inputs: this._buildRuleInputs(ae, {
+                    time: currentTime,
+                    deltaTime,
+                    canvasWidthPx: canvasW,
+                    canvasHeightPx: canvasH,
+                    canvasWidthUnits: canvasW,
+                    canvasHeightUnits: canvasH,
+                    canvasBoundaryLeft: boundaryLeft,
+                    canvasBoundaryRight: boundaryRight,
+                    canvasBoundaryTop: boundaryTop,
+                    canvasBoundaryBottom: boundaryBottom,
+                    audioLengthSec,
+                }),
+            })
+        }
+
+        if (params.ruleEngineEnabled !== false && this._compiledRules.cameraRuleCount > 0) {
+            this.applyCameraRules({
+                params,
+                inputs: this._buildRuleInputs(ae, {
+                    time: currentTime,
+                    deltaTime,
+                    canvasWidthPx: canvasW,
+                    canvasHeightPx: canvasH,
+                    canvasWidthUnits: canvasW,
+                    canvasHeightUnits: canvasH,
+                    canvasBoundaryLeft: boundaryLeft,
+                    canvasBoundaryRight: boundaryRight,
+                    canvasBoundaryTop: boundaryTop,
+                    canvasBoundaryBottom: boundaryBottom,
+                    audioLengthSec,
+                }),
+            }, params.cameraState || null)
+        } else {
+            this._cameraOutput = { x: null, y: null, z: null, zoom: null }
         }
         this._aPos.needsUpdate = true
         this._aCol.needsUpdate = true

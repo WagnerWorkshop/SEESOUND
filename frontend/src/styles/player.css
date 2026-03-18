@@ -122,7 +122,7 @@
 }
 
 .audio-player__file-name {
-  max-width: 160px;
+  max-width: 100%;
   font-size: 11px;
   color: var(--color-text-muted);
   overflow: hidden;
@@ -140,9 +140,9 @@
 }
 
 .audio-player__btn {
-  height: 28px;
-  min-width: 29px;
-  padding: 0 8px;
+  height: 21px;
+  min-width: 21px;
+  padding: 0 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-raise);
@@ -183,6 +183,46 @@
   border-color: var(--color-accent);
 }
 
+.audio-player__speed-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raise);
+}
+
+.audio-player__speed-input {
+  height: 21px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 11px;
+  font-family: var(--font-ui);
+}
+
+.audio-player__speed-input {
+  width: 20px;
+  padding: 0 2px;
+  text-align: right;
+}
+
+.audio-player__speed-input:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.audio-player__speed-input:focus {
+  outline: none;
+}
+
+.audio-player__speed-suffix {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+
 /* Progress row — flex grow to fill remaining space */
 .audio-player__progress-row {
   display: flex;
@@ -190,6 +230,17 @@
   gap: 3px;
   flex: 1;
   min-width: 0;
+}
+
+.audio-player__progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.audio-player__progress-meta .audio-player__file-name {
+  flex: 1;
 }
 
 .audio-player__seek {
@@ -220,6 +271,7 @@
 }
 
 .audio-player__timestamp {
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--color-text-muted);
