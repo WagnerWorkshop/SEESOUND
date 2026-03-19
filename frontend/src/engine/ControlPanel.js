@@ -310,9 +310,10 @@ function buildToggleRow(p) {
     const labels = p.toggleLabels ?? ['Off', 'On']
     const segGroup = el('div', 'cp-seg-group')
 
+    const currentValue = Number(params[p.key])
     const btns = labels.map((txt, idx) => {
         const b = el('button', 'cp-seg-btn', { text: txt })
-        if (params[p.key] === idx) b.classList.add('active')
+        if (currentValue === idx) b.classList.add('active')
         b.addEventListener('click', () => {
             if (disabled.has(p.key)) return
             set(p.key, idx)
@@ -326,7 +327,8 @@ function buildToggleRow(p) {
     star.addEventListener('click', () => saveUserDefault(p.key, params[p.key]))
 
     _rowSyncMap.set(p.key, (v) => {
-        btns.forEach((b, i) => b.classList.toggle('active', i === v))
+        const next = Number(v)
+        btns.forEach((b, i) => b.classList.toggle('active', i === next))
         row.classList.toggle('cp-row-disabled', disabled.has(p.key))
     })
 
@@ -498,6 +500,7 @@ function buildCanvasSizeBar() {
     const bar = el('div', 'cp-canvas-size')
     const title = el('div', 'cp-canvas-size-title', { text: 'Canvas Size' })
     const row = el('div', 'cp-canvas-size-row')
+    const bgRow = el('div', 'cp-canvas-size-row')
 
     const wLabel = el('label', 'cp-canvas-size-label', { text: '↔' })
     const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '160', value: String(Math.max(160, Number(params.canvasWidth ?? 0) || 160)) })
@@ -507,17 +510,52 @@ function buildCanvasSizeBar() {
     const sInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '5', max: '400', value: String(Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale ?? 100) || 100)))) })
     const applyBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply' })
 
+    const bgLabel = el('div', 'cp-canvas-size-label', { text: 'BG HSL' })
+    const bgHInput = el('input', 'cp-canvas-size-input', {
+        type: 'number', step: '1', min: '0', max: '360',
+        value: String(Math.max(0, Math.min(360, Math.floor(Number(params.defaultBackgroundHue ?? 0) || 0)))),
+    })
+    const bgSInput = el('input', 'cp-canvas-size-input', {
+        type: 'number', step: '1', min: '0', max: '100',
+        value: String(Math.max(0, Math.min(100, Math.floor(Number(params.defaultBackgroundSaturation ?? 0) || 0)))),
+    })
+    const bgLInput = el('input', 'cp-canvas-size-input', {
+        type: 'number', step: '1', min: '0', max: '100',
+        value: String(Math.max(0, Math.min(100, Math.floor(Number(params.defaultBackgroundLightness ?? 0) || 0)))),
+    })
+
     const live = { w: 0, h: 0, s: 100 }
 
+    function clampInt(v, min, max, fallback) {
+        const n = Number(v)
+        if (!Number.isFinite(n)) return fallback
+        return Math.max(min, Math.min(max, Math.floor(n)))
+    }
+
     function render() {
+        const paramW = Number(params.canvasWidth)
+        const paramH = Number(params.canvasHeight)
+        const paramS = Number(params.canvasScale)
+        const displayW = Number.isFinite(paramW) && paramW > 0 ? paramW : live.w
+        const displayH = Number.isFinite(paramH) && paramH > 0 ? paramH : live.h
+        const displayS = Number.isFinite(paramS) && paramS > 0 ? paramS : live.s
         if (document.activeElement !== wInput) {
-            wInput.value = String(Math.max(160, Math.floor(live.w || Number(params.canvasWidth) || 160)))
+            wInput.value = String(Math.max(160, Math.floor(displayW || 160)))
         }
         if (document.activeElement !== hInput) {
-            hInput.value = String(Math.max(120, Math.floor(live.h || Number(params.canvasHeight) || 120)))
+            hInput.value = String(Math.max(120, Math.floor(displayH || 120)))
         }
         if (document.activeElement !== sInput) {
-            sInput.value = String(Math.max(5, Math.min(400, Math.floor(live.s || Number(params.canvasScale) || 100))))
+            sInput.value = String(Math.max(5, Math.min(400, Math.floor(displayS || 100))))
+        }
+        if (document.activeElement !== bgHInput) {
+            bgHInput.value = String(clampInt(params.defaultBackgroundHue, 0, 360, 0))
+        }
+        if (document.activeElement !== bgSInput) {
+            bgSInput.value = String(clampInt(params.defaultBackgroundSaturation, 0, 100, 0))
+        }
+        if (document.activeElement !== bgLInput) {
+            bgLInput.value = String(clampInt(params.defaultBackgroundLightness, 0, 100, 0))
         }
     }
 
@@ -528,6 +566,12 @@ function buildCanvasSizeBar() {
         set('canvasWidth', w)
         set('canvasHeight', h)
         set('canvasScale', s)
+    }
+
+    function applyBackground() {
+        set('defaultBackgroundHue', clampInt(bgHInput.value, 0, 360, 0))
+        set('defaultBackgroundSaturation', clampInt(bgSInput.value, 0, 100, 0))
+        set('defaultBackgroundLightness', clampInt(bgLInput.value, 0, 100, 0))
     }
 
     wInput.addEventListener('change', applySize)
@@ -554,14 +598,48 @@ function buildCanvasSizeBar() {
             sInput.blur()
         }
     })
+    bgHInput.addEventListener('change', applyBackground)
+    bgSInput.addEventListener('change', applyBackground)
+    bgLInput.addEventListener('change', applyBackground)
+    bgHInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applyBackground()
+            bgHInput.blur()
+        }
+    })
+    bgSInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applyBackground()
+            bgSInput.blur()
+        }
+    })
+    bgLInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            applyBackground()
+            bgLInput.blur()
+        }
+    })
     applyBtn.addEventListener('click', applySize)
 
     _rowSyncMap.set('canvasWidth', () => render())
     _rowSyncMap.set('canvasHeight', () => render())
     _rowSyncMap.set('canvasScale', () => render())
+    _rowSyncMap.set('defaultBackgroundHue', () => render())
+    _rowSyncMap.set('defaultBackgroundSaturation', () => render())
+    _rowSyncMap.set('defaultBackgroundLightness', () => render())
 
     subscribe((_, key) => {
-        if (key === 'canvasWidth' || key === 'canvasHeight' || key === 'canvasScale') render()
+        if (
+            key === 'canvasWidth' ||
+            key === 'canvasHeight' ||
+            key === 'canvasScale' ||
+            key === 'defaultBackgroundHue' ||
+            key === 'defaultBackgroundSaturation' ||
+            key === 'defaultBackgroundLightness'
+        ) render()
     })
     window.addEventListener('seesound:canvas-size', (e) => {
         live.w = Number(e?.detail?.w) || live.w
@@ -571,7 +649,8 @@ function buildCanvasSizeBar() {
     })
 
     row.append(wLabel, wInput, hLabel, hInput, sLabel, sInput, applyBtn)
-    bar.append(title, row)
+    bgRow.append(bgLabel, bgHInput, bgSInput, bgLInput)
+    bar.append(title, row, bgRow)
     render()
     return bar
 }
@@ -1462,7 +1541,11 @@ export function initRuleBuilder(container) {
         ], row.actionValueMode)
         const valNum = _createInputNumber(row.actionLiteral)
         const valInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.actionInput)
-        const valExpr = el('input', 'cp-rule-input cp-rule-expr', { type: 'text', value: row.actionExpression, placeholder: 'amplitude * 0.8' })
+        const valExprWrap = el('div', 'cp-rule-expr-wrap')
+        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'amplitude * 0.8' })
+        valExpr.value = row.actionExpression || ''
+        const valExprSuggest = el('div', 'cp-rule-expr-suggest')
+        valExprWrap.append(valExpr, valExprSuggest)
         const valShape = _createSelect([{ value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], row.actionLiteralShape)
 
         const st = _createInputNumber(row.strength, '0.1')
@@ -1480,11 +1563,87 @@ export function initRuleBuilder(container) {
             mode.style.display = shape ? 'none' : ''
             valNum.style.display = (!shape && mode.value === 'literal') ? '' : 'none'
             valInp.style.display = (!shape && mode.value === 'input') ? '' : 'none'
-            valExpr.style.display = (!shape && mode.value === 'expression') ? '' : 'none'
+            valExprWrap.style.display = (!shape && mode.value === 'expression') ? '' : 'none'
             valShape.style.display = shape ? '' : 'none'
             const inputMode = !shape && mode.value === 'input'
             st.style.display = inputMode ? '' : 'none'
             invWrap.style.display = inputMode ? '' : 'none'
+            if (shape || mode.value !== 'expression') {
+                valExprSuggest.style.display = 'none'
+                valExprSuggest.innerHTML = ''
+            }
+        }
+
+        const _exprSymbols = [...new Set([..._inputIds, 'clamp', 'lerp', 'smoothstep', 'pow', 'min', 'max', 'abs', 'PI', 'E'])]
+
+        function _exprActiveToken() {
+            const text = String(valExpr.value || '')
+            const caret = Number.isFinite(valExpr.selectionStart) ? valExpr.selectionStart : text.length
+            const left = text.slice(0, caret)
+            const m = left.match(/([A-Za-z_][A-Za-z0-9_]*)$/)
+            return {
+                token: m ? m[1] : '',
+                start: m ? caret - m[1].length : caret,
+                end: caret,
+            }
+        }
+
+        function _insertExprSuggestion(symbol) {
+            const text = String(valExpr.value || '')
+            const tok = _exprActiveToken()
+            const next = `${text.slice(0, tok.start)}${symbol}${text.slice(tok.end)}`
+            valExpr.value = next
+            row.actionExpression = next
+            const caret = tok.start + symbol.length
+            valExpr.focus()
+            valExpr.setSelectionRange(caret, caret)
+            _renderExprSuggestions()
+        }
+
+        function _renderExprSuggestions() {
+            if (mode.value !== 'expression') {
+                valExprSuggest.style.display = 'none'
+                valExprSuggest.innerHTML = ''
+                return
+            }
+
+            const tok = _exprActiveToken()
+            const needle = String(tok.token || '').toLowerCase()
+            if (!needle) {
+                valExprSuggest.style.display = 'none'
+                valExprSuggest.innerHTML = ''
+                return
+            }
+
+            const matches = _exprSymbols
+                .filter((s) => s.toLowerCase().startsWith(needle) && s.toLowerCase() !== needle)
+                .slice(0, 8)
+
+            if (matches.length === 0) {
+                valExprSuggest.style.display = 'none'
+                valExprSuggest.innerHTML = ''
+                return
+            }
+
+            valExprSuggest.innerHTML = ''
+            for (const sym of matches) {
+                const b = el('button', 'cp-rule-expr-suggest-btn', { type: 'button', text: sym })
+                b.addEventListener('mousedown', (e) => {
+                    e.preventDefault()
+                })
+                b.addEventListener('click', (e) => {
+                    e.preventDefault()
+                    _insertExprSuggestion(sym)
+                })
+                valExprSuggest.appendChild(b)
+            }
+            valExprSuggest.style.display = 'flex'
+        }
+
+        function _autoSizeExprField() {
+            // Keep height tightly fitted to content for better scanability.
+            valExpr.style.height = 'auto'
+            valExpr.style.height = `${Math.max(24, valExpr.scrollHeight)}px`
         }
 
         out.addEventListener('change', wireChange(() => {
@@ -1518,13 +1677,28 @@ export function initRuleBuilder(container) {
             row.actionInput = valInp.value
             return true
         }))
+        valExpr.addEventListener('input', () => {
+            row.actionExpression = valExpr.value
+            _autoSizeExprField()
+            _renderExprSuggestions()
+        })
+        valExpr.addEventListener('click', _renderExprSuggestions)
+        valExpr.addEventListener('focus', _autoSizeExprField)
+        valExpr.addEventListener('keyup', _renderExprSuggestions)
         valExpr.addEventListener('keydown', wireChange((e) => {
-            if (e.key !== 'Enter') return false
+            if (!(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return false
             e.preventDefault()
             row.actionExpression = valExpr.value
             valExpr.blur()
             return true
         }))
+        valExpr.addEventListener('blur', () => {
+            row.actionExpression = valExpr.value
+            setTimeout(() => {
+                valExprSuggest.style.display = 'none'
+            }, 120)
+            pushRules()
+        })
         valShape.addEventListener('change', wireChange(() => {
             row.actionLiteralShape = valShape.value
             return true
@@ -1541,8 +1715,9 @@ export function initRuleBuilder(container) {
             return true
         }))
 
-        act.append(out, op, mode, valNum, valInp, valExpr, valShape, st, invWrap)
+        act.append(out, op, mode, valNum, valInp, valExprWrap, valShape, st, invWrap)
         refreshAct()
+        _autoSizeExprField()
 
         const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
 
@@ -1939,7 +2114,15 @@ export function initControlPanel(container) {
 
     for (let i = 0; i < PARAM_GROUPS.length; i++) {
         const g = PARAM_GROUPS[i]
-        const groupParams = PARAMS.filter(p => p.group === g.id && p.key !== 'canvasWidth' && p.key !== 'canvasHeight' && p.key !== 'canvasScale')
+        const groupParams = PARAMS.filter(
+            p => p.group === g.id &&
+                p.key !== 'canvasWidth' &&
+                p.key !== 'canvasHeight' &&
+                p.key !== 'canvasScale' &&
+                p.key !== 'defaultBackgroundHue' &&
+                p.key !== 'defaultBackgroundSaturation' &&
+                p.key !== 'defaultBackgroundLightness'
+        )
         if (groupParams.length === 0) continue
         body.appendChild(buildGroup(g, groupParams, i < 3))
     }

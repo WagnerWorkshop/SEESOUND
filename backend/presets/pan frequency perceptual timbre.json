@@ -1,0 +1,162 @@
+{
+    "name": "pan frequency perceptual timbre",
+    "params": {
+        "inputGain": 1,
+        "amplitudeThreshold": -48,
+        "brightnessFloor": 0,
+        "amplitudeToBrightness": 1,
+        "defaultParticleSize": 4,
+        "freqDepthEffect": 60,
+        "zDepth": 0,
+        "frequencySpread": 1.35,
+        "lowFrequencyCutoff": 32,
+        "highFrequencyCutoff": 18000,
+        "canvasWidth": 2400,
+        "canvasHeight": 1200,
+        "canvasScale": 60,
+        "maxParticles": 1200000,
+        "particleRenderPercent": 85,
+        "blendMode": "screen",
+        "cameraProjection": "axonometric",
+        "cameraAxoPreset": "orthoXY",
+        "persistMode": 1,
+        "tonicHz": 261.63,
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 1,
+        "ruleBlocks": [
+            {
+                "id": "x-from-pan",
+                "group": "SPATIAL",
+                "subgroup": "position",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "(pan) * (canvasWidthUnits) * 0.5"
+                    }
+                ],
+                "order": 0
+            },
+            {
+                "id": "y-from-frequency",
+                "group": "SPATIAL",
+                "subgroup": "position",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "((normFreq) - 0.5) * (canvasHeightUnits)"
+                    }
+                ],
+                "order": 1
+            },
+            {
+                "id": "z-perceptual-distance",
+                "group": "SPATIAL",
+                "subgroup": "depth",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "-(1 - binEnergy) * max(canvasWidthUnits, canvasHeightUnits) * 0.22"
+                    }
+                ],
+                "order": 2
+            },
+            {
+                "id": "brightness-from-bin-energy",
+                "group": "COLOR",
+                "subgroup": "value",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "brightness",
+                        "input": "binEnergy"
+                    }
+                ],
+                "order": 3
+            },
+            {
+                "id": "hue-sharp-yellow-soft-blue",
+                "group": "COLOR",
+                "subgroup": "hue",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "hue",
+                        "expression": "0.62 - spectralFlatness * 0.46"
+                    }
+                ],
+                "order": 4
+            },
+            {
+                "id": "saturation-from-sharpness",
+                "group": "COLOR",
+                "subgroup": "saturation",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "saturation",
+                        "expression": "0.2 + spectralFlatness * 0.8"
+                    }
+                ],
+                "order": 5
+            },
+            {
+                "id": "opacity-from-energy",
+                "group": "COLOR",
+                "subgroup": "alpha",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "0.12 + binEnergy * 0.88"
+                    }
+                ],
+                "order": 6
+            }
+        ]
+    }
+}

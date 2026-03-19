@@ -1,11 +1,11 @@
 {
   "name": "linear basic",
   "params": {
-    "inputGain": 0.48,
+    "inputGain": 0.78,
     "amplitudeThreshold": 0,
     "brightnessFloor": 0,
     "amplitudeToBrightness": 1.25,
-    "defaultParticleSize": 0.3,
+    "defaultParticleSize": 1,
     "freqDepthEffect": 100,
     "zDepth": 0,
     "frequencySpread": 2,
@@ -321,7 +321,7 @@
           {
             "operator": "multiply",
             "output": "size",
-            "expression": "(binEnergy) * 6"
+            "expression": "(binEnergy) * 2"
           }
         ],
         "order": 15
@@ -348,6 +348,16 @@
     ],
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
-    "_disabled": []
+    "_disabled": [],
+    "cameraFov": 104,
+    "enableAggressiveThinning": true,
+    "dominantPeakCulling": true,
+    "peakEnergyThreshold": 0.18,
+    "uiDirectives": {
+      "responsiveInterface": true,
+      "resizableAndCollapsibleTabs": true,
+      "tooltipsForAllControls": true,
+      "tooltipContent": "feature_and_current_value"
+    }
   }
 }

@@ -1,0 +1,187 @@
+{
+    "name": "holistic 3d gpt",
+    "params": {
+        "inputGain": 1,
+        "amplitudeThreshold": -54,
+        "brightnessFloor": 0,
+        "amplitudeToBrightness": 1,
+        "defaultParticleSize": 3.5,
+        "freqDepthEffect": 45,
+        "zDepth": 0,
+        "frequencySpread": 1.35,
+        "lowFrequencyCutoff": 64,
+        "highFrequencyCutoff": 16000,
+        "canvasWidth": 2200,
+        "canvasHeight": 1200,
+        "canvasScale": 48,
+        "maxParticles": 1800000,
+        "particleRenderPercent": 32,
+        "blendMode": "screen",
+        "cameraProjection": "axonometric",
+        "cameraAxoPreset": "orthoXY",
+        "persistMode": 1,
+        "tonicHz": 261.63,
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 1,
+        "ruleBlocks": [
+            {
+                "id": "x_pan_uniform_rectangle",
+                "group": "SPATIAL",
+                "subgroup": "X",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "pan * (canvasWidthUnits) * 0.46"
+                    }
+                ],
+                "order": 0
+            },
+            {
+                "id": "y_log_frequency",
+                "group": "SPATIAL",
+                "subgroup": "Y",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "((normFreq) - 0.5) * (canvasHeightUnits) * 0.92"
+                    }
+                ],
+                "order": 1
+            },
+            {
+                "id": "z_drr_and_rolloff_depth",
+                "group": "SPATIAL",
+                "subgroup": "Z",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "clamp((1 - clamp(spectralFlux / max(amplitude, 0.001), 0, 1)) * 0.65 + (1 - high) * 0.35, 0, 1) * max(canvasWidthUnits, canvasHeightUnits) * 0.22"
+                    }
+                ],
+                "order": 2
+            },
+            {
+                "id": "hue_flux_yellow_blue",
+                "group": "AESTHETIC",
+                "subgroup": "Hue",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "hue",
+                        "expression": "0.62 - clamp(spectralFlux, 0, 1) * 0.46"
+                    }
+                ],
+                "order": 3
+            },
+            {
+                "id": "saturation_flatness_purity",
+                "group": "AESTHETIC",
+                "subgroup": "Saturation",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "saturation",
+                        "expression": "clamp(spectralFlux * 0.75 + (1 - spectralFlatness) * 0.25, 0.12, 1)"
+                    }
+                ],
+                "order": 4
+            },
+            {
+                "id": "brightness_from_bin_energy",
+                "group": "AESTHETIC",
+                "subgroup": "Brightness",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "brightness",
+                        "expression": "clamp(binEnergy * 1.1, 0.03, 1)"
+                    }
+                ],
+                "order": 5
+            },
+            {
+                "id": "opacity_from_bin_energy",
+                "group": "AESTHETIC",
+                "subgroup": "Opacity",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "clamp(binEnergy * 1.25, 0.02, 1)"
+                    }
+                ],
+                "order": 6
+            },
+            {
+                "id": "dominant_peak_thinning",
+                "group": "OPTIMIZATION",
+                "subgroup": "ParticleThinning",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "particleCount",
+                        "expression": "clamp((binEnergy - 0.16) * 3.0, 0, 1)"
+                    }
+                ],
+                "order": 7
+            }
+        ],
+        "uiDirectives": {
+            "responsiveInterface": true,
+            "resizableAndCollapsibleTabs": true,
+            "tooltipsForAllControls": true,
+            "tooltipContent": "feature_and_current_value"
+        }
+    }
+}

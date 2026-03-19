@@ -135,6 +135,24 @@ export const PARAMS = [
         canDisable: false,
     },
     {
+        key: 'defaultBackgroundHue', group: 'geometry', label: 'Default Background Hue',
+        min: 0, max: 360, step: 1, default: 0, unit: 'deg',
+        desc: 'Base background hue used before background rules are applied.',
+        canDisable: false,
+    },
+    {
+        key: 'defaultBackgroundSaturation', group: 'geometry', label: 'Default Background Saturation',
+        min: 0, max: 100, step: 1, default: 0, unit: '%',
+        desc: 'Base background saturation used before background rules are applied.',
+        canDisable: false,
+    },
+    {
+        key: 'defaultBackgroundLightness', group: 'geometry', label: 'Default Background Lightness',
+        min: 0, max: 100, step: 1, default: 0, unit: '%',
+        desc: 'Base background lightness used before background rules are applied.',
+        canDisable: false,
+    },
+    {
         key: 'maxParticles', group: 'geometry', label: 'Max Particle Capacity',
         min: 4096, max: 8000000, step: 1024, default: 262144, unit: '',
         desc: 'Maximum total particle slots in GPU buffers. Higher values allow longer painting trails.',
@@ -156,6 +174,7 @@ export const PARAMS = [
         dropdownOptions: [
             { label: 'Screen (Add)', value: 'screen' },
             { label: 'Normal', value: 'source-over' },
+            { label: 'Alpha', value: 'alpha' },
             { label: 'Multiply', value: 'multiply' },
         ],
     },
@@ -176,6 +195,7 @@ export const PARAMS = [
         isDropdown: true,
         dropdownOptions: [
             { label: 'Ortho XY', value: 'orthoXY' },
+            { label: 'Ortho YZ', value: 'orthoYZ' },
             { label: 'Isometric', value: 'isometric' },
             { label: '45°', value: 'fortyFive' },
             { label: 'Top (XZ)', value: 'topXZ' },

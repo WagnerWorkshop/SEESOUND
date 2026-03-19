@@ -1,0 +1,230 @@
+{
+  "name": "immersive 3d",
+  "params": {
+    "inputGain": 1,
+    "amplitudeThreshold": -56,
+    "brightnessFloor": 0.08,
+    "amplitudeToBrightness": 1.2,
+    "defaultParticleSize": 3,
+    "freqDepthEffect": 35,
+    "zDepth": 0,
+    "frequencySpread": 1.35,
+    "lowFrequencyCutoff": 64,
+    "highFrequencyCutoff": 22000,
+    "canvasWidth": 2400,
+    "canvasHeight": 1400,
+    "canvasScale": 52,
+    "maxParticles": 2000000,
+    "particleRenderPercent": 24,
+    "blendMode": "multiply",
+    "cameraProjection": "perspective",
+    "cameraAxoPreset": "orthoXY",
+    "persistMode": 1,
+    "tonicHz": 261.63,
+    "ruleBlocks": [
+      {
+        "id": "x_stereo_pan_ratio",
+        "group": "SPATIAL",
+        "subgroup": "X",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "x",
+            "expression": "pan * (canvasWidthUnits) * 0.48"
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "y_log_frequency",
+        "group": "SPATIAL",
+        "subgroup": "Y",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "expression": "((normFreq) - 0.5) * (canvasHeightUnits) * 0.95"
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "z_perceptual_distance_drr_rolloff",
+        "group": "SPATIAL",
+        "subgroup": "Z",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "z",
+            "expression": "clamp((1 - clamp(spectralFlux / max(amplitude, 0.001), 0, 1)) * 0.72 + (1 - high) * 0.28, 0, 1) * max(canvasWidthUnits, canvasHeightUnits) * 0.34"
+          }
+        ],
+        "order": 2
+      },
+      {
+        "id": "base_hue_from_pitch",
+        "group": "COLOR",
+        "subgroup": "HUE",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "expression": "clamp((0.02 + normFreq * 0.86) * 0.7 + (0.62 - spectralFlux * 0.46) * 0.3, 0, 1)"
+          }
+        ],
+        "order": 3
+      },
+      {
+        "id": "saturation_from_purity",
+        "group": "COLOR",
+        "subgroup": "SATURATION",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "expression": "clamp((1 - spectralFlatness) * 0.55 + spectralFlux * 0.45, 0.28, 1)"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "brightness_from_bin_energy",
+        "group": "COLOR",
+        "subgroup": "BRIGHTNESS",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "expression": "clamp(0.12 + binEnergy * 1.35, 0.08, 1)"
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "opacity_from_bin_energy",
+        "group": "COLOR",
+        "subgroup": "OPACITY",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "opacity",
+            "expression": "clamp(0.08 + binEnergy * 1.45, 0.06, 1)"
+          }
+        ],
+        "order": 6
+      },
+      {
+        "id": "aggressive_thinning_dominant_peaks",
+        "group": "OPTIMIZATION",
+        "subgroup": "THINNING",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "particleCount",
+            "expression": "clamp((binEnergy - 0.18) * 3.4, 0, 1)"
+          }
+        ],
+        "order": 7
+      },
+      {
+        "id": "shape",
+        "group": "SPATIAL",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "shapeType",
+            "value": "circle"
+          }
+        ],
+        "order": 8
+      },
+      {
+        "id": "rule-10",
+        "group": "bckg",
+        "subgroup": "",
+        "enabled": true,
+        "target": "background",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "value": 1
+          }
+        ],
+        "order": 9
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "_disabled": [],
+    "cameraFov": 104,
+    "enableAggressiveThinning": true,
+    "dominantPeakCulling": true,
+    "peakEnergyThreshold": 0.18,
+    "uiDirectives": {
+      "responsiveInterface": true,
+      "resizableAndCollapsibleTabs": true,
+      "tooltipsForAllControls": true,
+      "tooltipContent": "feature_and_current_value"
+    }
+  }
+}

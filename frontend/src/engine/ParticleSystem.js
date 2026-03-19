@@ -22,6 +22,12 @@
 
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
+import {
+    computeBinSpectralCentroid,
+    computeBinSpectralFlux,
+    computeBinSpectralFlatness,
+    computeBinInharmonicity,
+} from './audio/AudioFeatures.js'
 
 // Phase checklist workflow anchor:
 // Keep Three.js Points path intact while rule-engine features are layered in by phase.
@@ -107,6 +113,7 @@ attribute float psize;
 attribute vec3 color;
 attribute float valpha;
 attribute float shapeType;
+uniform float uViewportHeight;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vShapeType;
@@ -116,8 +123,11 @@ void main() {
     vAlpha = valpha;
     vShapeType = shapeType;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = max(1.0, psize);
-    gl_Position = projectionMatrix * mvPosition;
+    vec4 clipPos = projectionMatrix * mvPosition;
+    float clipW = max(1e-6, abs(clipPos.w));
+    float pxPerWorld = 0.5 * uViewportHeight * projectionMatrix[1][1] / clipW;
+    gl_PointSize = max(1.0, psize * pxPerWorld);
+    gl_Position = clipPos;
 }
 `
 
@@ -159,6 +169,9 @@ export class ParticleSystem {
         const mat = new THREE.ShaderMaterial({
             vertexShader: POINT_VERTEX_SHADER,
             fragmentShader: POINT_FRAGMENT_SHADER,
+            uniforms: {
+                uViewportHeight: { value: 1 },
+            },
             transparent: true,
             depthWrite: false,
             blending: THREE.AdditiveBlending,
@@ -188,6 +201,7 @@ export class ParticleSystem {
         this._sz = new Float32Array(this._N)
         this._alpha = new Float32Array(this._N)
         this._shape = new Float32Array(this._N)
+        this._pan = new Float32Array(this._N)
 
         this._aPos = new THREE.BufferAttribute(this._pos, 3)
         this._aCol = new THREE.BufferAttribute(this._col, 3)
@@ -239,6 +253,7 @@ export class ParticleSystem {
             sz: this._sz.slice(0, n),
             alpha: this._alpha.slice(0, n),
             shape: this._shape.slice(0, n),
+            pan: this._pan.slice(0, n),
         }
         this._archiveChunks.push(chunk)
         this._archivePointCount += n
@@ -256,6 +271,7 @@ export class ParticleSystem {
             this._sz[i] = this._sz[src]
             this._alpha[i] = this._alpha[src]
             this._shape[i] = this._shape[src]
+            this._pan[i] = this._pan[src]
         }
 
         return n
@@ -283,6 +299,7 @@ export class ParticleSystem {
                     this._sz[cursor + i] = chunk.sz[i]
                     this._alpha[cursor + i] = chunk.alpha[i]
                     this._shape[cursor + i] = chunk.shape[i]
+                    this._pan[cursor + i] = chunk.pan ? chunk.pan[i] : 0
                 }
                 cursor += take
             }
@@ -302,6 +319,7 @@ export class ParticleSystem {
                     this._sz[target - cursor - take + i] = chunk.sz[src]
                     this._alpha[target - cursor - take + i] = chunk.alpha[src]
                     this._shape[target - cursor - take + i] = chunk.shape[src]
+                    this._pan[target - cursor - take + i] = chunk.pan ? chunk.pan[src] : 0
                 }
                 cursor += take
             }
@@ -350,6 +368,13 @@ export class ParticleSystem {
         this.clear()
     }
 
+    setViewportHeight(pxHeight) {
+        const h = Math.max(1, Number(pxHeight) || 1)
+        if (this._mat?.uniforms?.uViewportHeight) {
+            this._mat.uniforms.uViewportHeight.value = h
+        }
+    }
+
     onRulesChanged(newRules) {
         const compiled = compileRules(newRules)
         this._compiledRules = compiled
@@ -376,13 +401,18 @@ export class ParticleSystem {
             mid: ae.mid ?? 0,
             high: ae.high ?? 0,
             peakFreq: ae.peakFreq ?? 0,
-            pan: ae.pan ?? 0,
+            pan: Number.isFinite(extra.pan) ? Number(extra.pan) : (ae.pan ?? 0),
             time: Number(extra.time) || 0,
             deltaTime: Number(extra.deltaTime) || 0,
-            spectralCentroid: ae.spectralCentroid ?? 0,
-            spectralFlux: ae.spectralFlux ?? 0,
-            spectralFlatness: ae.spectralFlatness ?? 0,
-            inharmonicity: ae.inharmonicity ?? 0,
+            // Spawn path can override these with per-bin timbre values.
+            spectralCentroid: Number.isFinite(extra.spectralCentroid) ? Number(extra.spectralCentroid) : (ae.spectralCentroid ?? 0),
+            spectralFlux: Number.isFinite(extra.spectralFlux) ? Number(extra.spectralFlux) : (ae.spectralFlux ?? 0),
+            spectralFlatness: Number.isFinite(extra.spectralFlatness) ? Number(extra.spectralFlatness) : (ae.spectralFlatness ?? 0),
+            inharmonicity: Number.isFinite(extra.inharmonicity) ? Number(extra.inharmonicity) : (ae.inharmonicity ?? 0),
+            binMagnitude: Number.isFinite(extra.binMagnitude) ? clamp01(extra.binMagnitude) : 0,
+            binFlux: Number.isFinite(extra.binFlux) ? Number(extra.binFlux) : 0,
+            binPhaseDeviation: Number.isFinite(extra.binPhaseDeviation) ? clamp01(extra.binPhaseDeviation) : 0,
+            binEnvelope: Number.isFinite(extra.binEnvelope) ? Number(extra.binEnvelope) : 0,
             canvasWidthPx: Number(extra.canvasWidthPx) || 0,
             canvasHeightPx: Number(extra.canvasHeightPx) || 0,
             canvasWidthUnits: Number(extra.canvasWidthUnits) || 0,
@@ -392,7 +422,7 @@ export class ParticleSystem {
             canvasBoundaryTop: Number(extra.canvasBoundaryTop) || 0,
             canvasBoundaryBottom: Number(extra.canvasBoundaryBottom) || 0,
             audioLengthSec: Number(extra.audioLengthSec) || 0,
-            binEnergy: Number(extra.binEnergy) || 0,
+            binEnergy: clamp01(Number(extra.binEnergy) || 0),
             frequencyHz: Number(extra.frequencyHz) || 0,
             normFreq: Number(extra.normFreq) || 0,
         }
@@ -436,10 +466,13 @@ export class ParticleSystem {
     applyLivingRulesToRange(ctx, start, end) {
         const maxTouches = Math.max(0, end - start)
         const stride = 1
+        const loopCtx = ctx || {}
+        const loopInputs = loopCtx.inputs || (loopCtx.inputs = {})
 
         let touched = 0
         for (let i = start; i < end; i += stride) {
             if (touched >= maxTouches) break
+            loopInputs.pan = Number.isFinite(this._pan[i]) ? this._pan[i] : 0
             const particle = {
                 x: this._pos[i * 3],
                 y: this._pos[i * 3 + 1],
@@ -457,7 +490,7 @@ export class ParticleSystem {
                 shapeType: this._shape[i] > 0.5 ? 'circle' : 'square',
             }
 
-            this._compiledRules.applyLivingRules(ctx, particle)
+            this._compiledRules.applyLivingRules(loopCtx, particle)
 
             this._pos[i * 3] = Number.isFinite(particle.x) ? particle.x : this._pos[i * 3]
             this._pos[i * 3 + 1] = Number.isFinite(particle.y) ? particle.y : this._pos[i * 3 + 1]
@@ -577,36 +610,80 @@ export class ParticleSystem {
         const brightFloor = Math.max(0, Math.min(1, params.brightnessFloor ?? 0.2))
         const ampToBright = Math.max(0, params.amplitudeToBrightness ?? 1.25)
         const blendStr = params.blendMode ?? 'screen'
+        const bgHue = Number.isFinite(Number(params.defaultBackgroundHue)) ? Number(params.defaultBackgroundHue) : 0
+        const bgSat = Number.isFinite(Number(params.defaultBackgroundSaturation)) ? Number(params.defaultBackgroundSaturation) : 0
+        const bgLight = Number.isFinite(Number(params.defaultBackgroundLightness)) ? Number(params.defaultBackgroundLightness) : 0
         const hasStereoBins = !!(ae.analyserL && ae.analyserR && ae.getBinPan)
+        const prevFreqData = ae.getPrevFrequencyData?.() || null
+        const binMagArr = ae.getBinMagnitude?.() || null
+        const binFluxArr = ae.getBinFlux?.() || null
+        const binPhaseDevArr = ae.getBinPhaseDeviation?.() || null
+        const binEnvArr = ae.getBinEnvelope?.() || null
+        const requiredSpawnInputs = new Set(this._compiledRules?.requiredInputsByTarget?.spawnedParticles || [])
+        const needPerBinCentroid = requiredSpawnInputs.has('spectralCentroid')
+        const needPerBinFlux = requiredSpawnInputs.has('spectralFlux')
+        const needPerBinFlatness = requiredSpawnInputs.has('spectralFlatness')
+        const needPerBinInharmonicity = requiredSpawnInputs.has('inharmonicity')
+        const needBinMagnitude = requiredSpawnInputs.has('binMagnitude') || requiredSpawnInputs.has('binEnergy')
+        const needBinFlux = requiredSpawnInputs.has('binFlux')
+        const needBinPhaseDev = requiredSpawnInputs.has('binPhaseDeviation')
+        const needBinEnvelope = requiredSpawnInputs.has('binEnvelope')
         const shouldRenderBin = renderPct >= 100
             ? (() => true)
             // Evenly distributed bin thinning: e.g., 70% keeps about 7 of every 10 bins.
             : ((binIndex) => (((binIndex * renderPct) % 100) < renderPct))
 
         // Adjust Three.js blending mode
-        const blendMap = {
-            'screen': THREE.AdditiveBlending,
-            'lighter': THREE.AdditiveBlending,
-            'source-over': THREE.NormalBlending,
-            // Multiply on a black clear color can produce a fully black frame.
-            'multiply': THREE.NormalBlending,
-        }
-        const nextBlending = blendMap[blendStr] ?? THREE.AdditiveBlending
-        if (nextBlending !== this._lastBlending) {
-            this._mat.blending = nextBlending
-            this._mat.needsUpdate = true
-            this._lastBlending = nextBlending
+        if (blendStr === 'alpha') {
+            const mat = this._mat
+            const needsUpdate = (
+                mat.blending !== THREE.CustomBlending ||
+                mat.blendSrc !== THREE.SrcAlphaFactor ||
+                mat.blendDst !== THREE.OneMinusSrcAlphaFactor ||
+                mat.blendEquation !== THREE.AddEquation
+            )
+            if (needsUpdate) {
+                mat.blending = THREE.CustomBlending
+                mat.blendSrc = THREE.SrcAlphaFactor
+                mat.blendDst = THREE.OneMinusSrcAlphaFactor
+                mat.blendEquation = THREE.AddEquation
+                mat.needsUpdate = true
+                this._lastBlending = mat.blending
+            }
+        } else {
+            const blendMap = {
+                'screen': THREE.AdditiveBlending,
+                'lighter': THREE.AdditiveBlending,
+                'source-over': THREE.NormalBlending,
+                // Multiply on a black clear color can produce a fully black frame.
+                'multiply': THREE.NormalBlending,
+            }
+            const nextBlending = blendMap[blendStr] ?? THREE.AdditiveBlending
+            if (nextBlending !== this._lastBlending) {
+                this._mat.blending = nextBlending
+                this._mat.needsUpdate = true
+                this._lastBlending = nextBlending
+            }
         }
 
-        const hw = canvasW / 2
-        const hh = canvasH / 2
-        const boundaryLeft = -hw
-        const boundaryRight = hw
-        const boundaryTop = hh
-        const boundaryBottom = -hh
+        const canvasWidthUnitsRaw = Number(params.cameraCanvasWidthUnits)
+        const canvasHeightUnitsRaw = Number(params.cameraCanvasHeightUnits)
+        const canvasUnitsW = Number.isFinite(canvasWidthUnitsRaw) && canvasWidthUnitsRaw > 0 ? canvasWidthUnitsRaw : canvasW
+        const canvasUnitsH = Number.isFinite(canvasHeightUnitsRaw) && canvasHeightUnitsRaw > 0 ? canvasHeightUnitsRaw : canvasH
+        const normalizedHue = ((bgHue % 360) + 360) % 360
+        this._background.setHSL(
+            normalizedHue / 360,
+            clamp01(bgSat / 100),
+            clamp01(bgLight / 100),
+        )
+        const hw = canvasUnitsW / 2
+        const hh = canvasUnitsH / 2
+        const boundaryLeft = Number.isFinite(Number(params.cameraCanvasBoundaryLeft)) ? Number(params.cameraCanvasBoundaryLeft) : -hw
+        const boundaryRight = Number.isFinite(Number(params.cameraCanvasBoundaryRight)) ? Number(params.cameraCanvasBoundaryRight) : hw
+        const boundaryTop = Number.isFinite(Number(params.cameraCanvasBoundaryTop)) ? Number(params.cameraCanvasBoundaryTop) : hh
+        const boundaryBottom = Number.isFinite(Number(params.cameraCanvasBoundaryBottom)) ? Number(params.cameraCanvasBoundaryBottom) : -hh
         const currentTime = ae.audioEl?.currentTime ?? 0
         const audioLengthSec = ae.audioEl?.duration ?? 0
-        const globalPan = ae.pan ?? 0
         let peakByte = 0
         for (let i = 0; i < N; i++) if (freqData[i] > peakByte) peakByte = freqData[i]
         const adaptiveCap = Math.max(1, Math.round(peakByte * 0.55))
@@ -623,6 +700,23 @@ export class ParticleSystem {
             const hz = binToHz(i)
             const rawNorm = freqToLogNorm(hz)
             const freqNorm = Math.pow(rawNorm, spreadGamma)
+            const binPan = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
+            const binCentroid = needPerBinCentroid ? computeBinSpectralCentroid(freqData, i) : undefined
+            const binFlux = needPerBinFlux ? computeBinSpectralFlux(freqData, prevFreqData, i) : undefined
+            const binFlatness = needPerBinFlatness ? computeBinSpectralFlatness(freqData, i) : undefined
+            const binInharmonicity = needPerBinInharmonicity ? computeBinInharmonicity(freqData, i) : undefined
+            const binMagnitude = (needBinMagnitude && binMagArr && i < binMagArr.length)
+                ? clamp01(binMagArr[i])
+                : undefined
+            const binFluxMetric = (needBinFlux && binFluxArr && i < binFluxArr.length)
+                ? binFluxArr[i]
+                : undefined
+            const binPhaseDevMetric = (needBinPhaseDev && binPhaseDevArr && i < binPhaseDevArr.length)
+                ? clamp01(binPhaseDevArr[i])
+                : undefined
+            const binEnvelopeMetric = (needBinEnvelope && binEnvArr && i < binEnvArr.length)
+                ? binEnvArr[i]
+                : undefined
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -655,12 +749,21 @@ export class ParticleSystem {
                         binEnergy: energy,
                         frequencyHz: hz,
                         normFreq: freqNorm,
+                        pan: binPan,
+                        spectralCentroid: binCentroid,
+                        spectralFlux: binFlux,
+                        spectralFlatness: binFlatness,
+                        inharmonicity: binInharmonicity,
+                        binMagnitude,
+                        binFlux: binFluxMetric,
+                        binPhaseDeviation: binPhaseDevMetric,
+                        binEnvelope: binEnvelopeMetric,
                         time: currentTime,
                         deltaTime,
                         canvasWidthPx: canvasW,
                         canvasHeightPx: canvasH,
-                        canvasWidthUnits: canvasW,
-                        canvasHeightUnits: canvasH,
+                        canvasWidthUnits: canvasUnitsW,
+                        canvasHeightUnits: canvasUnitsH,
                         canvasBoundaryLeft: boundaryLeft,
                         canvasBoundaryRight: boundaryRight,
                         canvasBoundaryTop: boundaryTop,
@@ -703,6 +806,7 @@ export class ParticleSystem {
             this._col[writeIndex * 3 + 2] = nextB
             this._alpha[writeIndex] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
             this._shape[writeIndex] = shapeToValue(particle.shapeType)
+            this._pan[writeIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
             writeIndex++
         }
 
@@ -712,7 +816,7 @@ export class ParticleSystem {
             if (!shouldRenderBin(i)) continue
 
             const byte = freqData[i]
-            const raw = byte / 255
+            const raw = (binMagArr && i < binMagArr.length) ? clamp01(binMagArr[i]) : (byte / 255)
             const energy = raw * gainMult
 
             if (byte <= effectiveThresholdByte) {
@@ -760,8 +864,8 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasW,
-                    canvasHeightUnits: canvasH,
+                    canvasWidthUnits: canvasUnitsW,
+                    canvasHeightUnits: canvasUnitsH,
                     canvasBoundaryLeft: boundaryLeft,
                     canvasBoundaryRight: boundaryRight,
                     canvasBoundaryTop: boundaryTop,
@@ -779,8 +883,8 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasW,
-                    canvasHeightUnits: canvasH,
+                    canvasWidthUnits: canvasUnitsW,
+                    canvasHeightUnits: canvasUnitsH,
                     canvasBoundaryLeft: boundaryLeft,
                     canvasBoundaryRight: boundaryRight,
                     canvasBoundaryTop: boundaryTop,
@@ -798,8 +902,8 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasW,
-                    canvasHeightUnits: canvasH,
+                    canvasWidthUnits: canvasUnitsW,
+                    canvasHeightUnits: canvasUnitsH,
                     canvasBoundaryLeft: boundaryLeft,
                     canvasBoundaryRight: boundaryRight,
                     canvasBoundaryTop: boundaryTop,

@@ -54,9 +54,44 @@ let _cache = {
         compileTimeMs: 0,
         lineMap: [],
         source: '',
+        requiredInputsByTarget: {
+            spawnedParticles: [],
+            allParticles: [],
+            background: [],
+            camera: [],
+        },
+        requiredInputs: [],
         applySpawnRules: _NOOP_SPAWN,
         applyLivingRules: _NOOP_LIVING,
     },
+}
+
+function _extractInputIdsFromExpression(expr, inputSet) {
+    if (typeof expr !== 'string' || !expr.trim()) return []
+    const ids = new Set()
+    const tokens = expr.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []
+    for (const tok of tokens) {
+        if (inputSet.has(tok)) ids.add(tok)
+    }
+    return [...ids]
+}
+
+function _collectRuleInputs(rules, inputSet) {
+    const ids = new Set()
+    for (const rule of (rules || [])) {
+        if (!rule?.enabled) continue
+        const cond = rule.condition || {}
+        if (typeof cond.input === 'string' && inputSet.has(cond.input)) ids.add(cond.input)
+        if (typeof cond.valueInput === 'string' && inputSet.has(cond.valueInput)) ids.add(cond.valueInput)
+        for (const id of _extractInputIdsFromExpression(cond.expression, inputSet)) ids.add(id)
+
+        const actions = Array.isArray(rule.actions) ? rule.actions : []
+        for (const action of actions) {
+            if (typeof action?.input === 'string' && inputSet.has(action.input)) ids.add(action.input)
+            for (const id of _extractInputIdsFromExpression(action?.expression, inputSet)) ids.add(id)
+        }
+    }
+    return [...ids]
 }
 
 function _literal(value) {
@@ -168,6 +203,19 @@ export function compileRules(ruleBlocks, dictionaries) {
     if (_cache.hash === hash) return _cache.result
 
     const inputIds = getInputDictionary().entries.map((entry) => entry.id)
+    const inputIdSet = new Set(inputIds)
+    const requiredInputsByTarget = {
+        spawnedParticles: _collectRuleInputs(spawnedRules, inputIdSet),
+        allParticles: _collectRuleInputs(livingRules, inputIdSet),
+        background: _collectRuleInputs(backgroundRules, inputIdSet),
+        camera: _collectRuleInputs(cameraRules, inputIdSet),
+    }
+    const requiredInputs = [...new Set([
+        ...requiredInputsByTarget.spawnedParticles,
+        ...requiredInputsByTarget.allParticles,
+        ...requiredInputsByTarget.background,
+        ...requiredInputsByTarget.camera,
+    ])]
     const spawnBuild = buildSpawnFunction(spawnedRules, inputIds)
     const livingBuild = buildLivingFunction(livingRules, inputIds)
     const bgBuild = _buildFunctionSource('applyBackgroundRules', backgroundRules, inputIds, true)
@@ -199,6 +247,8 @@ export function compileRules(ruleBlocks, dictionaries) {
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             rejected: sanitized.rejected,
+            requiredInputsByTarget,
+            requiredInputs,
             lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             applySpawnRules: typeof compiled.applySpawnRules === 'function' ? compiled.applySpawnRules : _NOOP_SPAWN,
@@ -224,6 +274,8 @@ export function compileRules(ruleBlocks, dictionaries) {
             usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
+            requiredInputsByTarget,
+            requiredInputs,
             lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             rejected: sanitized.rejected,

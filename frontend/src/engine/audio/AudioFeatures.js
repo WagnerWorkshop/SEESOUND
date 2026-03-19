@@ -6,6 +6,16 @@ function clamp01(v) {
     return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
 }
 
+function _windowBounds(index, length, radius = 2) {
+    const i = Math.max(0, Math.min(length - 1, Math.floor(index)))
+    const r = Math.max(1, Math.floor(radius))
+    return {
+        start: Math.max(0, i - r),
+        end: Math.min(length - 1, i + r),
+        center: i,
+    }
+}
+
 /** Weighted mean frequency in Hz. */
 export function computeSpectralCentroid(freq, sr) {
     if (!freq || !freq.length || !Number.isFinite(sr) || sr <= 0) return 0
@@ -109,4 +119,92 @@ export function smoothFeature(prev, next, alpha = 0.2) {
 export function normalizeCentroidHzToUnit(centroidHz, sampleRate) {
     const nyquist = Math.max(1, (Number.isFinite(sampleRate) ? sampleRate : 44100) / 2)
     return clamp01((Number.isFinite(centroidHz) ? centroidHz : 0) / nyquist)
+}
+
+/** Local spectral centroid around one FFT bin, normalized to [0..1] bin position. */
+export function computeBinSpectralCentroid(freq, binIndex, radius = 3) {
+    if (!freq || !freq.length) return 0
+    const n = freq.length
+    const { start, end } = _windowBounds(binIndex, n, radius)
+    let weighted = 0
+    let total = 0
+
+    for (let i = start; i <= end; i++) {
+        const mag = Math.max(0, freq[i] / 255)
+        weighted += i * mag
+        total += mag
+    }
+
+    if (total <= 1e-9) return clamp01((Math.floor(binIndex) || 0) / Math.max(1, n - 1))
+    return clamp01((weighted / total) / Math.max(1, n - 1))
+}
+
+/** Local positive flux around one FFT bin in [0..1]. */
+export function computeBinSpectralFlux(curr, prev, binIndex, radius = 2) {
+    if (!curr || !prev || !curr.length || !prev.length) return 0
+    const n = Math.min(curr.length, prev.length)
+    const { start, end } = _windowBounds(binIndex, n, radius)
+    let sumPositive = 0
+    let count = 0
+
+    for (let i = start; i <= end; i++) {
+        const c = Math.max(0, curr[i] / 255)
+        const p = Math.max(0, prev[i] / 255)
+        const d = c - p
+        if (d > 0) sumPositive += d
+        count++
+    }
+
+    if (count <= 0) return 0
+    return clamp01(sumPositive / count)
+}
+
+/** Local geometric/arithmetic power-mean ratio around one bin in [0..1]. */
+export function computeBinSpectralFlatness(freq, binIndex, radius = 3) {
+    if (!freq || !freq.length) return 0
+    const eps = 1e-12
+    const { start, end } = _windowBounds(binIndex, freq.length, radius)
+    let sumLog = 0
+    let sumPower = 0
+    let count = 0
+
+    for (let i = start; i <= end; i++) {
+        const mag = Math.max(0, freq[i] / 255)
+        const power = mag * mag + eps
+        sumLog += Math.log(power)
+        sumPower += power
+        count++
+    }
+
+    if (count <= 0 || sumPower <= 0) return 0
+    const gm = Math.exp(sumLog / count)
+    const am = sumPower / count
+    return clamp01(gm / Math.max(am, eps))
+}
+
+/**
+ * Local inharmonicity proxy in [0..1].
+ * Uses neighborhood roughness (second-derivative magnitude) as a bin-local
+ * estimate of harmonic deviation instead of global peak matching.
+ */
+export function computeBinInharmonicity(freq, binIndex, radius = 3) {
+    if (!freq || freq.length < 3) return 0
+    const n = freq.length
+    const { start, end } = _windowBounds(binIndex, n, radius)
+    let roughness = 0
+    let count = 0
+
+    const a = Math.max(start + 1, 1)
+    const b = Math.min(end - 1, n - 2)
+    for (let i = a; i <= b; i++) {
+        const l = Math.max(0, freq[i - 1] / 255)
+        const c = Math.max(0, freq[i] / 255)
+        const r = Math.max(0, freq[i + 1] / 255)
+        const secondDiff = Math.abs(l - 2 * c + r)
+        roughness += secondDiff
+        count++
+    }
+
+    if (count <= 0) return 0
+    return clamp01((roughness / count) * 1.5)
 }

@@ -69,6 +69,7 @@ const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, 5000)
 let camera = cameraOrtho
 const orbitTarget = new THREE.Vector3(0, 0, 0)
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 0, 420)
+const DEFAULT_ORBIT_RADIUS = DEFAULT_CAMERA_POS.length()
 
 for (const c of [cameraOrtho, cameraPerspective]) {
     c.position.copy(DEFAULT_CAMERA_POS)
@@ -122,8 +123,43 @@ function applyOrbitToCamera() {
     camera.lookAt(orbitTarget)
 }
 
+function _axoAnglesForPreset(presetName) {
+    const preset = String(presetName || 'orthoXY')
+    if (preset === 'isometric') {
+        return {
+            azimuth: Math.PI / 4,
+            elevation: Math.asin(1 / Math.sqrt(3)),
+        }
+    }
+    if (preset === 'fortyFive') {
+        return {
+            azimuth: Math.PI / 4,
+            elevation: Math.PI / 4,
+        }
+    }
+    if (preset === 'topXZ') {
+        return {
+            azimuth: 0,
+            elevation: Math.PI / 2 - 0.001,
+        }
+    }
+    if (preset === 'orthoYZ') {
+        return {
+            azimuth: Math.PI / 2,
+            elevation: 0,
+        }
+    }
+    return {
+        azimuth: 0,
+        elevation: 0,
+    }
+}
+
 function resetCameraPose() {
     orbitTarget.set(0, 0, 0)
+    const resetW = Math.max(1, renderer.domElement.clientWidth || col.clientWidth || window.innerWidth)
+    const resetH = Math.max(1, renderer.domElement.clientHeight || col.clientHeight || window.innerHeight)
+    resizeRenderer(resetW, resetH)
     for (const c of [cameraOrtho, cameraPerspective]) {
         c.position.copy(DEFAULT_CAMERA_POS)
         c.up.set(0, 1, 0)
@@ -133,27 +169,17 @@ function resetCameraPose() {
         c.updateProjectionMatrix()
     }
     applyProjectionFromParams()
-    applyAxoPresetFromParams()
+    applyAxoPresetFromParams(true)
     syncOrbitFromCamera()
 }
 
-function applyAxoPresetFromParams() {
+function applyAxoPresetFromParams(forceDefaultRadius = false) {
     if (params.cameraProjection === 'perspective') return
     const preset = String(params.cameraAxoPreset || 'orthoXY')
-    const radius = Math.max(40, Number(orbitState.radius) || DEFAULT_CAMERA_POS.length())
-
-    let azimuth = 0
-    let elevation = 0
-    if (preset === 'isometric') {
-        azimuth = Math.PI / 4
-        elevation = Math.asin(1 / Math.sqrt(3))
-    } else if (preset === 'fortyFive') {
-        azimuth = Math.PI / 4
-        elevation = Math.PI / 4
-    } else if (preset === 'topXZ') {
-        azimuth = 0
-        elevation = Math.PI / 2 - 0.001
-    }
+    const radius = forceDefaultRadius
+        ? DEFAULT_ORBIT_RADIUS
+        : Math.max(40, Number(orbitState.radius) || DEFAULT_ORBIT_RADIUS)
+    const { azimuth, elevation } = _axoAnglesForPreset(preset)
 
     orbitState.radius = radius
     orbitState.azimuth = azimuth
@@ -297,23 +323,58 @@ function fitCameraToVisible() {
     orbitTarget.copy(center)
 
     if (camera.isOrthographicCamera) {
-        const halfW = Math.max(size.x * 0.5, size.y * 0.5 * aspect, radius * 0.65)
-        const halfH = Math.max(size.y * 0.5, size.x * 0.5 / Math.max(0.001, aspect), radius * 0.65)
+        const { azimuth, elevation } = _axoAnglesForPreset(params.cameraAxoPreset)
+        orbitState.azimuth = azimuth
+        orbitState.elevation = elevation
+        orbitState.radius = Math.max(radius * 2.2, 60)
+        applyOrbitToCamera()
+
+        camera.updateMatrixWorld(true)
+        const m = camera.matrixWorld.elements
+        const right = new THREE.Vector3(m[0], m[1], m[2]).normalize()
+        const up = new THREE.Vector3(m[4], m[5], m[6]).normalize()
+
+        const corners = [
+            new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+            new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+            new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+            new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+            new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+            new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+            new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+            new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+        ]
+
+        let maxX = 0
+        let maxY = 0
+        const tmp = new THREE.Vector3()
+        for (const c of corners) {
+            tmp.copy(c).sub(center)
+            maxX = Math.max(maxX, Math.abs(tmp.dot(right)))
+            maxY = Math.max(maxY, Math.abs(tmp.dot(up)))
+        }
+
+        const halfW = Math.max(maxX, maxY * aspect, radius * 0.35)
+        const halfH = Math.max(maxY, maxX / Math.max(0.001, aspect), radius * 0.35)
         cameraOrtho.left = -halfW * pad
         cameraOrtho.right = halfW * pad
         cameraOrtho.top = halfH * pad
         cameraOrtho.bottom = -halfH * pad
         cameraOrtho.zoom = 1
+        cameraOrtho.near = -Math.max(5000, radius * 6)
+        cameraOrtho.far = Math.max(5000, radius * 6)
         cameraOrtho.updateProjectionMatrix()
-        orbitState.radius = Math.max(radius * 2.2, 60)
-        applyOrbitToCamera()
     } else {
+        cameraPerspective.lookAt(center)
+        syncOrbitFromCamera()
         const fovY = THREE.MathUtils.degToRad(cameraPerspective.fov)
-        const fovX = 2 * Math.atan(Math.tan(fovY * 0.5) * cameraPerspective.aspect)
-        const distY = (size.y * 0.5 * pad) / Math.max(0.001, Math.tan(fovY * 0.5))
-        const distX = (size.x * 0.5 * pad) / Math.max(0.001, Math.tan(fovX * 0.5))
-        orbitState.radius = Math.max(radius * 1.35, distX, distY, 40)
+        const distY = (radius * pad) / Math.max(0.001, Math.tan(fovY * 0.5))
+        const fovX = 2 * Math.atan(Math.tan(fovY * 0.5) * (cameraPerspective.aspect || aspect))
+        const distX = (radius * pad) / Math.max(0.001, Math.tan(fovX * 0.5))
+        orbitState.radius = Math.max(distX, distY, 40)
         applyOrbitToCamera()
+        cameraPerspective.near = Math.max(0.001, orbitState.radius - radius * 3)
+        cameraPerspective.far = Math.max(cameraPerspective.near + 1, orbitState.radius + radius * 6)
         cameraPerspective.updateProjectionMatrix()
     }
 
@@ -357,6 +418,20 @@ class AudioEngine {
         this.streamSource = null; this.streamNode = null
         this.audioEl = null; this.splitter = null
         this.analyserL = null; this.analyserR = null
+        this.binAnalysisNode = null
+        this._workletReady = false
+        this._workletLoadPromise = null
+        this._workletConfig = {
+            enabled: false,
+            needMagnitude: false,
+            needFlux: false,
+            needPhaseDeviation: false,
+            needEnvelope: false,
+            attackThreshold: 0.03,
+            sustainFluxEps: 0.004,
+            sustainMagThreshold: 0.08,
+            decayThreshold: 0.008,
+        }
 
         this.FFT_SIZE = 2048
         this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
@@ -364,6 +439,11 @@ class AudioEngine {
         this._freqL = new Uint8Array(128)
         this._freqR = new Uint8Array(128)
         this._prevFrequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+        this._binMagnitude = null
+        this._binFlux = null
+        this._binPhaseDeviation = null
+        this._binEnvelope = null
         this.featureSmoothingAlpha = 0.2
 
         this.bass = 0; this.mid = 0; this.high = 0
@@ -375,6 +455,63 @@ class AudioEngine {
         this.ctxState = 'none'
     }
 
+    _ensureWorkletLoaded() {
+        if (!this.ctx || this._workletReady) return
+        if (!this._workletLoadPromise) {
+            const moduleUrl = new URL('./engine/audio/BinAnalysisWorklet.js', import.meta.url)
+            this._workletLoadPromise = this.ctx.audioWorklet.addModule(moduleUrl)
+                .then(() => {
+                    this.binAnalysisNode = new AudioWorkletNode(this.ctx, 'bin-analysis-processor', {
+                        numberOfInputs: 1,
+                        numberOfOutputs: 0,
+                        processorOptions: {
+                            fftSize: this.FFT_SIZE,
+                            hopSize: Math.floor(this.FFT_SIZE / 4),
+                        },
+                    })
+                    this.binAnalysisNode.port.onmessage = (event) => {
+                        const msg = event.data || {}
+                        if (msg.type !== 'binMetrics') return
+                        if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
+                        if (msg.flux) this._binFlux = new Float32Array(msg.flux)
+                        if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
+                        if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
+                    }
+                    this._workletReady = true
+                    this._postWorkletConfig()
+                })
+                .catch((err) => {
+                    console.warn('[AudioWorklet] Failed to load bin analysis worklet:', err)
+                })
+        }
+    }
+
+    _postWorkletConfig() {
+        if (!this.binAnalysisNode) return
+        this.binAnalysisNode.port.postMessage({
+            type: 'config',
+            config: this._workletConfig,
+        })
+    }
+
+    setRuleInputUsage(requiredInputsByTarget = null) {
+        const spawnInputs = Array.isArray(requiredInputsByTarget?.spawnedParticles)
+            ? requiredInputsByTarget.spawnedParticles
+            : []
+        const used = new Set(spawnInputs)
+        const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope')
+        const needFlux = used.has('binFlux') || used.has('binEnvelope')
+        const needPhaseDeviation = used.has('binPhaseDeviation')
+        const needEnvelope = used.has('binEnvelope')
+
+        this._workletConfig.enabled = needMagnitude || needFlux || needPhaseDeviation || needEnvelope
+        this._workletConfig.needMagnitude = needMagnitude
+        this._workletConfig.needFlux = needFlux
+        this._workletConfig.needPhaseDeviation = needPhaseDeviation
+        this._workletConfig.needEnvelope = needEnvelope
+        this._postWorkletConfig()
+    }
+
     init(el) {
         if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -382,6 +519,7 @@ class AudioEngine {
             this.analyser.fftSize = this.FFT_SIZE
             this.analyser.smoothingTimeConstant = 0
             this.analyser.connect(this.ctx.destination)
+            this._ensureWorkletLoaded()
         }
         if (this.audioEl !== el || (!this.source && !this.streamSource)) {
             this.source?.disconnect()
@@ -393,6 +531,7 @@ class AudioEngine {
             this.source = null
             this.streamSource = null
             this.streamNode = null
+            let workletConnected = false
 
             try {
                 this.source = this.ctx.createMediaElementSource(el)
@@ -418,7 +557,17 @@ class AudioEngine {
                 srcNode?.connect(this.splitter)
                 this.splitter.connect(this.analyserL, 0)
                 this.splitter.connect(this.analyserR, 1)
+                if (this.binAnalysisNode) {
+                    srcNode?.connect(this.binAnalysisNode)
+                    workletConnected = true
+                }
             } catch { /* mono */ }
+
+            // Ensure worklet receives source even if splitter setup fails.
+            try {
+                const srcNode = this.source || this.streamSource
+                if (this.binAnalysisNode && !workletConnected) srcNode?.connect(this.binAnalysisNode)
+            } catch { /* no-op */ }
         }
         if (this.ctx.state === 'suspended') this.ctx.resume()
         this.ctxState = this.ctx.state
@@ -430,6 +579,7 @@ class AudioEngine {
             this.ctx.resume()
         }
         this.ctxState = this.ctx?.state ?? 'none'
+        this._prevFrequencyDataBins.set(this.frequencyData)
         this.analyser.getByteFrequencyData(this.frequencyData)
         this.analyser.getByteTimeDomainData(this.timeDomainData)
 
@@ -452,7 +602,7 @@ class AudioEngine {
 
         const centroidHz = computeSpectralCentroid(this.frequencyData, sr)
         const centroidNorm = normalizeCentroidHzToUnit(centroidHz, sr)
-        const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyData)
+        const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
         const flatnessNorm = computeSpectralFlatness(this.frequencyData)
         const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
 
@@ -482,9 +632,31 @@ class AudioEngine {
         const l = this._freqL[i], r = this._freqR[i]
         return (r - l) / (l + r + 1)
     }
+
+    /** Previous-frame FFT magnitudes for bin-local delta features (read-only). */
+    getPrevFrequencyData() {
+        return this._prevFrequencyDataBins
+    }
+
+    getBinMagnitude() {
+        return this._binMagnitude
+    }
+
+    getBinFlux() {
+        return this._binFlux
+    }
+
+    getBinPhaseDeviation() {
+        return this._binPhaseDeviation
+    }
+
+    getBinEnvelope() {
+        return this._binEnvelope
+    }
 }
 
 const ae = new AudioEngine()
+ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 4  WEBSOCKET BRIDGE
@@ -683,6 +855,7 @@ async function saveCanvasPng() {
         })
 
         exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
+        ps.setViewportHeight(exportRenderer.domElement.height)
         exportRenderer.render(scene, exportCamera)
 
         for (const obj of hiddenForExport) obj.visible = true
@@ -706,6 +879,7 @@ async function saveCanvasPng() {
             })
         }
     } finally {
+        ps.setViewportHeight(renderer.domElement.height)
         exportRenderer.dispose()
     }
 }
@@ -737,6 +911,7 @@ async function runPaintAll(playerEl, audioEl) {
     document.body.appendChild(paintAudio)
 
     const paintAe = new AudioEngine()
+    paintAe.setRuleInputUsage(ps.getRuleCompileState()?.requiredInputsByTarget)
 
     emitPaintAllState(playerEl, true)
 
@@ -777,6 +952,7 @@ async function runPaintAll(playerEl, audioEl) {
 
             const w = renderer.domElement.width / window.devicePixelRatio
             const h = renderer.domElement.height / window.devicePixelRatio
+            const cameraUnits = getCameraCanvasUnits()
             const paintParams = {
                 ...params,
                 // Paint-all must accumulate by design, regardless of current live mode.
@@ -787,6 +963,12 @@ async function runPaintAll(playerEl, audioEl) {
                     z: camera.position.z,
                     zoom: camera.zoom,
                 },
+                cameraCanvasWidthUnits: cameraUnits.w,
+                cameraCanvasHeightUnits: cameraUnits.h,
+                cameraCanvasBoundaryLeft: cameraUnits.left,
+                cameraCanvasBoundaryRight: cameraUnits.right,
+                cameraCanvasBoundaryTop: cameraUnits.top,
+                cameraCanvasBoundaryBottom: cameraUnits.bottom,
             }
             ps.update(paintAe, paintParams, w, h)
             applyRuleCameraOutput(ps.getCameraOutput())
@@ -825,6 +1007,31 @@ async function runPaintAll(playerEl, audioEl) {
     }
 }
 
+function getCameraCanvasUnits() {
+    let canvW = 0
+    let canvH = 0
+    if (camera.isOrthographicCamera) {
+        canvW = Math.abs((camera.right - camera.left) / Math.max(0.01, camera.zoom))
+        canvH = Math.abs((camera.top - camera.bottom) / Math.max(0.01, camera.zoom))
+    } else {
+        const dist = Math.max(0.001, camera.position.distanceTo(orbitTarget))
+        const fovRad = THREE.MathUtils.degToRad(camera.fov)
+        canvH = (2 * Math.tan(fovRad * 0.5) * dist) / Math.max(0.01, camera.zoom)
+        canvW = canvH * camera.aspect
+    }
+
+    const halfW = canvW * 0.5
+    const halfH = canvH * 0.5
+    return {
+        w: canvW,
+        h: canvH,
+        left: orbitTarget.x - halfW,
+        right: orbitTarget.x + halfW,
+        top: orbitTarget.y + halfH,
+        bottom: orbitTarget.y - halfH,
+    }
+}
+
 function animate() {
     requestAnimationFrame(animate)
     frameN++
@@ -836,6 +1043,7 @@ function animate() {
     if (isActuallyPlaying) {
         const w = renderer.domElement.width / window.devicePixelRatio
         const h = renderer.domElement.height / window.devicePixelRatio
+        const cameraUnits = getCameraCanvasUnits()
         const updateParams = {
             ...params,
             cameraState: {
@@ -844,6 +1052,12 @@ function animate() {
                 z: camera.position.z,
                 zoom: camera.zoom,
             },
+            cameraCanvasWidthUnits: cameraUnits.w,
+            cameraCanvasHeightUnits: cameraUnits.h,
+            cameraCanvasBoundaryLeft: cameraUnits.left,
+            cameraCanvasBoundaryRight: cameraUnits.right,
+            cameraCanvasBoundaryTop: cameraUnits.top,
+            cameraCanvasBoundaryBottom: cameraUnits.bottom,
         }
         ps.update(ae, updateParams, w, h)
         applyRuleCameraOutput(ps.getCameraOutput())
@@ -851,6 +1065,7 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
+    ps.setViewportHeight(renderer.domElement.height)
 
     renderer.render(scene, camera)
 
@@ -862,17 +1077,9 @@ function animate() {
         const px = camera.position.x.toFixed(2)
         const py = camera.position.y.toFixed(2)
         const pz = camera.position.z.toFixed(2)
-        let canvW = 0
-        let canvH = 0
-        if (camera.isOrthographicCamera) {
-            canvW = Math.abs((camera.right - camera.left) / Math.max(0.01, camera.zoom))
-            canvH = Math.abs((camera.top - camera.bottom) / Math.max(0.01, camera.zoom))
-        } else {
-            const dist = Math.max(0.001, camera.position.distanceTo(orbitTarget))
-            const fovRad = THREE.MathUtils.degToRad(camera.fov)
-            canvH = (2 * Math.tan(fovRad * 0.5) * dist) / Math.max(0.01, camera.zoom)
-            canvW = canvH * camera.aspect
-        }
+        const cameraUnits = getCameraCanvasUnits()
+        const canvW = cameraUnits.w
+        const canvH = cameraUnits.h
         cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)}`
     }
 }
@@ -1053,12 +1260,14 @@ subscribe((_, key) => {
     }
     if (key === 'ruleBlocks') {
         const state = ps.onRulesChanged(params.ruleBlocks ?? [])
+        ae.setRuleInputUsage(state?.requiredInputsByTarget)
         window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
         if (RULE_DEBUG_FLAGS.logCompilerStatus) {
             console.info('[RuleEngine] recompilation', {
                 status: state.compileStatus,
                 compileTimeMs: state.compileTimeMs,
                 error: state.compileError,
+                requiredInputsByTarget: state.requiredInputsByTarget,
                 rules: Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0,
             })
         }
