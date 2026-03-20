@@ -5,22 +5,42 @@
 
 /* ── Block ───────────────────────────────────────────────────────────────────── */
 #control-panel {
-  grid-column: 3;
-  position: relative;
+  position: absolute;
+  top: 10px;
+  right: 10px;
   display: flex;
   flex-direction: column;
   width: var(--panel-width);
-  max-height: 100vh;
-  background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
-  z-index: 10;
+  max-height: calc(100vh - 20px);
+  background: color-mix(in srgb, var(--color-surface) 50%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  z-index: 50;
   transition: width var(--transition-mid);
   overflow: hidden;
-  flex-shrink: 0;
+  backdrop-filter: blur(1px);
 }
 
 #control-panel.cp-collapsed {
   width: 28px;
+}
+
+.cp-resize-handle {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 3;
+}
+
+.cp-resize-handle:hover {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+#control-panel.cp-collapsed .cp-resize-handle {
+  display: none;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────────── */
@@ -957,9 +977,38 @@ input[type=number]::-webkit-outer-spin-button {
 
 .cp-rule-summary {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 8px;
   color: var(--color-text-dim);
   font-family: var(--font-mono);
+}
+
+.cp-rule-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.cp-rule-live-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  min-height: 16px;
+}
+
+.cp-rule-live-key {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--color-text-muted);
+}
+
+.cp-rule-live-value {
+  font-size: 8px;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  margin-left: 5px;
+  text-align: right;
 }
 
 .cp-rule-group-dragging {
@@ -969,4 +1018,9 @@ input[type=number]::-webkit-outer-spin-button {
 .cp-rule-group-drop-target {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent) inset;
+}
+
+.cp-rule-context-group.cp-rule-group-selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent) inset;
 }

@@ -1,24 +1,25 @@
 {
-  "name": "linear basic",
+  "name": "experiment",
   "params": {
-    "inputGain": 0.48,
+    "inputGain": 0.77,
     "amplitudeThreshold": 0,
-    "defaultParticleSize": 0.3,
-    "freqNormMin": 64,
-    "freqNormMax": 16000,
-    "canvasWidth": 3000,
+    "defaultParticleSize": 1,
+    "canvasWidth": 2000,
     "canvasHeight": 1000,
-    "canvasScale": 40,
+    "canvasScale": 60,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
     "maxParticles": 1999872,
     "particleRenderPercent": 50,
-    "blendMode": "screen",
+    "blendMode": "alpha",
     "cameraProjection": "axonometric",
     "cameraAxoPreset": "orthoXY",
     "persistMode": 1,
     "tonicHz": 261.63,
     "ruleBlocks": [
       {
-        "id": "x-set-time",
+        "id": "x-set",
         "group": "SPACING",
         "subgroup": "x coordinate",
         "enabled": true,
@@ -30,14 +31,14 @@
         "actions": [
           {
             "operator": "set",
-            "output": "x",
-            "input": "time"
+            "output": "blue",
+            "expression": "1 / max(1e-6, (binEnergy))"
           }
         ],
         "order": 0
       },
       {
-        "id": "x-divide-by-audio-length",
+        "id": "x-set-2",
         "group": "SPACING",
         "subgroup": "x coordinate",
         "enabled": true,
@@ -48,69 +49,12 @@
         },
         "actions": [
           {
-            "operator": "divide",
+            "operator": "set",
             "output": "x",
-            "expression": "(audioLengthSec) * 1.12"
+            "input": "spectralFlux"
           }
         ],
         "order": 1
-      },
-      {
-        "id": "y-set-norm-frequency",
-        "group": "SPACING",
-        "subgroup": "y coordinate",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "y",
-            "input": "normFreq"
-          }
-        ],
-        "order": 2
-      },
-      {
-        "id": "y-center-around-zero",
-        "group": "SPACING",
-        "subgroup": "y coordinate",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "subtract",
-            "output": "y",
-            "value": 0.5
-          }
-        ],
-        "order": 3
-      },
-      {
-        "id": "y-scale-to-canvas-height",
-        "group": "SPACING",
-        "subgroup": "y coordinate",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "multiply",
-            "output": "y",
-            "expression": "(canvasHeightPx) * 1"
-          }
-        ],
-        "order": 4
       },
       {
         "id": "x-center-around-zero",
@@ -129,7 +73,7 @@
             "value": 0.5
           }
         ],
-        "order": 5
+        "order": 2
       },
       {
         "id": "x-scale-to-canvas-width",
@@ -148,7 +92,83 @@
             "expression": "(canvasWidthUnits) * 1"
           }
         ],
+        "order": 3
+      },
+      {
+        "id": "x-divide-by-audio-length",
+        "group": "SPACING",
+        "subgroup": "x coordinate",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "divide",
+            "output": "x",
+            "expression": "(audioLengthSec) * 1"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "y-set-norm-frequency",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "input": "normFreq"
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "y-center-around-zero",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "subtract",
+            "output": "y",
+            "value": 0.5
+          }
+        ],
         "order": 6
+      },
+      {
+        "id": "y-scale-to-canvas-height",
+        "group": "SPACING",
+        "subgroup": "y coordinate",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "y",
+            "expression": "(canvasHeightPx) * 1"
+          }
+        ],
+        "order": 7
       },
       {
         "id": "amplitude brightness",
@@ -167,7 +187,7 @@
             "input": "binEnergy"
           }
         ],
-        "order": 7
+        "order": 8
       },
       {
         "id": "ear correction",
@@ -186,7 +206,7 @@
             "expression": "(normFreq) * 2"
           }
         ],
-        "order": 8
+        "order": 9
       },
       {
         "id": "ear correction-2",
@@ -205,13 +225,13 @@
             "expression": "(normFreq) * 1"
           }
         ],
-        "order": 9
+        "order": 10
       },
       {
         "id": "thinning",
         "group": "Appearance",
         "subgroup": "brightness",
-        "enabled": true,
+        "enabled": false,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
         "condition": {
@@ -224,7 +244,7 @@
             "input": "binEnergy"
           }
         ],
-        "order": 10
+        "order": 11
       },
       {
         "id": "hue",
@@ -243,7 +263,7 @@
             "expression": "(normFreq) * 360000"
           }
         ],
-        "order": 11
+        "order": 12
       },
       {
         "id": "saturation",
@@ -262,45 +282,7 @@
             "expression": "(binEnergy) * 10"
           }
         ],
-        "order": 12
-      },
-      {
-        "id": "background hue",
-        "group": "Default",
-        "subgroup": "background color",
-        "enabled": false,
-        "target": "background",
-        "scope": "allLivingFrame",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "hue",
-            "value": 50
-          }
-        ],
         "order": 13
-      },
-      {
-        "id": "background saturation",
-        "group": "Default",
-        "subgroup": "background color",
-        "enabled": false,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "saturation",
-            "value": 50
-          }
-        ],
-        "order": 14
       },
       {
         "id": "soft",
@@ -316,10 +298,10 @@
           {
             "operator": "multiply",
             "output": "size",
-            "expression": "(binEnergy) * 6"
+            "expression": "(binEnergy) * 2"
           }
         ],
-        "order": 15
+        "order": 14
       },
       {
         "id": "shape",
@@ -338,12 +320,24 @@
             "value": "circle"
           }
         ],
-        "order": 16
+        "order": 15
       }
     ],
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
     "_disabled": [],
+    "cameraFov": 104,
+    "enableAggressiveThinning": true,
+    "dominantPeakCulling": true,
+    "peakEnergyThreshold": 0.18,
+    "uiDirectives": {
+      "responsiveInterface": true,
+      "resizableAndCollapsibleTabs": true,
+      "tooltipsForAllControls": true,
+      "tooltipContent": "feature_and_current_value"
+    },
+    "freqNormMin": 64.0,
+    "freqNormMax": 16000.0,
     "binFluxNormMin": 0.0,
     "binPhaseDeviationNormMin": 0.0,
     "spectralFlatnessNormMax": 1.0,

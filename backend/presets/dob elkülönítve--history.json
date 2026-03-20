@@ -1,17 +1,18 @@
 {
-  "name": "linear basic",
+  "name": "dob elkülönítve--history",
   "params": {
-    "inputGain": 0.48,
+    "inputGain": 0.78,
     "amplitudeThreshold": 0,
-    "defaultParticleSize": 0.3,
-    "freqNormMin": 64,
-    "freqNormMax": 16000,
+    "defaultParticleSize": 1,
     "canvasWidth": 3000,
     "canvasHeight": 1000,
     "canvasScale": 40,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
     "maxParticles": 1999872,
     "particleRenderPercent": 50,
-    "blendMode": "screen",
+    "blendMode": "source-over",
     "cameraProjection": "axonometric",
     "cameraAxoPreset": "orthoXY",
     "persistMode": 1,
@@ -227,10 +228,10 @@
         "order": 10
       },
       {
-        "id": "hue",
+        "id": "green",
         "group": "Appearance",
         "subgroup": "color",
-        "enabled": false,
+        "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
         "condition": {
@@ -239,11 +240,49 @@
         "actions": [
           {
             "operator": "set",
-            "output": "hue",
-            "expression": "(normFreq) * 360000"
+            "output": "green",
+            "input": "pan"
           }
         ],
         "order": 11
+      },
+      {
+        "id": "red",
+        "group": "Appearance",
+        "subgroup": "color",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "red",
+            "input": "inharmonicity"
+          }
+        ],
+        "order": 12
+      },
+      {
+        "id": "blue",
+        "group": "Appearance",
+        "subgroup": "color",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "blue",
+            "value": 1
+          }
+        ],
+        "order": 13
       },
       {
         "id": "saturation",
@@ -262,44 +301,6 @@
             "expression": "(binEnergy) * 10"
           }
         ],
-        "order": 12
-      },
-      {
-        "id": "background hue",
-        "group": "Default",
-        "subgroup": "background color",
-        "enabled": false,
-        "target": "background",
-        "scope": "allLivingFrame",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "hue",
-            "value": 50
-          }
-        ],
-        "order": 13
-      },
-      {
-        "id": "background saturation",
-        "group": "Default",
-        "subgroup": "background color",
-        "enabled": false,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "saturation",
-            "value": 50
-          }
-        ],
         "order": 14
       },
       {
@@ -316,7 +317,7 @@
           {
             "operator": "multiply",
             "output": "size",
-            "expression": "(binEnergy) * 6"
+            "expression": "(binEnergy) * 2"
           }
         ],
         "order": 15
@@ -344,6 +345,18 @@
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
     "_disabled": [],
+    "cameraFov": 104,
+    "enableAggressiveThinning": true,
+    "dominantPeakCulling": true,
+    "peakEnergyThreshold": 0.18,
+    "uiDirectives": {
+      "responsiveInterface": true,
+      "resizableAndCollapsibleTabs": true,
+      "tooltipsForAllControls": true,
+      "tooltipContent": "feature_and_current_value"
+    },
+    "freqNormMin": 64.0,
+    "freqNormMax": 16000.0,
     "binFluxNormMin": 0.0,
     "binPhaseDeviationNormMin": 0.0,
     "spectralFlatnessNormMax": 1.0,

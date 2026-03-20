@@ -34,7 +34,6 @@ import {
     computeSpectralFlux,
     computeSpectralFlatness,
     computeInharmonicity,
-    smoothFeature,
     normalizeCentroidHzToUnit,
 } from './engine/audio/AudioFeatures.js'
 
@@ -407,6 +406,12 @@ applyAxoPresetFromParams()
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
 const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
+window.addEventListener('seesound:particle-size-apply-all', (e) => {
+    const oldDefaultSize = Number(e?.detail?.oldDefaultSize)
+    const newDefaultSize = Number(e?.detail?.newDefaultSize)
+    if (!Number.isFinite(oldDefaultSize) || !Number.isFinite(newDefaultSize) || oldDefaultSize <= 0 || newDefaultSize <= 0) return
+    ps.scaleAllParticleSizes(newDefaultSize / oldDefaultSize)
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 3  AUDIO ENGINE
@@ -427,7 +432,8 @@ class AudioEngine {
             needFlux: false,
             needPhaseDeviation: false,
             needEnvelope: false,
-            attackThreshold: 0.03,
+            needAttackTime: false,
+            attackThreshold: 0.0005,
             sustainFluxEps: 0.004,
             sustainMagThreshold: 0.08,
             decayThreshold: 0.008,
@@ -444,10 +450,15 @@ class AudioEngine {
         this._binFlux = null
         this._binPhaseDeviation = null
         this._binEnvelope = null
+        this._binAttackTime = null
         this.featureSmoothingAlpha = 0.2
 
         this.bass = 0; this.mid = 0; this.high = 0
         this.amplitude = 0; this.peakFreq = 0; this.peakByte = 0; this.pan = 0
+        this.rmsDbfs = -96
+        this.spectralCentroidHz = 0
+        this.spectralFluxAU = 0
+        this.spectralFlatnessRatio = 0
         this.spectralCentroid = 0
         this.spectralFlux = 0
         this.spectralFlatness = 0
@@ -476,6 +487,7 @@ class AudioEngine {
                         if (msg.flux) this._binFlux = new Float32Array(msg.flux)
                         if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
                         if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
+                        if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
                     }
                     this._workletReady = true
                     this._postWorkletConfig()
@@ -495,20 +507,24 @@ class AudioEngine {
     }
 
     setRuleInputUsage(requiredInputsByTarget = null) {
-        const spawnInputs = Array.isArray(requiredInputsByTarget?.spawnedParticles)
-            ? requiredInputsByTarget.spawnedParticles
-            : []
-        const used = new Set(spawnInputs)
+        const used = new Set([
+            ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
+            ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+            ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
+            ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
+        ])
         const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope')
-        const needFlux = used.has('binFlux') || used.has('binEnvelope')
-        const needPhaseDeviation = used.has('binPhaseDeviation')
+        const needFlux = used.has('binFlux') || used.has('binEnvelope') || used.has('binAttackTime')
+        const needPhaseDeviation = used.has('binPhaseDeviation') || used.has('binPhasedeviation')
         const needEnvelope = used.has('binEnvelope')
+        const needAttackTime = used.has('binAttackTime')
 
-        this._workletConfig.enabled = needMagnitude || needFlux || needPhaseDeviation || needEnvelope
+        this._workletConfig.enabled = needMagnitude || needFlux || needPhaseDeviation || needEnvelope || needAttackTime
         this._workletConfig.needMagnitude = needMagnitude
         this._workletConfig.needFlux = needFlux
         this._workletConfig.needPhaseDeviation = needPhaseDeviation
         this._workletConfig.needEnvelope = needEnvelope
+        this._workletConfig.needAttackTime = needAttackTime
         this._postWorkletConfig()
     }
 
@@ -579,7 +595,6 @@ class AudioEngine {
             this.ctx.resume()
         }
         this.ctxState = this.ctx?.state ?? 'none'
-        this._prevFrequencyDataBins.set(this.frequencyData)
         this.analyser.getByteFrequencyData(this.frequencyData)
         this.analyser.getByteTimeDomainData(this.timeDomainData)
 
@@ -601,20 +616,28 @@ class AudioEngine {
         this.peakByte = peak
 
         const centroidHz = computeSpectralCentroid(this.frequencyData, sr)
-        const centroidNorm = normalizeCentroidHzToUnit(centroidHz, sr)
         const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
+        const fluxAu = fluxNorm * 100
         const flatnessNorm = computeSpectralFlatness(this.frequencyData)
         const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
 
-        this.spectralCentroid = smoothFeature(this.spectralCentroid, centroidNorm, this.featureSmoothingAlpha)
-        this.spectralFlux = smoothFeature(this.spectralFlux, fluxNorm, this.featureSmoothingAlpha)
-        this.spectralFlatness = smoothFeature(this.spectralFlatness, flatnessNorm, this.featureSmoothingAlpha)
-        this.inharmonicity = smoothFeature(this.inharmonicity, inharmonicityNorm, this.featureSmoothingAlpha)
+        const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
+        this.spectralCentroidHz += (centroidHz - this.spectralCentroidHz) * alpha
+        this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
+        this.spectralFlatnessRatio += (flatnessNorm - this.spectralFlatnessRatio) * alpha
+        this.inharmonicity += (inharmonicityNorm - this.inharmonicity) * alpha
 
+        this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
+        this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
+        this.spectralFlatness = Math.max(0, Math.min(1, this.spectralFlatnessRatio))
+
+        // Keep an isolated copy of the current FFT frame for next-frame deltas.
+        this._prevFrequencyDataBins.set(this.frequencyData)
         this._prevFrequencyData.set(this.frequencyData)
 
         let sq = 0; for (const b of this.timeDomainData) sq += ((b - 128) / 128) ** 2
         this.amplitude = Math.sqrt(sq / this.timeDomainData.length)
+        this.rmsDbfs = 20 * Math.log10(Math.max(1e-6, this.amplitude))
 
         if (this.analyserL && this.analyserR) {
             this.analyserL.getByteFrequencyData(this._freqL)
@@ -652,6 +675,10 @@ class AudioEngine {
 
     getBinEnvelope() {
         return this._binEnvelope
+    }
+
+    getBinAttackTime() {
+        return this._binAttackTime
     }
 }
 
@@ -1061,6 +1088,42 @@ function animate() {
         }
         ps.update(ae, updateParams, w, h)
         applyRuleCameraOutput(ps.getCameraOutput())
+        const binMagnitude0 = ae.getBinMagnitude?.()?.[0] ?? 0
+        const peakFreqHz = ae.peakFreq ?? 0
+        const nyquist = ae.ctx?.sampleRate ? ae.ctx.sampleRate * 0.5 : 22050
+        window.dispatchEvent(new CustomEvent('seesound:rule-probe', {
+            detail: {
+                inputs: {
+                    amplitude: ae.amplitude ?? 0,
+                    globalRmsEnergy: ae.rmsDbfs ?? -96,
+                    binEnergy: binMagnitude0,
+                    frequencyHz: peakFreqHz,
+                    normFreq: Math.max(0, Math.min(1, peakFreqHz / Math.max(1e-6, nyquist))),
+                    bass: ae.bass ?? 0,
+                    mid: ae.mid ?? 0,
+                    high: ae.high ?? 0,
+                    peakFreq: peakFreqHz,
+                    pan: ae.pan ?? 0,
+                    spectralCentroid: ae.spectralCentroidHz ?? 0,
+                    spectralFlux: ae.spectralFluxAU ?? 0,
+                    spectralFlatness: ae.spectralFlatnessRatio ?? 0,
+                    inharmonicity: ae.inharmonicity ?? 0,
+                    binMagnitude: binMagnitude0,
+                    binFlux: ae.getBinFlux?.()?.[0] ?? 0,
+                    binPhaseDeviation: ae.getBinPhaseDeviation?.()?.[0] ?? 0,
+                    binPhasedeviation: ae.getBinPhaseDeviation?.()?.[0] ?? 0,
+                    binAttackTime: ae.getBinAttackTime?.()?.[0] ?? 0,
+                    binEnvelope: ae.getBinEnvelope?.()?.[0] ?? 0,
+                    time: ae.audioEl?.currentTime ?? 0,
+                    deltaTime: 1 / 60,
+                    canvasWidthPx: w,
+                    canvasHeightPx: h,
+                    canvasWidthUnits: cameraUnits.w,
+                    canvasHeightUnits: cameraUnits.h,
+                    audioLengthSec: ae.audioEl?.duration ?? 0,
+                },
+            },
+        }))
     }
 
     const bg = ps.getBackgroundColor()

@@ -201,6 +201,7 @@ function buildSliderRow(p) {
     })
 
     const saveStar = el('button', 'cp-star-btn', { text: '★', title: 'Save current value as session default' })
+    let previousValue = Number(params[p.key])
     slider.addEventListener('input', () => {
         const v = parseFloat(slider.value)
         set(p.key, v)
@@ -233,15 +234,33 @@ function buildSliderRow(p) {
         defInput.value = fmt(p, params[p.key])
     })
 
+    let applyAllBtn = null
+    if (p.key === 'defaultParticleSize') {
+        applyAllBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply All', title: 'Scale all current particles by new/old default size' })
+        applyAllBtn.addEventListener('click', () => {
+            const nextValue = Number(params[p.key])
+            const oldValue = Number(previousValue)
+            if (!Number.isFinite(nextValue) || !Number.isFinite(oldValue) || oldValue <= 0 || nextValue <= 0) return
+            window.dispatchEvent(new CustomEvent('seesound:particle-size-apply-all', {
+                detail: {
+                    oldDefaultSize: oldValue,
+                    newDefaultSize: nextValue,
+                },
+            }))
+            previousValue = nextValue
+        })
+    }
+
     // Expose sync for external preset load
     _rowSyncMap.set(p.key, (v) => {
         slider.value = String(Math.min(p.max, Math.max(p.min, v)))
         valInput.value = fmt(p, v)
         updateTrack(v)
+        previousValue = Number(v)
         row.classList.toggle('cp-row-disabled', disabled.has(p.key))
     })
 
-    wrap.append(slider, valInput, defInput, saveStar, buildInfoBtn(p))
+    wrap.append(slider, valInput, defInput, saveStar, ...(applyAllBtn ? [applyAllBtn] : []), buildInfoBtn(p))
     row.appendChild(wrap)
     return row
 }
@@ -698,6 +717,7 @@ function buildGroup(groupDef, groupParams, startOpen) {
 const _inputIds = getInputDictionary().entries.map((e) => e.id)
 const _outputMeta = getOutputDictionary().entries
 const _outputIds = _outputMeta.map((e) => e.id)
+const _outputMetaById = new Map(_outputMeta.map((e) => [e.id, e]))
 const _conditionOps = ['always', '>', '>=', '<', '<=', '==', '!=']
 const _ruleTargets = [...RULE_TARGETS]
 const _actionOps = [...RULE_ACTION_OPERATORS]
@@ -728,8 +748,6 @@ function _defaultRule(index = 0) {
         target: 'spawnedParticles',
         condition: { operator: 'always' },
         actions: [{ operator: 'set', output: 'opacity', value: 1.0 }],
-        strength: 1,
-        invert: false,
         order: index,
     }
 }
@@ -739,6 +757,11 @@ function _isShapeOutput(outputId) {
 }
 
 function _normalizeTarget(rule) {
+    const context = String(rule?.context || '').toLowerCase()
+    if (context.includes('background')) return 'background'
+    if (context.includes('camera')) return 'camera'
+    if (context.includes('particle')) return 'spawnedParticles'
+
     const rawTarget = typeof rule?.target === 'string' ? rule.target : ''
     if (_ruleTargets.includes(rawTarget)) return rawTarget
     if (rule?.scope === 'allLivingFrame') return 'allParticles'
@@ -818,8 +841,8 @@ function _refreshSelectOptions(select, options, selectedValue) {
 }
 
 function _rowToRule(row, order) {
-    const condition = { operator: row.conditionOp }
-    if (row.conditionOp !== 'always') {
+    const condition = { operator: row.conditionEnabled ? row.conditionOp : 'always' }
+    if (row.conditionEnabled && row.conditionOp !== 'always') {
         condition.input = row.conditionInput
         if (row.conditionRhsMode === 'input') condition.valueInput = row.conditionRhsInput
         else condition.value = Number(row.conditionRhsLiteral)
@@ -830,23 +853,14 @@ function _rowToRule(row, order) {
         output: row.actionOutput,
     }
 
-    const strength = Number.isFinite(Number(row.strength)) ? Number(row.strength) : 1
+    const rawValueText = String(row.actionValueText ?? '').trim()
     if (_isShapeOutput(row.actionOutput)) {
-        action.value = row.actionLiteralShape === 'circle' ? 'circle' : 'square'
-    } else if (row.actionValueMode === 'expression') {
-        action.expression = row.actionExpression || '0'
-    } else if (row.actionValueMode === 'input') {
-        const source = row.actionInput || 'amplitude'
-        if (!row.invert && strength === 1 && row.actionOp === 'set') action.input = source
-        else if (row.invert) action.expression = `${strength} / max(1e-6, (${source}))`
-        else action.expression = `(${source}) * ${strength}`
+        action.value = rawValueText === 'circle' ? 'circle' : 'square'
     } else {
-        const value = Number(row.actionLiteral)
-        if (Number.isFinite(value)) {
-            action.value = value
-        } else {
-            action.value = 0
-        }
+        const numericValue = Number(rawValueText)
+        if (rawValueText && Number.isFinite(numericValue)) action.value = numericValue
+        else if (_inputIds.includes(rawValueText)) action.input = rawValueText
+        else action.expression = rawValueText || '0'
     }
 
     return {
@@ -857,21 +871,21 @@ function _rowToRule(row, order) {
         target: row.target,
         condition,
         actions: [action],
-        strength,
-        invert: !!row.invert,
         order,
     }
 }
 
 function _ruleToRow(rule, index) {
     const action = Array.isArray(rule.actions) && rule.actions[0] ? rule.actions[0] : { operator: 'set', output: 'opacity', value: 1 }
-    const isShape = _isShapeOutput(action.output)
-    const hasExpr = typeof action.expression === 'string' && action.expression.trim().length > 0
-    const hasInput = typeof action.input === 'string' && action.input.trim().length > 0
-    const parsedExprInput = hasExpr ? _parseInputScaleExpression(action.expression) : null
-    const inferredInput = parsedExprInput?.input || (_inputIds.includes(action.input) ? action.input : 'amplitude')
-    const inferredStrength = parsedExprInput ? parsedExprInput.strength : (Number.isFinite(Number(rule.strength)) ? Number(rule.strength) : 1)
-    const inferredInvert = parsedExprInput ? parsedExprInput.invert : !!rule.invert
+    const conditionOp = rule.condition?.operator || 'always'
+    const hasCondition = conditionOp !== 'always'
+    const actionValueText = (() => {
+        if (typeof action.expression === 'string' && action.expression.trim()) return action.expression.trim()
+        if (typeof action.input === 'string' && action.input.trim()) return action.input.trim()
+        if (action.value === 'circle' || action.value === 'square') return action.value
+        if (Number.isFinite(Number(action.value))) return String(Number(action.value))
+        return '1'
+    })()
     return {
         _uid: typeof rule._uid === 'string' && rule._uid ? rule._uid : _newRuleUid(),
         id: (typeof rule.id === 'string' && rule.id.trim()) ? rule.id.trim() : _defaultRuleName(index),
@@ -879,43 +893,87 @@ function _ruleToRow(rule, index) {
         subgroup: typeof rule.subgroup === 'string' ? rule.subgroup : '',
         enabled: rule.enabled !== false,
         target: _normalizeTarget(rule),
-        conditionOp: rule.condition?.operator || 'always',
+        conditionEnabled: hasCondition,
+        conditionOp,
         conditionInput: _inputIds.includes(rule.condition?.input) ? rule.condition.input : 'amplitude',
         conditionRhsMode: rule.condition?.valueInput ? 'input' : 'literal',
         conditionRhsInput: _inputIds.includes(rule.condition?.valueInput) ? rule.condition.valueInput : 'amplitude',
         conditionRhsLiteral: Number.isFinite(Number(rule.condition?.value)) ? Number(rule.condition.value) : 0.5,
         actionOutput: _outputIds.includes(action.output) ? action.output : 'opacity',
         actionOp: _actionOps.includes(action.operator) ? action.operator : 'set',
-        actionValueMode: isShape ? 'shape' : (parsedExprInput ? 'input' : (hasExpr ? 'expression' : (hasInput ? 'input' : 'literal'))),
-        actionInput: inferredInput,
-        actionLiteral: Number.isFinite(Number(action.value)) ? Number(action.value) : 1,
-        actionLiteralShape: action.value === 'circle' ? 'circle' : 'square',
-        actionExpression: hasExpr ? action.expression : '',
-        strength: inferredStrength,
-        invert: inferredInvert,
+        actionValueText,
         uiState: rule.uiState || 'normal',
         order: Number.isFinite(rule.order) ? Number(rule.order) : index,
     }
 }
 
-function _ruleSummary(row) {
-    const cond = row.conditionOp === 'always'
-        ? 'always'
-        : `${row.conditionInput} ${row.conditionOp} ${row.conditionRhsMode === 'input' ? row.conditionRhsInput : Number(row.conditionRhsLiteral).toFixed(2)}`
-
-    let rhs
-    if (row.actionOutput === 'shapeType') {
-        rhs = row.actionLiteralShape
-    } else if (row.actionValueMode === 'expression') {
-        rhs = row.actionExpression || '0'
-    } else if (row.actionValueMode === 'input') {
-        if (row.invert) rhs = `${Number(row.strength).toFixed(2)} / ${row.actionInput}`
-        else rhs = `${row.actionInput} × ${Number(row.strength).toFixed(2)}`
+function _probeRuleValue(row, inputs) {
+    const source = String(row.actionValueText || '').trim()
+    let rhsValue = 0
+    if (_inputIds.includes(source)) {
+        rhsValue = Number(inputs?.[source]) || 0
     } else {
-        rhs = `${Number(row.actionLiteral).toFixed(2)}`
+        const n = Number(source)
+        rhsValue = Number.isFinite(n) ? n : 0
     }
 
-    return `When ${cond}, ${row.actionOp} ${row.actionOutput} using ${rhs}`
+    const meta = _outputMetaById.get(row.actionOutput)
+    const rawMin = Number(meta?.range?.[0])
+    const rawMax = Number(meta?.range?.[1])
+    const minFinite = Number.isFinite(rawMin)
+    const maxFinite = Number.isFinite(rawMax)
+
+    let baseValue = 1
+    if (minFinite && maxFinite) baseValue = (rawMin + rawMax) * 0.5
+    else if (minFinite && !maxFinite) baseValue = rawMin === 0 ? 1 : rawMin
+    else if (!minFinite && maxFinite) baseValue = rawMax === 0 ? -1 : rawMax
+
+    // Probe contract:
+    //  - inValue  = target value before this rule executes
+    //  - outValue = target value after applying (operator, rhsValue)
+    let inValue = baseValue
+    let outValue = inValue
+    switch (row.actionOp) {
+        case 'set':
+            outValue = rhsValue
+            break
+        case 'add':
+            outValue = inValue + rhsValue
+            break
+        case 'subtract':
+            outValue = inValue - rhsValue
+            break
+        case 'multiply':
+            outValue = inValue * rhsValue
+            break
+        case 'divide':
+            outValue = Math.abs(rhsValue) > 1e-6 ? (inValue / rhsValue) : inValue
+            break
+        case 'clamp':
+            outValue = Math.max(-Math.abs(rhsValue), Math.min(Math.abs(rhsValue), inValue))
+            break
+        default:
+            outValue = inValue
+            break
+    }
+
+    return {
+        inValue,
+        outValue,
+    }
+}
+
+function _formatProbeNumber(value) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return '0.000'
+    return n.toFixed(3)
+}
+
+function _ruleSummary(row) {
+    const cond = !row.conditionEnabled || row.conditionOp === 'always'
+        ? 'always'
+        : `${row.conditionInput} ${row.conditionOp} ${row.conditionRhsMode === 'input' ? row.conditionRhsInput : Number(row.conditionRhsLiteral).toFixed(2)}`
+    return `When ${cond}, ${row.actionOp} ${row.actionOutput} using ${String(row.actionValueText || '0')}`
 }
 
 function _createSelect(opts, value, className = 'cp-rule-input') {
@@ -983,8 +1041,10 @@ export function initRuleBuilder(container) {
     const _selectedRuleUids = new Set()
     let _selectedGroupName = ''
     let _selectedSubgroup = null
+    let _selectedContextGroup = 'spawnedParticles'
     const RULE_PRESET_PREFIX = 'rule__'
     let _rulePresetNames = []
+    let _lastProbeInputs = Object.create(null)
 
     function _commitPendingRuleEdits() {
         const active = document.activeElement
@@ -1169,36 +1229,36 @@ export function initRuleBuilder(container) {
 
     function _deleteSelected() {
         const selected = _selectedIndices()
-        if (selected.length > 0) {
-            _removeRowsByIndices(selected)
-            pushRules()
-            return true
-        }
+        const board = el('div', 'cp-rule-context-board')
+        const contextGroups = [
+            { key: 'spawnedParticles', label: 'Particles', includes: new Set(['spawnedParticles', 'allParticles']) },
+            { key: 'background', label: 'Background', includes: new Set(['background']) },
+            { key: 'camera', label: 'Camera', includes: new Set(['camera']) },
+        ]
+        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) _selectedContextGroup = 'spawnedParticles'
 
-        if (_selectedSubgroup && _selectedSubgroup.group) {
-            const g = _selectedSubgroup.group
-            const s = _selectedSubgroup.subgroup
-            const key = _subgroupKey(g, s)
-            const subgroupIndices = []
+        for (const group of contextGroups) {
+            const indices = []
             for (let i = 0; i < rows.length; i++) {
-                if (_norm(rows[i].group) === g && _norm(rows[i].subgroup) === s) subgroupIndices.push(i)
+                const t = _normalizeTarget(rows[i])
+                if (group.includes.has(t)) indices.push(i)
             }
-
-            const removedRules = _removeRowsByIndices(subgroupIndices)
-            if (_manualGroups.has(g)) {
-                const subs = _manualGroups.get(g)
-                subs.delete(s)
-                if (subs.size === 0) _manualGroups.delete(g)
-            }
-            _collapsedSubgroups.delete(key)
-            _selectedSubgroup = null
-            _selectedGroupName = ''
-
-            if (removedRules) pushRules()
-            else drawRows()
-            return true
+            _removeRowsByIndices(selected)
+            const gWrap = el('div', 'cp-group cp-rule-context-group')
         }
+        if (_selectedContextGroup === group.key) gHeader.classList.add('cp-rule-group-header-selected')
+        gHeader.addEventListener('click', () => {
+            _selectedContextGroup = group.key
+            drawRows()
+        })
+        _collapsedSubgroups.delete(key)
+        _selectedSubgroup = null
+        _selectedGroupName = ''
 
+        if (removedRules) pushRules()
+        const gBody = el('div', 'cp-group-body cp-rule-group-body')
+        gBody.appendChild(_buildLane(indices, group.key, ''))
+        _wireAreaDrop(gBody, group.key, '')
         if (_selectedGroupName) {
             const g = _selectedGroupName
             const groupIndices = []
@@ -1207,8 +1267,7 @@ export function initRuleBuilder(container) {
             }
 
             const removedRules = _removeRowsByIndices(groupIndices)
-            _manualGroups.delete(g)
-            const orderIdx = _groupOrder.indexOf(g)
+            _insertNewRuleAt(rows.length, _selectedContextGroup, '')
             if (orderIdx >= 0) _groupOrder.splice(orderIdx, 1)
             _collapsedGroups.delete(g)
             for (const key of [..._collapsedSubgroups]) {
@@ -1319,8 +1378,14 @@ export function initRuleBuilder(container) {
         const g = _norm(nextGroup)
         const s = _norm(nextSubgroup)
         for (const row of moved) {
-            row.group = g
-            row.subgroup = s
+            if (_ruleTargets.includes(g)) {
+                row.target = g
+                row.group = ''
+                row.subgroup = ''
+            } else {
+                row.group = g
+                row.subgroup = s
+            }
         }
 
         rows.splice(to, 0, ...moved)
@@ -1376,8 +1441,15 @@ export function initRuleBuilder(container) {
 
     function _insertNewRuleAt(targetIndex, nextGroup = '', nextSubgroup = '') {
         const row = _ruleToRow(_defaultRule(rows.length), rows.length)
-        row.group = _norm(nextGroup)
-        row.subgroup = _norm(nextSubgroup)
+        const g = _norm(nextGroup)
+        if (_ruleTargets.includes(g)) {
+            row.target = g
+            row.group = ''
+            row.subgroup = ''
+        } else {
+            row.group = g
+            row.subgroup = _norm(nextSubgroup)
+        }
         const to = Math.max(0, Math.min(rows.length, targetIndex))
         rows.splice(to, 0, row)
         _ensureManualGroup(row.group, row.subgroup)
@@ -1461,7 +1533,6 @@ export function initRuleBuilder(container) {
             name.blur()
             return true
         }))
-        const target = _createSelect(_ruleTargets.map(v => ({ value: v, label: _targetLabels[v] || v })), row.target)
         const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
         const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
         const dup = el('button', 'cp-preset-btn cp-rule-mini', { text: '⧉' })
@@ -1484,22 +1555,43 @@ export function initRuleBuilder(container) {
             _collapsedRuleUids.delete(row._uid)
             pushRules()
         })
-        top.append(fold, idx, name, enable, target, up, down, dup, del)
+        top.append(fold, idx, name, enable, up, down, dup, del)
 
         const cond = el('div', 'cp-rule-line')
         cond.appendChild(el('span', 'cp-rule-k', { text: 'Condition' }))
+        const addConditionBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+ Condition' })
+        const removeConditionBtn = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { type: 'button', text: 'Remove' })
         const condOp = _createSelect(_conditionOps.map(v => ({ value: v, label: v })), row.conditionOp)
         const condInput = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionInput)
         const condMode = _createSelect([{ value: 'literal', label: 'literal' }, { value: 'input', label: 'input' }], row.conditionRhsMode)
         const condLit = _createInputNumber(row.conditionRhsLiteral)
         const condInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionRhsInput)
         const refreshCond = () => {
+            const enabled = !!row.conditionEnabled
+            addConditionBtn.style.display = enabled ? 'none' : ''
+            removeConditionBtn.style.display = enabled ? '' : 'none'
+            condOp.style.display = enabled ? '' : 'none'
             const always = condOp.value === 'always'
-            condInput.style.display = always ? 'none' : ''
-            condMode.style.display = always ? 'none' : ''
-            condLit.style.display = (!always && condMode.value === 'literal') ? '' : 'none'
-            condInp.style.display = (!always && condMode.value === 'input') ? '' : 'none'
+            condInput.style.display = (enabled && !always) ? '' : 'none'
+            condMode.style.display = (enabled && !always) ? '' : 'none'
+            condLit.style.display = (enabled && !always && condMode.value === 'literal') ? '' : 'none'
+            condInp.style.display = (enabled && !always && condMode.value === 'input') ? '' : 'none'
+            if (!enabled) row.conditionOp = 'always'
         }
+        addConditionBtn.addEventListener('click', wireChange(() => {
+            row.conditionEnabled = true
+            if (!row.conditionOp) row.conditionOp = '>'
+            condOp.value = row.conditionOp
+            refreshCond()
+            return true
+        }))
+        removeConditionBtn.addEventListener('click', wireChange(() => {
+            row.conditionEnabled = false
+            row.conditionOp = 'always'
+            condOp.value = 'always'
+            refreshCond()
+            return true
+        }))
         condOp.addEventListener('change', wireChange(() => {
             row.conditionOp = condOp.value
             refreshCond()
@@ -1525,7 +1617,7 @@ export function initRuleBuilder(container) {
             row.conditionRhsInput = condInp.value
             return true
         }))
-        cond.append(condOp, condInput, condMode, condLit, condInp)
+        cond.append(addConditionBtn, removeConditionBtn, condOp, condInput, condMode, condLit, condInp)
         refreshCond()
 
         const act = el('div', 'cp-rule-line')
@@ -1533,42 +1625,32 @@ export function initRuleBuilder(container) {
         _ensureValidOutputForTarget(row)
         const out = _createSelect(_outputIdsForTarget(row.target).map(v => ({ value: v, label: v })), row.actionOutput)
         const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
-        const mode = _createSelect([
-            { value: 'literal', label: 'literal' },
-            { value: 'input', label: 'input' },
-            { value: 'expression', label: 'expression' },
-            { value: 'shape', label: 'shape type' },
-        ], row.actionValueMode)
-        const valNum = _createInputNumber(row.actionLiteral)
-        const valInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.actionInput)
         const valExprWrap = el('div', 'cp-rule-expr-wrap')
-        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'amplitude * 0.8' })
-        valExpr.value = row.actionExpression || ''
+        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'value / expression / input id' })
+        valExpr.value = row.actionValueText || ''
+        const valChoose = _createSelect(
+            [{ value: '', label: 'choose input...' }, ..._inputIds.map(v => ({ value: v, label: v }))],
+            '',
+            'cp-rule-input cp-rule-tag',
+        )
+        const shapeHint = _createSelect([{ value: '', label: 'shape...' }, { value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], '', 'cp-rule-input cp-rule-tag')
         const valExprSuggest = el('div', 'cp-rule-expr-suggest')
-        valExprWrap.append(valExpr, valExprSuggest)
-        const valShape = _createSelect([{ value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], row.actionLiteralShape)
-
-        const st = _createInputNumber(row.strength, '0.1')
-        const invWrap = el('label', 'cp-rule-invert')
-        const inv = el('input', '', { type: 'checkbox' })
-        inv.checked = !!row.invert
-        invWrap.append(inv, el('span', '', { text: '⇄ invert' }))
+        valExprWrap.append(valExpr, valChoose, shapeHint, valExprSuggest)
 
         const refreshAct = () => {
             _ensureValidOutputForTarget(row)
             const allowedOutputs = _outputIdsForTarget(row.target).map((v) => ({ value: v, label: v }))
             _refreshSelectOptions(out, allowedOutputs, row.actionOutput)
             const shape = out.value === 'shapeType'
-            if (shape) mode.value = 'shape'
-            mode.style.display = shape ? 'none' : ''
-            valNum.style.display = (!shape && mode.value === 'literal') ? '' : 'none'
-            valInp.style.display = (!shape && mode.value === 'input') ? '' : 'none'
-            valExprWrap.style.display = (!shape && mode.value === 'expression') ? '' : 'none'
-            valShape.style.display = shape ? '' : 'none'
-            const inputMode = !shape && mode.value === 'input'
-            st.style.display = inputMode ? '' : 'none'
-            invWrap.style.display = inputMode ? '' : 'none'
-            if (shape || mode.value !== 'expression') {
+            shapeHint.style.display = shape ? '' : 'none'
+            if (!shape) {
+                if (valExpr.placeholder !== 'value / expression / input id') {
+                    valExpr.placeholder = 'value / expression / input id'
+                }
+            } else if (valExpr.placeholder !== 'shape: square or circle') {
+                valExpr.placeholder = 'shape: square or circle'
+            }
+            if (shape) {
                 valExprSuggest.style.display = 'none'
                 valExprSuggest.innerHTML = ''
             }
@@ -1601,7 +1683,7 @@ export function initRuleBuilder(container) {
         }
 
         function _renderExprSuggestions() {
-            if (mode.value !== 'expression') {
+            if (out.value === 'shapeType') {
                 valExprSuggest.style.display = 'none'
                 valExprSuggest.innerHTML = ''
                 return
@@ -1651,78 +1733,75 @@ export function initRuleBuilder(container) {
             refreshAct()
             return true
         }))
-        target.addEventListener('change', wireChange(() => {
-            row.target = target.value
-            _ensureValidOutputForTarget(row)
-            refreshAct()
-            return true
-        }))
         op.addEventListener('change', wireChange(() => {
             row.actionOp = op.value
             return true
         }))
-        mode.addEventListener('change', wireChange(() => {
-            row.actionValueMode = mode.value
-            refreshAct()
-            return true
-        }))
-        valNum.addEventListener('keydown', wireChange((e) => {
-            if (e.key !== 'Enter') return false
-            e.preventDefault()
-            row.actionLiteral = Number(valNum.value)
-            valNum.blur()
-            return true
-        }))
-        valInp.addEventListener('change', wireChange(() => {
-            row.actionInput = valInp.value
-            return true
-        }))
         valExpr.addEventListener('input', () => {
-            row.actionExpression = valExpr.value
+            row.actionValueText = valExpr.value
             _autoSizeExprField()
             _renderExprSuggestions()
         })
+        valChoose.addEventListener('change', wireChange(() => {
+            if (!valChoose.value) return false
+            valExpr.value = valChoose.value
+            row.actionValueText = valChoose.value
+            _autoSizeExprField()
+            valChoose.value = ''
+            return true
+        }))
+        shapeHint.addEventListener('change', wireChange(() => {
+            if (!shapeHint.value) return false
+            valExpr.value = shapeHint.value
+            row.actionValueText = shapeHint.value
+            shapeHint.value = ''
+            return true
+        }))
         valExpr.addEventListener('click', _renderExprSuggestions)
         valExpr.addEventListener('focus', _autoSizeExprField)
         valExpr.addEventListener('keyup', _renderExprSuggestions)
         valExpr.addEventListener('keydown', wireChange((e) => {
             if (!(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return false
             e.preventDefault()
-            row.actionExpression = valExpr.value
+            row.actionValueText = valExpr.value
             valExpr.blur()
             return true
         }))
         valExpr.addEventListener('blur', () => {
-            row.actionExpression = valExpr.value
+            row.actionValueText = valExpr.value
             setTimeout(() => {
                 valExprSuggest.style.display = 'none'
             }, 120)
             pushRules()
         })
-        valShape.addEventListener('change', wireChange(() => {
-            row.actionLiteralShape = valShape.value
-            return true
-        }))
-        st.addEventListener('keydown', wireChange((e) => {
-            if (e.key !== 'Enter') return false
-            e.preventDefault()
-            row.strength = Number(st.value)
-            st.blur()
-            return true
-        }))
-        inv.addEventListener('change', wireChange(() => {
-            row.invert = inv.checked
-            return true
-        }))
 
-        act.append(out, op, mode, valNum, valInp, valExprWrap, valShape, st, invWrap)
+        act.append(out, op, valExprWrap)
         refreshAct()
         _autoSizeExprField()
 
         const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
+        const live = el('div', 'cp-rule-live')
+        const inChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-in')
+        const inKey = el('span', 'cp-rule-live-key', { text: 'in' })
+        const inVal = el('span', 'cp-rule-live-value')
+        inVal.dataset.ruleUid = row._uid
+        inVal.dataset.probeKind = 'in'
+        inChip.append(inKey, inVal)
+
+        const outChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-out')
+        const outKey = el('span', 'cp-rule-live-key', { text: 'out' })
+        const outVal = el('span', 'cp-rule-live-value')
+        outVal.dataset.ruleUid = row._uid
+        outVal.dataset.probeKind = 'out'
+        outChip.append(outKey, outVal)
+
+        live.append(inChip, outChip)
+        const probeVals = _probeRuleValue(row, _lastProbeInputs)
+        inVal.textContent = _formatProbeNumber(probeVals.inValue)
+        outVal.textContent = _formatProbeNumber(probeVals.outValue)
 
         const body = el('div', 'cp-rule-body')
-        body.append(cond, act, summary)
+        body.append(cond, act, live, summary)
         if (collapsed) body.style.display = 'none'
         card.append(top, body)
         return card
@@ -1787,191 +1866,40 @@ export function initRuleBuilder(container) {
 
     function drawRows() {
         rowsWrap.innerHTML = ''
-        _syncManualGroupsFromRows()
+        const board = el('div', 'cp-rule-context-groups')
+        const contextGroups = [
+            { key: 'spawnedParticles', label: 'Particles', includes: new Set(['spawnedParticles', 'allParticles']) },
+            { key: 'background', label: 'Background' },
+            { key: 'camera', label: 'Camera' },
+        ]
 
-        const grouping = new Map()
-        const ungrouped = []
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i]
-            const g = _norm(row.group)
-            const s = _norm(row.subgroup)
-            if (!g) {
-                ungrouped.push(i)
-                continue
-            }
-            if (!grouping.has(g)) grouping.set(g, new Map())
-            const sg = grouping.get(g)
-            if (!sg.has(s)) sg.set(s, [])
-            sg.get(s).push(i)
+        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) {
+            _selectedContextGroup = 'spawnedParticles'
         }
 
-        for (const [g, subs] of _manualGroups.entries()) {
-            if (!grouping.has(g)) grouping.set(g, new Map())
-            const map = grouping.get(g)
-            for (const s of subs) {
-                if (!map.has(s)) map.set(s, [])
-            }
-        }
-        _syncGroupOrder(grouping)
-
-        const board = el('div', 'cp-rule-groups')
-
-        const ungroupedWrap = el('div', 'cp-rule-group cp-rule-ungrouped')
-        const ungroupedHeader = el('div', 'cp-rule-group-header')
-        ungroupedHeader.appendChild(el('div', 'cp-rule-group-title', { text: 'Ungrouped' }))
-        ungroupedWrap.append(ungroupedHeader, _buildLane(ungrouped, '', ''))
-        board.appendChild(ungroupedWrap)
-
-        for (const groupName of _groupOrder) {
-            const subgroupMap = grouping.get(groupName)
-            if (!subgroupMap) continue
-            const groupIndices = []
-            for (const list of subgroupMap.values()) groupIndices.push(...list)
-            const groupSelected =
-                _selectedGroupName === groupName ||
-                (groupIndices.length > 0 && groupIndices.every((idx) => _selectedRuleUids.has(rows[idx]._uid)))
-            const gWrap = el('div', 'cp-rule-group')
-            gWrap.draggable = true
-            const gHeader = el(`div`, `cp-rule-group-header${groupSelected ? ' cp-rule-group-header-selected' : ''}`)
-            const isGroupOpen = !_collapsedGroups.has(groupName)
-            const gChevron = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: isGroupOpen ? '▾' : '▸' })
-            const gTitle = el('div', 'cp-rule-group-title', { text: groupName })
-            const createSub = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+ Sub' })
-            gChevron.title = isGroupOpen ? 'Collapse group' : 'Expand group'
-            gChevron.addEventListener('click', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (_collapsedGroups.has(groupName)) _collapsedGroups.delete(groupName)
-                else _collapsedGroups.add(groupName)
-                drawRows()
-            })
-            gHeader.addEventListener('click', (e) => {
-                if (_isInteractiveTarget(e.target)) return
-                if (e.target !== gHeader) return
-                _selectedGroupName = groupName
-                _selectedSubgroup = null
-                if (groupIndices.length > 0) _selectIndices(groupIndices, e)
-                else {
-                    _selectedRuleUids.clear()
-                    _lastSelectedIndex = -1
-                    drawRows()
+        for (const group of contextGroups) {
+            const indices = []
+            for (let i = 0; i < rows.length; i++) {
+                const t = _normalizeTarget(rows[i])
+                if (group.includes ? group.includes.has(t) : t === group.key) {
+                    indices.push(i)
                 }
-            })
-            createSub.addEventListener('click', () => {
-                const raw = prompt(`Create subgroup inside "${groupName}"`, 'subgroup')
-                const name = String(raw || '').trim()
-                if (!name) return
-                _ensureManualGroup(groupName, name)
-                drawRows()
-            })
-            createSub.addEventListener('click', (e) => e.stopPropagation())
-            createSub.addEventListener('dblclick', (e) => e.stopPropagation())
-
-            gTitle.title = 'Double-click to rename group'
-            gTitle.addEventListener('dblclick', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                const raw = prompt('Rename group', groupName)
-                const next = _norm(raw)
-                if (!next || next === groupName) return
-                for (const row of rows) {
-                    if (_norm(row.group) === groupName) row.group = next
-                }
-                if (_manualGroups.has(groupName)) {
-                    const subs = _manualGroups.get(groupName)
-                    _manualGroups.delete(groupName)
-                    _manualGroups.set(next, subs)
-                }
-                if (_collapsedGroups.delete(groupName)) _collapsedGroups.add(next)
-                const movedKeys = [..._collapsedSubgroups].filter((k) => k.startsWith(`${groupName}::`))
-                for (const k of movedKeys) {
-                    _collapsedSubgroups.delete(k)
-                    _collapsedSubgroups.add(k.replace(`${groupName}::`, `${next}::`))
-                }
-                pushRules()
-            })
-
-            gWrap.addEventListener('dragstart', (evt) => {
-                _dragGroupName = groupName
-                if (evt.dataTransfer) {
-                    evt.dataTransfer.effectAllowed = 'move'
-                    evt.dataTransfer.setData('text/plain', `group:${groupName}`)
-                }
-                gWrap.classList.add('cp-rule-group-dragging')
-            })
-            gWrap.addEventListener('dragend', () => {
-                _dragGroupName = ''
-                gWrap.classList.remove('cp-rule-group-dragging')
-            })
-            gWrap.addEventListener('dragover', (e) => {
-                if (!_dragGroupName) return
-                e.preventDefault()
-                gWrap.classList.add('cp-rule-group-drop-target')
-            })
-            gWrap.addEventListener('dragleave', () => {
-                gWrap.classList.remove('cp-rule-group-drop-target')
-            })
-            gWrap.addEventListener('drop', (e) => {
-                if (!_dragGroupName) return
-                e.preventDefault()
-                gWrap.classList.remove('cp-rule-group-drop-target')
-                _moveGroupBefore(_dragGroupName, groupName)
-            })
-
-            const gHeaderActions = el('span', 'cp-rule-group-actions')
-            gHeaderActions.appendChild(createSub)
-            gHeader.append(gChevron, gTitle, gHeaderActions)
-
-            const gBody = el('div', 'cp-rule-group-body')
-            if (!isGroupOpen) gBody.style.display = 'none'
-            _wireAreaDrop(gBody, groupName, '')
-
-            const rootRows = subgroupMap.get('') || []
-            gBody.appendChild(_buildLane(rootRows, groupName, ''))
-
-            const subWrap = el('div', 'cp-rule-subgroups')
-            for (const [subName, indices] of subgroupMap.entries()) {
-                if (_norm(subName) === '') continue
-                const subSelected =
-                    (_selectedSubgroup && _selectedSubgroup.group === groupName && _selectedSubgroup.subgroup === subName) ||
-                    (indices.length > 0 && indices.every((idx) => _selectedRuleUids.has(rows[idx]._uid)))
-                const sWrap = el('div', 'cp-rule-subgroup')
-                const sHeader = el(`div`, `cp-rule-subgroup-title${subSelected ? ' cp-rule-subgroup-title-selected' : ''}`)
-                const subKey = _subgroupKey(groupName, subName)
-                const isSubOpen = !_collapsedSubgroups.has(subKey)
-                const sChevron = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: isSubOpen ? '▾' : '▸' })
-                const sText = el('span', '', { text: subName })
-                sChevron.title = isSubOpen ? 'Collapse subgroup' : 'Expand subgroup'
-                sHeader.append(sChevron, sText)
-                sChevron.addEventListener('click', (e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    if (_collapsedSubgroups.has(subKey)) _collapsedSubgroups.delete(subKey)
-                    else _collapsedSubgroups.add(subKey)
-                    drawRows()
-                })
-                sHeader.addEventListener('click', (e) => {
-                    if (_isInteractiveTarget(e.target)) return
-                    if (e.target !== sHeader) return
-                    _selectedSubgroup = { group: groupName, subgroup: subName }
-                    _selectedGroupName = ''
-                    if (indices.length > 0) _selectIndices(indices, e)
-                    else {
-                        _selectedRuleUids.clear()
-                        _lastSelectedIndex = -1
-                        drawRows()
-                    }
-                })
-
-                const sBody = el('div', 'cp-rule-subgroup-body')
-                if (!isSubOpen) sBody.style.display = 'none'
-                _wireAreaDrop(sBody, groupName, subName)
-                sBody.appendChild(_buildLane(indices, groupName, subName))
-                sWrap.append(sHeader, sBody)
-                subWrap.appendChild(sWrap)
             }
 
-            gBody.appendChild(subWrap)
+            const gWrap = el('div', `cp-group cp-open cp-rule-context-group${_selectedContextGroup === group.key ? ' cp-rule-group-selected' : ''}`)
+            const gHeader = el('div', 'cp-group-header')
+            gHeader.addEventListener('click', () => {
+                _selectedContextGroup = group.key
+                drawRows()
+            })
+            gHeader.append(
+                el('span', 'cp-group-chevron', { text: '▾' }),
+                el('span', '', { text: group.label }),
+                el('span', 'cp-group-count', { text: String(indices.length) }),
+            )
+            const gBody = el('div', 'cp-group-body cp-rule-group-body')
+            gBody.appendChild(_buildLane(indices, group.key, ''))
+            _wireAreaDrop(gBody, group.key, '')
             gWrap.append(gHeader, gBody)
             board.appendChild(gWrap)
         }
@@ -1980,8 +1908,7 @@ export function initRuleBuilder(container) {
     }
 
     addBtn.addEventListener('click', () => {
-        rows.push(_ruleToRow(_defaultRule(rows.length), rows.length))
-        pushRules()
+        _insertNewRuleAt(rows.length, _selectedContextGroup, '')
     })
 
     rulePresetSel.addEventListener('change', () => {
@@ -2004,36 +1931,6 @@ export function initRuleBuilder(container) {
         await _refreshRulePresets()
         rulePresetName.value = ''
     })
-
-    const addGroupBtn = el('button', 'cp-preset-btn cp-rule-add-group', { text: 'New Group' })
-    addGroupBtn.addEventListener('click', () => {
-        const raw = prompt('New group name', 'group')
-        const groupName = _norm(raw)
-        if (!groupName) return
-        _ensureManualGroup(groupName, '')
-        drawRows()
-    })
-    actions.appendChild(addGroupBtn)
-
-    const groupSelectedBtn = el('button', 'cp-preset-btn cp-rule-add-group', { text: 'Group Selection' })
-    groupSelectedBtn.addEventListener('click', () => {
-        const selected = _selectedIndices()
-        if (selected.length === 0) {
-            alert('Select one or more rules first.')
-            return
-        }
-        const raw = prompt('New group name for selected rules', 'group')
-        const groupName = _norm(raw)
-        if (!groupName) return
-        for (const idx of selected) {
-            rows[idx].group = groupName
-            rows[idx].subgroup = ''
-        }
-        _ensureManualGroup(groupName, '')
-        if (!_groupOrder.includes(groupName)) _groupOrder.push(groupName)
-        pushRules()
-    })
-    actions.appendChild(groupSelectedBtn)
 
     const deleteAbortPrev = window.__seesoundRuleDeleteAbort
     if (deleteAbortPrev && typeof deleteAbortPrev.abort === 'function') deleteAbortPrev.abort()
@@ -2081,6 +1978,20 @@ export function initRuleBuilder(container) {
     })
 
     drawRows()
+    window.addEventListener('seesound:rule-probe', (e) => {
+        _lastProbeInputs = e?.detail?.inputs || Object.create(null)
+        const probes = rowsWrap.querySelectorAll('.cp-rule-live-value[data-rule-uid]')
+        for (const node of probes) {
+            const uid = node.getAttribute('data-rule-uid')
+            const kind = node.getAttribute('data-probe-kind')
+            const row = rows.find((r) => r._uid === uid)
+            if (!row) continue
+            const vals = _probeRuleValue(row, _lastProbeInputs)
+            node.textContent = kind === 'out'
+                ? _formatProbeNumber(vals.outValue)
+                : _formatProbeNumber(vals.inValue)
+        }
+    })
     _refreshRulePresets()
     pushRules()
     window.addEventListener('seesound:rule-compile-state', (e) => renderCompile(e.detail || {}))
@@ -2100,8 +2011,41 @@ export function initRuleBuilder(container) {
 export function initControlPanel(container) {
     if (!container) { console.warn('[ControlPanel] No container element found.'); return }
 
+    const PANEL_WIDTH_KEY = 'seesound_settings_panel_width_v1'
+
+    function clampPanelWidth(px) {
+        const minW = 220
+        const maxW = Math.max(minW, Math.floor(window.innerWidth * 0.7))
+        return Math.max(minW, Math.min(maxW, Math.floor(Number(px) || minW)))
+    }
+
+    let expandedWidth = (() => {
+        try {
+            const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
+            if (Number.isFinite(saved) && saved > 0) return clampPanelWidth(saved)
+        } catch { /* no-op */ }
+        return clampPanelWidth(container.getBoundingClientRect().width || 280)
+    })()
+
+    function _applyPanelWidth(widthPx, isCollapsed = false) {
+        const safe = clampPanelWidth(widthPx)
+        const effective = isCollapsed ? 28 : safe
+        document.documentElement.style.setProperty('--panel-width', `${effective}px`)
+        window.dispatchEvent(new CustomEvent('seesound:panel-width', {
+            detail: {
+                width: effective,
+                expandedWidth: safe,
+                collapsed: !!isCollapsed,
+            },
+        }))
+    }
+
+    container.style.width = `${expandedWidth}px`
+    _applyPanelWidth(expandedWidth, false)
+
     // ── Sidebar header (title + collapse + reset)
     const header = el('div', 'cp-header')
+    const resizeHandle = el('div', 'cp-resize-handle', { title: 'Drag to resize settings' })
     const collapseBtn = el('button', 'cp-collapse-btn', { text: '»', title: 'Collapse panel' })
     const title = el('span', 'cp-title', { text: 'Parameters' })
     const resetBtn = el('button', 'cp-reset-btn', { text: '↺', title: 'Reset all to factory defaults' })
@@ -2129,18 +2073,63 @@ export function initControlPanel(container) {
 
     initRuleBuilder(body)
 
-    container.append(header, body)
+    container.append(resizeHandle, header, body)
 
     // ── Collapse / expand sidebar
     let collapsed = false
     collapseBtn.addEventListener('click', () => {
         collapsed = !collapsed
         container.classList.toggle('cp-collapsed', collapsed)
+        if (collapsed) {
+            expandedWidth = clampPanelWidth(container.getBoundingClientRect().width || expandedWidth)
+            container.style.width = '28px'
+            _applyPanelWidth(expandedWidth, true)
+        } else {
+            container.style.width = `${expandedWidth}px`
+            _applyPanelWidth(expandedWidth, false)
+        }
         collapseBtn.textContent = collapsed ? '«' : '»'
         title.style.display = collapsed ? 'none' : ''
         resetBtn.style.display = collapsed ? 'none' : ''
         body.style.display = collapsed ? 'none' : ''
     })
+
+    const resizeAbortPrev = window.__seesoundPanelResizeAbort
+    if (resizeAbortPrev && typeof resizeAbortPrev.abort === 'function') resizeAbortPrev.abort()
+    const resizeAbort = new AbortController()
+    window.__seesoundPanelResizeAbort = resizeAbort
+
+    let dragState = null
+    resizeHandle.addEventListener('mousedown', (e) => {
+        if (collapsed) return
+        dragState = {
+            startX: e.clientX,
+            startWidth: container.getBoundingClientRect().width,
+        }
+        e.preventDefault()
+    }, { signal: resizeAbort.signal })
+
+    window.addEventListener('mousemove', (e) => {
+        if (!dragState || collapsed) return
+        const dx = dragState.startX - e.clientX
+        const nextW = clampPanelWidth(dragState.startWidth + dx)
+        expandedWidth = nextW
+        container.style.width = `${nextW}px`
+        _applyPanelWidth(nextW, false)
+    }, { signal: resizeAbort.signal })
+
+    window.addEventListener('mouseup', () => {
+        if (!dragState) return
+        dragState = null
+        try { localStorage.setItem(PANEL_WIDTH_KEY, String(expandedWidth)) } catch { /* no-op */ }
+    }, { signal: resizeAbort.signal })
+
+    window.addEventListener('resize', () => {
+        if (collapsed) return
+        expandedWidth = clampPanelWidth(expandedWidth)
+        container.style.width = `${expandedWidth}px`
+        _applyPanelWidth(expandedWidth, false)
+    }, { signal: resizeAbort.signal })
 
     // ── Reset all params
     resetBtn.addEventListener('click', () => {

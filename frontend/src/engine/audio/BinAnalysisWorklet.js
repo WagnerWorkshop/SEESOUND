@@ -23,6 +23,9 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._prevMag = new Float32Array(this.binCount)
         this._prevPhase = new Float32Array(this.binCount)
         this._prevPhaseDelta = new Float32Array(this.binCount)
+        this._attackElapsedMs = new Float32Array(this.binCount)
+        this._attackLastMs = new Float32Array(this.binCount)
+        this._attackActive = new Uint8Array(this.binCount)
 
         this._cfg = {
             enabled: false,
@@ -30,6 +33,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             needFlux: false,
             needPhaseDeviation: false,
             needEnvelope: false,
+            needAttackTime: false,
             attackThreshold: 0.03,
             sustainFluxEps: 0.004,
             sustainMagThreshold: 0.08,
@@ -45,6 +49,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._cfg.needFlux = !!cfg.needFlux
             this._cfg.needPhaseDeviation = !!cfg.needPhaseDeviation
             this._cfg.needEnvelope = !!cfg.needEnvelope
+            this._cfg.needAttackTime = !!cfg.needAttackTime
             this._cfg.attackThreshold = Number.isFinite(cfg.attackThreshold) ? cfg.attackThreshold : this._cfg.attackThreshold
             this._cfg.sustainFluxEps = Number.isFinite(cfg.sustainFluxEps) ? cfg.sustainFluxEps : this._cfg.sustainFluxEps
             this._cfg.sustainMagThreshold = Number.isFinite(cfg.sustainMagThreshold) ? cfg.sustainMagThreshold : this._cfg.sustainMagThreshold
@@ -134,10 +139,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         }
     }
 
-    _logMagFromComplex(re, im) {
-        const mag = Math.sqrt(re * re + im * im)
-        // 0..1 compressed loudness-like magnitude
-        return Math.log1p(mag * 32) / Math.log1p(32)
+    _dbfsFromComplex(re, im) {
+        const mag = Math.sqrt(re * re + im * im) / Math.max(1, this.fftSize)
+        const db = 20 * Math.log10(Math.max(1e-12, mag))
+        return Math.max(-120, Math.min(0, db))
     }
 
     _phaseDelta(curr, prev) {
@@ -149,47 +154,63 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
     _analyzeAndPost() {
         const cfg = this._cfg
-        const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needEnvelope
+        const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needEnvelope || cfg.needAttackTime
         if (!cfg.enabled || !needsAny || this._filled < this.fftSize || this._hopCounter < this.hopSize) return
         this._hopCounter = 0
+        const hopMs = (this.hopSize / Math.max(1, sampleRate)) * 1000
 
         this._copyWindowedFrame()
         this._fftInPlace(this._re, this._im)
 
-        const magnitude = (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope) ? new Float32Array(this.binCount) : null
-        const flux = (cfg.needFlux || cfg.needEnvelope) ? new Float32Array(this.binCount) : null
+        const magnitude = (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
+        const flux = (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
         const phaseDeviation = cfg.needPhaseDeviation ? new Float32Array(this.binCount) : null
         const envelope = cfg.needEnvelope ? new Float32Array(this.binCount) : null
+        const attackTime = cfg.needAttackTime ? new Float32Array(this.binCount) : null
 
         for (let k = 0; k < this.binCount; k++) {
             const re = this._re[k]
             const im = this._im[k]
-            const magNow = this._logMagFromComplex(re, im)
+            const magNowDb = this._dbfsFromComplex(re, im)
+            const magNowLin = Math.max(0, Math.pow(10, magNowDb / 20))
 
-            if (magnitude) magnitude[k] = magNow
+            if (magnitude) magnitude[k] = magNowDb
 
             const prevMag = this._prevMag[k]
-            const f = magNow - prevMag
+            const f = Math.max(0, magNowLin - prevMag)
             if (flux) flux[k] = f
 
             if (phaseDeviation) {
                 const phase = Math.atan2(im, re)
                 const d1 = this._phaseDelta(phase, this._prevPhase[k])
                 const d2 = this._phaseDelta(d1, this._prevPhaseDelta[k])
-                phaseDeviation[k] = Math.min(1, Math.abs(d2) / Math.PI)
+                phaseDeviation[k] = Math.max(0, Math.min(Math.PI, Math.abs(d2)))
                 this._prevPhase[k] = phase
                 this._prevPhaseDelta[k] = d1
+            }
+
+            if (attackTime) {
+                const isRising = f > Math.max(1e-6, cfg.attackThreshold)
+                if (isRising) {
+                    this._attackActive[k] = 1
+                    this._attackElapsedMs[k] += hopMs
+                } else if (this._attackActive[k]) {
+                    this._attackActive[k] = 0
+                    this._attackLastMs[k] = Math.max(hopMs, this._attackElapsedMs[k])
+                    this._attackElapsedMs[k] = 0
+                }
+                attackTime[k] = this._attackActive[k] ? this._attackElapsedMs[k] : this._attackLastMs[k]
             }
 
             if (envelope) {
                 let state = 0
                 if (f > cfg.attackThreshold) state = 1
-                else if (Math.abs(f) <= cfg.sustainFluxEps && magNow >= cfg.sustainMagThreshold) state = 2
+                else if (Math.abs(f) <= cfg.sustainFluxEps && magNowLin >= cfg.sustainMagThreshold) state = 2
                 else if (f < -cfg.decayThreshold) state = 3
                 envelope[k] = state
             }
 
-            this._prevMag[k] = magNow
+            this._prevMag[k] = magNowLin
         }
 
         const payload = { type: 'binMetrics' }
@@ -209,6 +230,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         if (envelope) {
             payload.envelope = envelope.buffer
             transfers.push(envelope.buffer)
+        }
+        if (attackTime) {
+            payload.attackTime = attackTime.buffer
+            transfers.push(attackTime.buffer)
         }
         this.port.postMessage(payload, transfers)
     }
