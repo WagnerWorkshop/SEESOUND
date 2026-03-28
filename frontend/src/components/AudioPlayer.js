@@ -165,7 +165,7 @@ export function initAudioPlayer(container) {
 
     progressRow.append(seekBar, progressMeta)
     body.append(fileRow, transport, progressRow)
-    container.append(body, collapseBtn)
+    container.append(collapseBtn, body)
 
     function _setBusy(busy, text = '') {
         fileInput.disabled = busy

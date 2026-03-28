@@ -29,7 +29,30 @@ const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     ruleBlocks: [],
     ruleEngineEnabled: true,
     ruleSchemaVersion: RULE_SCHEMA_VERSION,
+    palettes: [],
 })
+
+function _sanitizePalettes(rawPalettes) {
+    if (!Array.isArray(rawPalettes)) return []
+    return rawPalettes
+        .map((palette, index) => {
+            if (!palette || typeof palette !== 'object') return null
+            const id = (typeof palette.id === 'string' && palette.id.trim())
+                ? palette.id.trim()
+                : `palette-${index + 1}`
+            const type = (palette.type === 'continuous' || palette.type === 'discrete')
+                ? palette.type
+                : 'discrete'
+            const colors = Array.isArray(palette.colors) ? palette.colors : []
+            return {
+                ...palette,
+                id,
+                type,
+                colors,
+            }
+        })
+        .filter(Boolean)
+}
 
 /* TODO_RESUME (Phase 2):
  * - Add params/state: ruleBlocks, ruleEngineEnabled, ruleSchemaVersion.
@@ -93,6 +116,20 @@ export const PARAMS = [
         key: 'freqNormMax', group: 'inputProcessing', label: 'Freq Norm Max',
         min: 16, max: 20000, step: 1, default: 12000, unit: 'Hz',
         desc: 'Upper bound for log2-based frequency normalization into normFreq.',
+        canDisable: false,
+    },
+    {
+        key: 'fftSize', group: 'inputProcessing', label: 'FFT Size',
+        default: 2048, unit: '',
+        desc: 'FFT analysis size. Discrete power-of-two choices; larger sizes increase frequency detail and then progressively thin high-frequency buckets.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: '1024', value: 1024 },
+            { label: '2048', value: 2048 },
+            { label: '4096', value: 4096 },
+            { label: '8192', value: 8192 },
+            { label: '16384', value: 16384 },
+        ],
         canDisable: false,
     },
     normRangeParam({
@@ -308,7 +345,13 @@ export const PARAMS = [
     {
         key: 'particleRenderPercent', group: 'geometry', label: 'Particle Render %',
         min: 1, max: 100, step: 1, default: 100, unit: '%',
-        desc: 'Bin thinning: only this percentage of FFT bins can spawn particles each frame (evenly distributed by bin index).',
+        desc: 'Bucket thinning: only this percentage of log-frequency buckets can spawn particles each frame (evenly distributed by bucket index).',
+        canDisable: false,
+    },
+    {
+        key: 'particlesPerOctave', group: 'geometry', label: 'Particles Per Octave',
+        min: 10, max: 500, step: 1, default: 100, unit: 'bins/oct',
+        desc: 'Controls log-bucket density. Total buckets = 10 octaves × this value (16 Hz to 16 kHz).',
         canDisable: false,
     },
 
@@ -380,6 +423,7 @@ export function migrateRuleSchema(snapshot) {
     migrated.ruleSchemaVersion = Number.isFinite(source.ruleSchemaVersion)
         ? Number(source.ruleSchemaVersion)
         : DEFAULT_RULE_ENGINE_STATE.ruleSchemaVersion
+    migrated.palettes = _sanitizePalettes(source.palettes)
 
     if (sanitization.rejected.length > 0) {
         console.warn('[RuleEngine] Rejected malformed ruleBlocks during migration', sanitization.rejected)
@@ -398,6 +442,7 @@ function _buildInitial() {
     out.ruleBlocks = saved.ruleBlocks
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
+    out.palettes = _sanitizePalettes(saved.palettes)
     return out
 }
 
@@ -418,7 +463,13 @@ export function subscribe(cb) {
     return () => _listeners.delete(cb)
 }
 function _notify(key, value) {
-    for (const cb of _listeners) cb(params, key, value)
+    for (const cb of _listeners) {
+        try {
+            cb(params, key, value)
+        } catch (err) {
+            console.warn('[ParamStore] subscriber error:', err)
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,6 +496,7 @@ export function resetToDefaults() {
     params.ruleBlocks = []
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
+    params.palettes = []
     _notify('*', null)
 }
 
@@ -468,6 +520,92 @@ export function getSnapshot() {
     return { ...params, ...migrated, _disabled: [...disabled] }
 }
 
+function _dropdownValues(paramDef) {
+    if (Array.isArray(paramDef?.dropdownOptions)) {
+        return paramDef.dropdownOptions.map((opt) => opt.value)
+    }
+    if (Array.isArray(paramDef?.dropdownGroups)) {
+        return paramDef.dropdownGroups.flatMap((group) => (group.options || []).map((opt) => opt.value))
+    }
+    return []
+}
+
+function _coerceToggleValue(raw, fallback) {
+    if (raw === undefined || raw === null) return fallback
+    if (typeof raw === 'boolean') return raw ? 1 : 0
+    if (typeof raw === 'string') {
+        const text = raw.trim().toLowerCase()
+        if (text === 'painting' || text === 'paint' || text === 'on' || text === 'true') return 1
+        if (text === 'momentary' || text === 'off' || text === 'false') return 0
+    }
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n >= 0.5 ? 1 : 0
+    return fallback
+}
+
+function _coerceParamValue(paramDef, raw) {
+    if (raw === undefined || raw === null) return undefined
+
+    if (paramDef?.isToggle) {
+        return _coerceToggleValue(raw, paramDef.default)
+    }
+
+    if (paramDef?.isDropdown) {
+        const allowedValues = _dropdownValues(paramDef)
+        const matched = allowedValues.find((value) => String(value) === String(raw))
+        if (matched !== undefined) return matched
+        return raw
+    }
+
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n
+    return raw
+}
+
+function _buildCanonicalPresetParams(source) {
+    try {
+        const incoming = (source && typeof source === 'object') ? source : {}
+        const canonical = { ...incoming }
+
+        for (const paramDef of PARAMS) {
+            const hasSavedValue = Object.prototype.hasOwnProperty.call(incoming, paramDef.key)
+            if (!hasSavedValue || incoming[paramDef.key] === undefined || incoming[paramDef.key] === null) {
+                canonical[paramDef.key] = paramDef.default
+                continue
+            }
+            canonical[paramDef.key] = _coerceParamValue(paramDef, incoming[paramDef.key])
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'tonicHz') || !Number.isFinite(Number(incoming.tonicHz))) {
+            canonical.tonicHz = 261.63
+        } else {
+            canonical.tonicHz = Number(incoming.tonicHz)
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
+            canonical.ruleBlocks = []
+        }
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEngineEnabled') || typeof incoming.ruleEngineEnabled !== 'boolean') {
+            canonical.ruleEngineEnabled = DEFAULT_RULE_ENGINE_STATE.ruleEngineEnabled
+        }
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleSchemaVersion') || !Number.isFinite(Number(incoming.ruleSchemaVersion))) {
+            canonical.ruleSchemaVersion = DEFAULT_RULE_ENGINE_STATE.ruleSchemaVersion
+        } else {
+            canonical.ruleSchemaVersion = Number(incoming.ruleSchemaVersion)
+        }
+        canonical.palettes = _sanitizePalettes(incoming.palettes)
+
+        if (Array.isArray(incoming._disabled)) {
+            canonical._disabled = [...incoming._disabled]
+        }
+
+        return migrateRuleSchema(canonical)
+    } catch (err) {
+        console.warn('[Preset] canonicalization failed, falling back to raw payload:', err)
+        return migrateRuleSchema((source && typeof source === 'object') ? source : {})
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  PRESET API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,7 +619,7 @@ export async function listPresets() {
 }
 
 export async function savePreset(name, paramsObj) {
-    const normalized = migrateRuleSchema(paramsObj)
+    const normalized = _buildCanonicalPresetParams(paramsObj)
     return fetch(`${API}/api/presets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -494,7 +632,12 @@ export async function loadPreset(name) {
     if (!r.ok) return null
     const data = await r.json()
     if (!data?.params) return data
-    return { ...data, params: migrateRuleSchema(data.params) }
+    try {
+        return { ...data, params: _buildCanonicalPresetParams(data.params) }
+    } catch (err) {
+        console.warn('[Preset] load normalization failed, applying raw params:', err)
+        return { ...data, params: migrateRuleSchema(data.params) }
+    }
 }
 
 export async function deletePreset(name) {

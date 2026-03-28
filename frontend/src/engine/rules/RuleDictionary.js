@@ -3,50 +3,143 @@
  */
 
 const _inputEntries = [
-    { id: 'amplitude', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'binEnergy', type: 'number', range: [0, 1], category: 'base' },
+    // Per-bin inputs (higher complexity / most local)
+    { id: 'binMagnitude', type: 'number', range: [0, 1], category: 'advanced' },
+    // Legacy alias for binMagnitude; hidden from picker.
+    { id: 'binEnergy', type: 'number', range: [0, 1], category: 'advanced', hidden: true },
+    { id: 'binPhase', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'binFlux', type: 'number', range: [-1, 1], category: 'advanced' },
+    { id: 'binPhaseDeviation', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'binPhasedeviation', type: 'number', range: [0, 1], category: 'advanced', hidden: true },
+    { id: 'binAttackTime', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'binEnvelope', type: 'number', range: [0, 3], category: 'advanced' },
+    { id: 'binEnvelopeState', type: 'number', range: [0, 3], category: 'advanced' },
+    { id: 'binRMSEnergy', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'frequencyHz', type: 'number', range: [0, 22050], category: 'base' },
+    { id: 'notePitchClass', type: 'number', range: [0, 11], category: 'base' },
+    { id: 'octave', type: 'number', range: [-2, 12], category: 'base' },
+    // Legacy alias for frequencyHz; hidden from picker.
+    { id: 'binFreq', type: 'number', range: [0, 22050], category: 'advanced', hidden: true },
     { id: 'normFreq', type: 'number', range: [0, 1], category: 'base' },
+    { id: 'pan', type: 'number', range: [-1, 1], category: 'base' },
+
+    // Global inputs (frame-level)
+    { id: 'amplitude', type: 'number', range: [0, 1], category: 'base' },
     { id: 'bass', type: 'number', range: [0, 1], category: 'base' },
     { id: 'mid', type: 'number', range: [0, 1], category: 'base' },
     { id: 'high', type: 'number', range: [0, 1], category: 'base' },
     { id: 'peakFreq', type: 'number', range: [0, 22050], category: 'base' },
-    { id: 'pan', type: 'number', range: [-1, 1], category: 'base' },
-    { id: 'time', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'base' },
-    { id: 'deltaTime', type: 'number', range: [0, 1], category: 'base' },
     { id: 'globalRmsEnergy', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'peakAmplitude', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'zeroCrossingRate', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'spectralCentroid', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'spectralFlux', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'spectralFlatness', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'spectralRolloff', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'spectralSpread', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'spectralSkewness', type: 'number', range: [0, 1], category: 'advanced' },
+    { id: 'chromagram', type: 'number', range: [0, 1], category: 'advanced' },
     { id: 'inharmonicity', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binMagnitude', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binFlux', type: 'number', range: [-1, 1], category: 'advanced' },
-    { id: 'binPhaseDeviation', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binPhasedeviation', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binAttackTime', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binEnvelope', type: 'number', range: [0, 3], category: 'advanced' },
+    { id: 'time', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'base' },
+    { id: 'deltaTime', type: 'number', range: [0, 1], category: 'base' },
+
+    // Render/context inputs
     { id: 'canvasWidthPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'canvasHeightPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'canvasWidthUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'canvasHeightUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasBoundaryLeft', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasBoundaryRight', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasBoundaryTop', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
+    { id: 'canvasBoundaryBottom', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'audioLengthSec', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
 ]
 
-const _outputEntries = [
-    { id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
-    { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
-    { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera'] },
-    { id: 'zoom', type: 'number', range: [0.05, 32], targets: ['camera'] },
-    { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles'] },
-    { id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background'] },
-    { id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'] },
-    { id: 'particleCount', type: 'number', range: [0, 1], targets: ['spawnedParticles'] },
-    { id: 'shapeType', type: 'enum', values: ['square', 'circle'], targets: ['spawnedParticles', 'allParticles'] },
+const _outputEntries = [{
+    id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera']
+}
+
+    ,
+{
+    id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera']
+}
+
+    ,
+{
+    id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera']
+}
+
+    ,
+{
+    id: 'zoom', type: 'number', range: [0.05, 32], targets: ['camera']
+}
+
+    ,
+{
+    id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles']
+}
+
+    ,
+{
+    id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'luma', type: 'number', range: [0, 255], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'hsv', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'background']
+}
+
+    ,
+{
+    id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles']
+}
+
+    ,
+{
+    id: 'particleCount', type: 'number', range: [0, 1], targets: ['spawnedParticles']
+}
+
+    ,
+{
+    id: 'shapeType', type: 'enum', values: ['square', 'circle'], targets: ['spawnedParticles', 'allParticles']
+}
+
+    ,
 ]
 
 const _legacyOutputAliases = Object.freeze({
@@ -60,6 +153,11 @@ const _legacyOutputAliases = Object.freeze({
 })
 
 const _legacyBackgroundOutputs = Object.freeze(new Set(['backgroundRed', 'backgroundGreen', 'backgroundBlue']))
+
+const _legacyInputAliases = Object.freeze({
+    binEnergy: 'binMagnitude',
+    binFreq: 'frequencyHz',
+})
 
 export const RULE_BLOCK_FIELDS = Object.freeze([
     'id',
@@ -137,11 +235,24 @@ function _hasBalancedParens(text) {
     return depth === 0
 }
 
+function _normalizeExpressionSyntax(expr) {
+    if (typeof expr !== 'string') return ''
+    let out = expr.trim()
+    if (!out) return ''
+
+    // Allow concise human-friendly syntax and normalize to JS operators.
+    out = out.replace(/×/g, '*').replace(/÷/g, '/')
+    out = out.replace(/\band\b/gi, '&&')
+    out = out.replace(/\bor\b/gi, '||')
+    out = out.replace(/\bnot\b/gi, '!')
+    return out
+}
+
 function _validateExpression(expr, inMap) {
     if (typeof expr !== 'string') return null
-    const value = expr.trim()
+    const value = _normalizeExpressionSyntax(_normalizeExpressionInputAliases(expr))
     if (!value) return 'Expression cannot be empty.'
-    if (!/^[0-9A-Za-z_+\-*/%().,\s<>!=&|?:]+$/.test(value)) {
+    if (!/^[0-9A-Za-z_+\-*/%().,\s<>!=&|?:\[\]'\"]+$/.test(value)) {
         return 'Expression contains unsupported characters.'
     }
     if (!_hasBalancedParens(value)) {
@@ -157,12 +268,20 @@ function _validateExpression(expr, inMap) {
         'min',
         'max',
         'abs',
+        'palette',
+        'gradient',
+        'matchLuma',
+        'rgb',
+        'hsv',
         'PI',
         'E',
         'true',
         'false',
     ])
-    const tokens = value.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []
+    const withoutStrings = value
+        .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, ' ')
+        .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, ' ')
+    const tokens = withoutStrings.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []
     for (const token of tokens) {
         if (!allowed.has(token)) {
             return `Expression references unknown identifier: ${token}`
@@ -174,6 +293,25 @@ function _validateExpression(expr, inMap) {
 function _normalizeOutputId(id) {
     if (typeof id !== 'string') return id
     return _legacyOutputAliases[id] || id
+}
+
+function _normalizeInputId(id) {
+    if (typeof id !== 'string') return id
+    return _legacyInputAliases[id] || id
+}
+
+function _escapeRegex(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function _normalizeExpressionInputAliases(expr) {
+    if (typeof expr !== 'string' || !expr) return expr
+    let out = expr
+    for (const [legacyId, canonicalId] of Object.entries(_legacyInputAliases)) {
+        const re = new RegExp(`\\b${_escapeRegex(legacyId)}\\b`, 'g')
+        out = out.replace(re, canonicalId)
+    }
+    return out
 }
 
 function _normalizeTarget(rule) {
@@ -221,7 +359,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
         if (exprErr) errors.push(`Condition expression invalid: ${exprErr}`)
     }
 
-    const conditionInput = rule.condition?.input
+    const conditionInput = _normalizeInputId(rule.condition?.input)
     if (conditionInput && !inMap.has(conditionInput)) {
         errors.push(`Unknown condition input: ${conditionInput}`)
     }
@@ -264,8 +402,9 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
             setTargets.set(output, actionIndex)
         }
 
-        if (action?.input && !inMap.has(action.input)) {
-            errors.push(`Unknown action input at index ${actionIndex}: ${action.input}`)
+        const actionInput = _normalizeInputId(action?.input)
+        if (actionInput && !inMap.has(actionInput)) {
+            errors.push(`Unknown action input at index ${actionIndex}: ${actionInput}`)
         }
 
         if (action?.expression !== undefined) {
@@ -374,6 +513,11 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
         if (!RULE_CONDITION_OPERATORS.includes(coerced.condition.operator)) {
             coerced.condition.operator = 'always'
         }
+        if (coerced.condition?.input) coerced.condition.input = _normalizeInputId(coerced.condition.input)
+        if (coerced.condition?.valueInput) coerced.condition.valueInput = _normalizeInputId(coerced.condition.valueInput)
+        if (typeof coerced.condition?.expression === 'string') {
+            coerced.condition.expression = _normalizeExpressionInputAliases(coerced.condition.expression)
+        }
 
         // Keep legacy scope for compatibility, derive from target for deterministic runtime.
         coerced.scope = coerced.target === 'spawnedParticles' ? 'spawnedOnly' : 'allLivingFrame'
@@ -390,8 +534,8 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
                     operator: RULE_ACTION_OPERATORS.includes(action.operator) ? action.operator : 'set',
                     output: _normalizeOutputId(rawOutput),
                     value: action.value,
-                    input: action.input,
-                    expression: action.expression,
+                    input: _normalizeInputId(action.input),
+                    expression: _normalizeExpressionInputAliases(action.expression),
                 }
             })
 

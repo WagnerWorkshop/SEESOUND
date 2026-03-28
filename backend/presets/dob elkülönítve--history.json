@@ -3,6 +3,25 @@
   "params": {
     "inputGain": 0.78,
     "amplitudeThreshold": 0,
+    "freqNormMin": 64,
+    "freqNormMax": 16000,
+    "fftSize": 16384,
+    "binMagnitudeNormMin": -120,
+    "binMagnitudeNormMax": -15,
+    "binFluxNormMin": 0,
+    "binFluxNormMax": 0.5,
+    "binPhaseDeviationNormMin": 0,
+    "binPhaseDeviationNormMax": 3.14,
+    "binAttackTimeNormMin": 5,
+    "binAttackTimeNormMax": 500,
+    "globalRmsNormMin": -60,
+    "globalRmsNormMax": 0,
+    "spectralCentroidNormMin": 150,
+    "spectralCentroidNormMax": 8000,
+    "globalSpectralFluxNormMin": 0,
+    "globalSpectralFluxNormMax": 100,
+    "spectralFlatnessNormMin": 0,
+    "spectralFlatnessNormMax": 1,
     "defaultParticleSize": 1,
     "canvasWidth": 3000,
     "canvasHeight": 1000,
@@ -12,6 +31,7 @@
     "defaultBackgroundLightness": 0,
     "maxParticles": 1999872,
     "particleRenderPercent": 50,
+    "particlesPerOctave": 500,
     "blendMode": "source-over",
     "cameraProjection": "axonometric",
     "cameraAxoPreset": "orthoXY",
@@ -165,7 +185,7 @@
           {
             "operator": "set",
             "output": "brightness",
-            "input": "binEnergy"
+            "input": "binMagnitude"
           }
         ],
         "order": 7
@@ -222,7 +242,7 @@
           {
             "operator": "set",
             "output": "particleCount",
-            "input": "binEnergy"
+            "input": "binMagnitude"
           }
         ],
         "order": 10
@@ -298,7 +318,7 @@
           {
             "operator": "set",
             "output": "saturation",
-            "expression": "(binEnergy) * 10"
+            "expression": "(binMagnitude) * 10"
           }
         ],
         "order": 14
@@ -317,7 +337,7 @@
           {
             "operator": "multiply",
             "output": "size",
-            "expression": "(binEnergy) * 2"
+            "expression": "(binMagnitude) * 2"
           }
         ],
         "order": 15
@@ -354,24 +374,6 @@
       "resizableAndCollapsibleTabs": true,
       "tooltipsForAllControls": true,
       "tooltipContent": "feature_and_current_value"
-    },
-    "freqNormMin": 64.0,
-    "freqNormMax": 16000.0,
-    "binFluxNormMin": 0.0,
-    "binPhaseDeviationNormMin": 0.0,
-    "spectralFlatnessNormMax": 1.0,
-    "binMagnitudeNormMin": -70,
-    "binAttackTimeNormMax": 500,
-    "spectralFlatnessNormMin": 0.0,
-    "globalRmsNormMin": -60,
-    "globalSpectralFluxNormMax": 100.0,
-    "spectralCentroidNormMin": 150,
-    "binPhaseDeviationNormMax": 3.14,
-    "globalRmsNormMax": 0,
-    "globalSpectralFluxNormMin": 0.0,
-    "binMagnitudeNormMax": 0,
-    "spectralCentroidNormMax": 8000,
-    "binFluxNormMax": 0.5,
-    "binAttackTimeNormMin": 5
+    }
   }
 }

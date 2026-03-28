@@ -1,5 +1,5 @@
 {
-  "name": "linear basic timbre color",
+  "name": "linear basic scriabin colors",
   "params": {
     "inputGain": 0.79,
     "amplitudeThreshold": 0,
@@ -39,6 +39,25 @@
     "tonicHz": 261.63,
     "ruleBlocks": [
       {
+        "id": "rule-16",
+        "group": "",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hsv",
+            "expression": "hsv((notePitchClass/12)*360, 90, 65)"
+          }
+        ],
+        "order": 0
+      },
+      {
         "id": "x-set-time",
         "group": "SPACING",
         "subgroup": "x coordinate",
@@ -55,7 +74,7 @@
             "input": "time"
           }
         ],
-        "order": 0
+        "order": 1
       },
       {
         "id": "x-divide-by-audio-length",
@@ -74,7 +93,7 @@
             "expression": "(audioLengthSec) * 1.12"
           }
         ],
-        "order": 1
+        "order": 2
       },
       {
         "id": "y-set-norm-frequency",
@@ -93,7 +112,7 @@
             "input": "normFreq"
           }
         ],
-        "order": 2
+        "order": 3
       },
       {
         "id": "y-center-around-zero",
@@ -112,7 +131,7 @@
             "value": 0.5
           }
         ],
-        "order": 3
+        "order": 4
       },
       {
         "id": "y-scale-to-canvas-height",
@@ -131,7 +150,7 @@
             "expression": "(canvasHeightPx) * 1"
           }
         ],
-        "order": 4
+        "order": 5
       },
       {
         "id": "x-center-around-zero",
@@ -150,7 +169,7 @@
             "value": 0.5
           }
         ],
-        "order": 5
+        "order": 6
       },
       {
         "id": "x-scale-to-canvas-width",
@@ -169,7 +188,7 @@
             "expression": "(canvasWidthUnits) * 1"
           }
         ],
-        "order": 6
+        "order": 7
       },
       {
         "id": "amplitude brightness",
@@ -188,13 +207,13 @@
             "input": "binMagnitude"
           }
         ],
-        "order": 7
+        "order": 8
       },
       {
         "id": "thinning",
         "group": "Appearance",
         "subgroup": "brightness",
-        "enabled": false,
+        "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
         "condition": {
@@ -207,7 +226,7 @@
             "expression": "binMagnitude*2"
           }
         ],
-        "order": 8
+        "order": 9
       },
       {
         "id": "hue",
@@ -226,7 +245,7 @@
             "expression": "(normFreq) * 360000"
           }
         ],
-        "order": 9
+        "order": 10
       },
       {
         "id": "saturation",
@@ -245,7 +264,7 @@
             "expression": "(binMagnitude) * 10"
           }
         ],
-        "order": 10
+        "order": 11
       },
       {
         "id": "background hue",
@@ -264,7 +283,7 @@
             "value": 50
           }
         ],
-        "order": 11
+        "order": 12
       },
       {
         "id": "background saturation",
@@ -283,7 +302,26 @@
             "value": 50
           }
         ],
-        "order": 12
+        "order": 13
+      },
+      {
+        "id": "soft",
+        "group": "Appearance",
+        "subgroup": "size",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "size",
+            "expression": "(binMagnitude) * 6"
+          }
+        ],
+        "order": 14
       },
       {
         "id": "shape",
@@ -302,68 +340,147 @@
             "value": "circle"
           }
         ],
-        "order": 14
-      },
-      {
-        "id": "red",
-        "group": "",
-        "subgroup": "",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "red",
-            "input": "bass"
-          }
-        ],
         "order": 15
-      },
-      {
-        "id": "red-3",
-        "group": "",
-        "subgroup": "",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "green",
-            "input": "mid"
-          }
-        ],
-        "order": 16
-      },
-      {
-        "id": "red-2",
-        "group": "",
-        "subgroup": "",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "blue",
-            "input": "high"
-          }
-        ],
-        "order": 17
       }
     ],
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
+    "palettes": [
+      {
+        "id": "palette-1",
+        "name": "Palette 1",
+        "type": "discrete",
+        "colors": [
+          [
+            254,
+            0,
+            0
+          ],
+          [
+            255,
+            120,
+            1
+          ],
+          [
+            255,
+            220,
+            0
+          ],
+          [
+            151,
+            255,
+            2
+          ],
+          [
+            1,
+            255,
+            80
+          ],
+          [
+            1,
+            255,
+            220
+          ],
+          [
+            0,
+            160,
+            255
+          ],
+          [
+            40,
+            80,
+            255
+          ],
+          [
+            120,
+            0,
+            255
+          ],
+          [
+            220,
+            0,
+            255
+          ],
+          [
+            254,
+            0,
+            149
+          ],
+          [
+            255,
+            0,
+            60
+          ]
+        ]
+      },
+      {
+        "id": "palette-4",
+        "name": "Palette 4",
+        "type": "discrete",
+        "colors": [
+          [
+            254,
+            0,
+            0
+          ],
+          [
+            255,
+            120,
+            1
+          ],
+          [
+            255,
+            220,
+            0
+          ],
+          [
+            151,
+            255,
+            2
+          ],
+          [
+            1,
+            255,
+            80
+          ],
+          [
+            1,
+            255,
+            220
+          ],
+          [
+            0,
+            160,
+            255
+          ],
+          [
+            40,
+            80,
+            255
+          ],
+          [
+            120,
+            0,
+            255
+          ],
+          [
+            220,
+            0,
+            255
+          ],
+          [
+            254,
+            0,
+            149
+          ],
+          [
+            255,
+            0,
+            60
+          ]
+        ]
+      }
+    ],
     "_disabled": [],
     "cameraFov": 104,
     "enableAggressiveThinning": true,

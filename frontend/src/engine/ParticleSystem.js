@@ -3,8 +3,8 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * Self-contained Three.js point-cloud renderer.
  *
- * One particle per FFT bin. Each particle is drawn at the exact frequency
- * of its FFT bin — no musical note snapping. Positions follow two layout modes:
+ * One particle per log-frequency bucket. FFT bins are resampled into
+ * constant log buckets for octave-uniform visual density.
  *
  *   Linear (1): X = playback time (canvas px = audio seconds)
  *               Y = log₂(16 Hz … 20 000 Hz), bass at bottom, treble at top
@@ -22,12 +22,6 @@
 
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
-import {
-    computeBinSpectralCentroid,
-    computeBinSpectralFlux,
-    computeBinSpectralFlatness,
-    computeBinInharmonicity,
-} from './audio/AudioFeatures.js'
 
 // Phase checklist workflow anchor:
 // Keep Three.js Points path intact while rule-engine features are layered in by phase.
@@ -37,6 +31,9 @@ const FREQ_MIN_HZ = 16
 const FREQ_MAX_HZ = 20000
 const LOG_FREQ_MIN = Math.log2(FREQ_MIN_HZ)
 const LOG_FREQ_MAX = Math.log2(FREQ_MAX_HZ)
+const LOG_BUCKET_MIN_HZ = 16
+const LOG_BUCKET_MAX_HZ = 16000
+const LOG_BUCKET_OCTAVES = 10
 
 /* TODO_RESUME (Phase 5):
  * - Apply spawnedOnly rules only at writeParticle spawn time.
@@ -76,6 +73,25 @@ function normalizeHue(hue) {
     if (!Number.isFinite(hue)) return null
     const unitHue = Math.abs(hue) > 1 ? hue / 360 : hue
     return ((unitHue % 1) + 1) % 1
+}
+
+function frequencyToMidi(frequencyHz) {
+    const hz = Number(frequencyHz)
+    if (!Number.isFinite(hz) || hz <= 0) return null
+    return 69 + 12 * Math.log2(hz / 440)
+}
+
+function frequencyToPitchClass(frequencyHz) {
+    const midi = frequencyToMidi(frequencyHz)
+    if (!Number.isFinite(midi)) return 0
+    const nearest = Math.round(midi)
+    return ((nearest % 12) + 12) % 12
+}
+
+function frequencyToOctave(frequencyHz) {
+    const midi = frequencyToMidi(frequencyHz)
+    if (!Number.isFinite(midi)) return -1
+    return Math.floor(Math.round(midi) / 12) - 1
 }
 
 function rgbToHsv(r, g, b) {
@@ -423,6 +439,9 @@ export class ParticleSystem {
     }
 
     _buildRuleInputs(ae, extra = {}) {
+        const frequencyHz = Number(extra.frequencyHz) || 0
+        const notePitchClass = frequencyToPitchClass(frequencyHz)
+        const octave = frequencyToOctave(frequencyHz)
         return {
             amplitude: Number.isFinite(extra.amplitude) ? Number(extra.amplitude) : (ae.amplitude ?? 0),
             bass: ae.bass ?? 0,
@@ -438,7 +457,15 @@ export class ParticleSystem {
             spectralFlux: Number.isFinite(extra.spectralFlux) ? Number(extra.spectralFlux) : (ae.spectralFlux ?? 0),
             spectralFlatness: Number.isFinite(extra.spectralFlatness) ? Number(extra.spectralFlatness) : (ae.spectralFlatness ?? 0),
             inharmonicity: Number.isFinite(extra.inharmonicity) ? Number(extra.inharmonicity) : (ae.inharmonicity ?? 0),
+            peakAmplitude: Number.isFinite(extra.peakAmplitude) ? Number(extra.peakAmplitude) : (ae.peakAmplitude ?? 0),
+            zeroCrossingRate: Number.isFinite(extra.zeroCrossingRate) ? Number(extra.zeroCrossingRate) : (ae.zeroCrossingRate ?? 0),
+            spectralRolloff: Number.isFinite(extra.spectralRolloff) ? Number(extra.spectralRolloff) : (ae.spectralRolloff ?? 0),
+            spectralSpread: Number.isFinite(extra.spectralSpread) ? Number(extra.spectralSpread) : (ae.spectralSpread ?? 0),
+            spectralSkewness: Number.isFinite(extra.spectralSkewness) ? Number(extra.spectralSkewness) : (ae.spectralSkewness ?? 0),
+            chromagram: Number.isFinite(extra.chromagram) ? Number(extra.chromagram) : (ae.chromagram ?? 0),
             binMagnitude: Number.isFinite(extra.binMagnitude) ? clamp01(extra.binMagnitude) : 0,
+            binFreq: Number.isFinite(extra.binFreq) ? Number(extra.binFreq) : (Number(extra.frequencyHz) || 0),
+            binPhase: Number.isFinite(extra.binPhase) ? clamp01(extra.binPhase) : 0,
             binFlux: Number.isFinite(extra.binFlux) ? Number(extra.binFlux) : 0,
             binPhaseDeviation: Number.isFinite(extra.binPhaseDeviation) ? clamp01(extra.binPhaseDeviation) : 0,
             binPhasedeviation: Number.isFinite(extra.binPhasedeviation)
@@ -448,6 +475,12 @@ export class ParticleSystem {
             binEnvelope: Number.isFinite(extra.binEnvelope)
                 ? Number(extra.binEnvelope)
                 : (Number.isFinite(extra.binAttackTime) ? Number(extra.binAttackTime) : 0),
+            binEnvelopeState: Number.isFinite(extra.binEnvelopeState)
+                ? Number(extra.binEnvelopeState)
+                : (Number.isFinite(extra.binEnvelope) ? Number(extra.binEnvelope) : 0),
+            binRMSEnergy: Number.isFinite(extra.binRMSEnergy)
+                ? clamp01(extra.binRMSEnergy)
+                : (Number.isFinite(extra.globalRmsEnergy) ? clamp01(extra.globalRmsEnergy) : 0),
             canvasWidthPx: Number(extra.canvasWidthPx) || 0,
             canvasHeightPx: Number(extra.canvasHeightPx) || 0,
             canvasWidthUnits: Number(extra.canvasWidthUnits) || 0,
@@ -457,8 +490,12 @@ export class ParticleSystem {
             canvasBoundaryTop: Number(extra.canvasBoundaryTop) || 0,
             canvasBoundaryBottom: Number(extra.canvasBoundaryBottom) || 0,
             audioLengthSec: Number(extra.audioLengthSec) || 0,
-            binEnergy: clamp01(Number(extra.binEnergy) || 0),
-            frequencyHz: Number(extra.frequencyHz) || 0,
+            binEnergy: Number.isFinite(extra.binEnergy)
+                ? clamp01(Number(extra.binEnergy))
+                : (Number.isFinite(extra.binMagnitude) ? clamp01(Number(extra.binMagnitude)) : 0),
+            frequencyHz,
+            notePitchClass,
+            octave,
             normFreq: Number(extra.normFreq) || 0,
         }
     }
@@ -656,32 +693,43 @@ export class ParticleSystem {
         const spectralFlatnessNormMax = Number(params.spectralFlatnessNormMax ?? 1)
         const renderPctRaw = Number(params.particleRenderPercent)
         const renderPct = Number.isFinite(renderPctRaw) ? Math.max(1, Math.min(100, Math.floor(renderPctRaw))) : 100
+        const fftSizeRaw = Number(params.fftSize)
+        const fftSize = Number.isFinite(fftSizeRaw) ? Math.max(1024, Math.min(16384, fftSizeRaw)) : 2048
+        const fftDetailScale = normalizeByRange(fftSize, 1024, 16384)
+        const particlesPerOctaveRaw = Number(params.particlesPerOctave)
+        const particlesPerOctave = Number.isFinite(particlesPerOctaveRaw)
+            ? Math.max(10, Math.min(500, Math.round(particlesPerOctaveRaw)))
+            : 100
+        const logBucketCount = Math.max(1, LOG_BUCKET_OCTAVES * particlesPerOctave)
         const blendStr = params.blendMode ?? 'screen'
         const bgHue = Number.isFinite(Number(params.defaultBackgroundHue)) ? Number(params.defaultBackgroundHue) : 0
         const bgSat = Number.isFinite(Number(params.defaultBackgroundSaturation)) ? Number(params.defaultBackgroundSaturation) : 0
         const bgLight = Number.isFinite(Number(params.defaultBackgroundLightness)) ? Number(params.defaultBackgroundLightness) : 0
         const hasStereoBins = !!(ae.analyserL && ae.analyserR && ae.getBinPan)
-        const prevFreqData = ae.getPrevFrequencyData?.() || null
         const binMagArr = ae.getBinMagnitude?.() || null
         const binFluxArr = ae.getBinFlux?.() || null
         const binPhaseDevArr = ae.getBinPhaseDeviation?.() || null
+        const binPhaseArr = ae.getBinPhase?.() || null
         const binEnvArr = ae.getBinEnvelope?.() || null
         const binAttackTimeArr = ae.getBinAttackTime?.() || null
         const requiredSpawnInputs = new Set(this._compiledRules?.requiredInputsByTarget?.spawnedParticles || [])
         const requiredInputs = new Set(this._compiledRules?.requiredInputs || [])
-        const needPerBinCentroid = requiredSpawnInputs.has('spectralCentroid')
-        const needPerBinFlux = requiredSpawnInputs.has('spectralFlux')
-        const needPerBinFlatness = requiredSpawnInputs.has('spectralFlatness')
-        const needPerBinInharmonicity = requiredSpawnInputs.has('inharmonicity')
         const needBinMagnitude = requiredInputs.has('binMagnitude') || requiredInputs.has('binEnergy')
+        const needBinFreq = requiredInputs.has('binFreq')
+        const needBinPhase = requiredInputs.has('binPhase')
         const needBinFlux = requiredInputs.has('binFlux')
         const needBinPhaseDev = requiredInputs.has('binPhaseDeviation') || requiredInputs.has('binPhasedeviation')
         const needBinAttackTime = requiredInputs.has('binAttackTime')
-        const needBinEnvelope = requiredInputs.has('binEnvelope')
-        const shouldRenderBin = renderPct >= 100
-            ? (() => true)
-            // Evenly distributed bin thinning: e.g., 70% keeps about 7 of every 10 bins.
-            : ((binIndex) => (((binIndex * renderPct) % 100) < renderPct))
+        const needBinEnvelope = requiredInputs.has('binEnvelope') || requiredInputs.has('binEnvelopeState')
+        const shouldRenderBucket = (bucketIndex, bucketCount) => {
+            const baseKeepPct = renderPct
+            if ((((bucketIndex * baseKeepPct) % 100) >= baseKeepPct)) return false
+            // With larger FFT sizes, progressively thin the highest frequencies.
+            const t = bucketCount > 1 ? (bucketIndex / (bucketCount - 1)) : 0
+            const highFreqDrop = fftDetailScale * Math.pow(t, 1.35) * 0.75
+            const keepPct = Math.max(5, Math.min(100, baseKeepPct * (1 - highFreqDrop)))
+            return (((bucketIndex * 97) % 100) < keepPct)
+        }
 
         // Adjust Three.js blending mode
         if (blendStr === 'alpha') {
@@ -736,16 +784,26 @@ export class ParticleSystem {
         const audioLengthSec = ae.audioEl?.duration ?? 0
         const frameBinInputs = {
             binMagnitude: 0,
+            binFreq: 0,
+            binPhase: 0,
             binFlux: 0,
             binPhaseDeviation: 0,
             binPhasedeviation: 0,
             binAttackTime: 0,
             binEnvelope: 0,
+            binEnvelopeState: 0,
             globalRmsEnergy: normalizeByRange(ae.rmsDbfs, globalRmsNormMin, globalRmsNormMax),
+            binRMSEnergy: normalizeByRange(ae.rmsDbfs, globalRmsNormMin, globalRmsNormMax),
             spectralCentroid: normalizeByRange(ae.spectralCentroidHz, spectralCentroidNormMin, spectralCentroidNormMax),
             spectralFlux: normalizeByRange(ae.spectralFluxAU, globalSpectralFluxNormMin, globalSpectralFluxNormMax),
             spectralFlatness: normalizeByRange(ae.spectralFlatnessRatio, spectralFlatnessNormMin, spectralFlatnessNormMax),
             inharmonicity: clamp01(ae.inharmonicity),
+            peakAmplitude: clamp01(ae.peakAmplitude),
+            zeroCrossingRate: clamp01(ae.zeroCrossingRate),
+            spectralRolloff: clamp01(ae.spectralRolloff),
+            spectralSpread: clamp01(ae.spectralSpread),
+            spectralSkewness: clamp01(ae.spectralSkewness),
+            chromagram: clamp01(ae.chromagram),
         }
         frameBinInputs.amplitude = frameBinInputs.globalRmsEnergy
         if (needBinMagnitude && binMagArr && binMagArr.length > 0) {
@@ -774,6 +832,13 @@ export class ParticleSystem {
             let sum = 0
             for (let i = 0; i < binEnvArr.length; i++) sum += binEnvArr[i]
             frameBinInputs.binEnvelope = sum / binEnvArr.length
+            frameBinInputs.binEnvelopeState = frameBinInputs.binEnvelope
+        }
+        if (needBinFreq) frameBinInputs.binFreq = ae.peakFreq ?? 0
+        if (needBinPhase && binPhaseArr && binPhaseArr.length > 0) {
+            let sum = 0
+            for (let i = 0; i < binPhaseArr.length; i++) sum += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
+            frameBinInputs.binPhase = sum / binPhaseArr.length
         }
         let peakByte = 0
         for (let i = 0; i < N; i++) if (freqData[i] > peakByte) peakByte = freqData[i]
@@ -781,36 +846,26 @@ export class ParticleSystem {
         const effectiveThresholdByte = Math.min(thresholdByte, adaptiveCap)
         let writeIndex = persistMode === 1 ? this._paintCount : 0
 
-        const writeParticle = (i, byte, energy, alphaBoost = 1) => {
+        const writeParticle = (bucket, alphaBoost = 1) => {
             if (writeIndex >= this._N && persistMode === 1) {
                 const dropCount = Math.max(1, Math.floor(params.archiveOffloadBatch ?? this._archiveOffloadBatch))
                 const removed = this._archiveAndCompactOldest(dropCount, writeIndex, params, currentTime)
                 writeIndex = Math.max(0, writeIndex - removed)
             }
             if (writeIndex >= this._N) return
-            const hz = binToHz(i)
+            const hz = bucket.hz
             const rawNorm = freqToLogNorm(hz)
             const freqNorm = normalizeByRange(rawNorm, logNormMin, logNormMax)
-            const binPan = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
-            const binCentroid = needPerBinCentroid ? clamp01(computeBinSpectralCentroid(freqData, i)) : undefined
-            const binFlux = needPerBinFlux ? clamp01(computeBinSpectralFlux(freqData, prevFreqData, i)) : undefined
-            const binFlatness = needPerBinFlatness ? clamp01(computeBinSpectralFlatness(freqData, i)) : undefined
-            const binInharmonicity = needPerBinInharmonicity ? clamp01(computeBinInharmonicity(freqData, i)) : undefined
-            const binMagnitude = (needBinMagnitude && binMagArr && i < binMagArr.length)
-                ? normalizeByRange(binMagArr[i], binMagnitudeNormMin, binMagnitudeNormMax)
-                : undefined
-            const binFluxMetric = (needBinFlux && binFluxArr && i < binFluxArr.length)
-                ? normalizeByRange(binFluxArr[i], binFluxNormMin, binFluxNormMax)
-                : undefined
-            const binPhaseDevMetric = (needBinPhaseDev && binPhaseDevArr && i < binPhaseDevArr.length)
-                ? normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
-                : undefined
-            const binAttackTimeMetric = (needBinAttackTime && binAttackTimeArr && i < binAttackTimeArr.length)
-                ? normalizeByRange(binAttackTimeArr[i], binAttackTimeNormMin, binAttackTimeNormMax)
-                : undefined
-            const binEnvelopeMetric = (needBinEnvelope && binEnvArr && i < binEnvArr.length)
-                ? normalizeByRange(binEnvArr[i] / 3, 0, 1)
-                : undefined
+            const binPan = Number.isFinite(bucket.binPan) ? bucket.binPan : (ae.pan ?? 0)
+            const byte = Number.isFinite(bucket.byte) ? bucket.byte : 0
+            const energy = Number.isFinite(bucket.energy) ? bucket.energy : 0
+            const binMagnitude = Number.isFinite(bucket.binMagnitude) ? bucket.binMagnitude : undefined
+            const binFreq = needBinFreq ? hz : undefined
+            const binPhaseMetric = Number.isFinite(bucket.binPhase) ? bucket.binPhase : undefined
+            const binFluxMetric = Number.isFinite(bucket.binFlux) ? bucket.binFlux : undefined
+            const binPhaseDevMetric = Number.isFinite(bucket.binPhaseDeviation) ? bucket.binPhaseDeviation : undefined
+            const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
+            const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -843,15 +898,27 @@ export class ParticleSystem {
                         frequencyHz: hz,
                         normFreq: freqNorm,
                         pan: binPan,
-                        spectralCentroid: binCentroid,
-                        spectralFlux: binFlux,
-                        spectralFlatness: binFlatness,
-                        inharmonicity: binInharmonicity,
+                        // Global timbre inputs should remain frame-level values.
+                        // Per-bin variants are provided via dedicated bin* inputs.
+                        spectralCentroid: frameBinInputs.spectralCentroid,
+                        spectralFlux: frameBinInputs.spectralFlux,
+                        spectralFlatness: frameBinInputs.spectralFlatness,
+                        inharmonicity: frameBinInputs.inharmonicity,
+                        peakAmplitude: frameBinInputs.peakAmplitude,
+                        zeroCrossingRate: frameBinInputs.zeroCrossingRate,
+                        spectralRolloff: frameBinInputs.spectralRolloff,
+                        spectralSpread: frameBinInputs.spectralSpread,
+                        spectralSkewness: frameBinInputs.spectralSkewness,
+                        chromagram: frameBinInputs.chromagram,
                         binMagnitude,
+                        binFreq,
+                        binPhase: binPhaseMetric,
                         binFlux: binFluxMetric,
                         binPhaseDeviation: binPhaseDevMetric,
                         binAttackTime: binAttackTimeMetric,
                         binEnvelope: binEnvelopeMetric,
+                        binEnvelopeState: binEnvelopeMetric,
+                        binRMSEnergy: frameBinInputs.binRMSEnergy,
                         globalRmsEnergy: frameBinInputs.globalRmsEnergy,
                         amplitude: frameBinInputs.amplitude,
                         time: currentTime,
@@ -906,18 +973,93 @@ export class ParticleSystem {
             writeIndex++
         }
 
-        for (let i = 0; i < N; i++) {
-            const hz = binToHz(i)
-            if (!shouldRenderBin(i)) continue
+        const fftBinsPerHz = freqData.length / Math.max(1e-6, nyquist)
+        // Strict octave spacing: each octave is split into equal base-2 steps.
+        const _bucketEdgeHz = (edgeIndex) => LOG_BUCKET_MIN_HZ * Math.pow(2, edgeIndex / particlesPerOctave)
+        const _hzToBin = (hz) => {
+            const idx = Math.floor(hz * fftBinsPerHz)
+            return Math.max(0, Math.min(N - 1, idx))
+        }
 
-            const byte = freqData[i]
-            const raw = (binMagArr && i < binMagArr.length) ? clamp01(binMagArr[i]) : (byte / 255)
-            const energy = raw * gainMult
+        const bucketEnergies = new Float32Array(logBucketCount)
+        const bucketBytes = new Uint8Array(logBucketCount)
+        const bucketCenters = new Float32Array(logBucketCount)
 
-            if (byte <= effectiveThresholdByte) {
-                continue
+        for (let bucketIndex = 0; bucketIndex < logBucketCount; bucketIndex++) {
+            if (!shouldRenderBucket(bucketIndex, logBucketCount)) continue
+
+            const hzStart = _bucketEdgeHz(bucketIndex)
+            if (hzStart >= LOG_BUCKET_MAX_HZ) continue
+            const hzEnd = Math.min(LOG_BUCKET_MAX_HZ, _bucketEdgeHz(bucketIndex + 1))
+            const hzCenter = Math.sqrt(hzStart * hzEnd)
+            if (!(hzCenter >= freqNormMinHz && hzCenter <= freqNormMaxHz)) continue
+
+            const binStart = _hzToBin(hzStart)
+            const binEnd = _hzToBin(hzEnd)
+            if (binEnd < binStart) continue
+
+            let count = 0
+            let peakByteBucket = 0
+            let sumRawEnergy = 0
+            let sumPan = 0
+            let sumPanWeight = 0
+            let sumBinMagnitude = 0
+            let sumBinPhase = 0
+            let sumBinFlux = 0
+            let sumBinPhaseDev = 0
+            let sumBinAttackTime = 0
+            let sumBinEnvelope = 0
+
+            for (let i = binStart; i <= binEnd; i++) {
+                const byte = freqData[i]
+                const magNorm = (binMagArr && i < binMagArr.length)
+                    ? normalizeByRange(binMagArr[i], binMagnitudeNormMin, binMagnitudeNormMax)
+                    : (byte / 255)
+                sumRawEnergy += magNorm
+                if (needBinMagnitude) sumBinMagnitude += magNorm
+                if (needBinPhase && binPhaseArr && i < binPhaseArr.length) {
+                    sumBinPhase += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
+                }
+                if (needBinFlux && binFluxArr && i < binFluxArr.length) {
+                    sumBinFlux += normalizeByRange(binFluxArr[i], binFluxNormMin, binFluxNormMax)
+                }
+                if (needBinPhaseDev && binPhaseDevArr && i < binPhaseDevArr.length) {
+                    sumBinPhaseDev += normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
+                }
+                if (needBinAttackTime && binAttackTimeArr && i < binAttackTimeArr.length) {
+                    sumBinAttackTime += normalizeByRange(binAttackTimeArr[i], binAttackTimeNormMin, binAttackTimeNormMax)
+                }
+                if (needBinEnvelope && binEnvArr && i < binEnvArr.length) {
+                    sumBinEnvelope += normalizeByRange(binEnvArr[i] / 3, 0, 1)
+                }
+                const panValue = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
+                const panWeight = Math.max(1, byte)
+                sumPan += panValue * panWeight
+                sumPanWeight += panWeight
+                if (byte > peakByteBucket) peakByteBucket = byte
+                count++
             }
-            writeParticle(i, byte, energy)
+
+            if (count <= 0 || peakByteBucket <= effectiveThresholdByte) continue
+
+            const avgRaw = sumRawEnergy / count
+            const bucketEnergy = avgRaw * gainMult
+            bucketEnergies[bucketIndex] = bucketEnergy
+            bucketBytes[bucketIndex] = peakByteBucket
+            bucketCenters[bucketIndex] = hzCenter
+
+            writeParticle({
+                hz: hzCenter,
+                byte: peakByteBucket,
+                energy: bucketEnergy,
+                binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
+                binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
+                binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
+                binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
+                binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
+                binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
+                binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+            })
             if (writeIndex >= this._N) break
         }
 
@@ -925,18 +1067,24 @@ export class ParticleSystem {
         // never appears fully blank while playing.
         if (writeIndex === 0 && peakByte > 0) {
             const indices = []
-            for (let i = 0; i < N; i++) {
-                const hz = binToHz(i)
-                if (hz >= lowCut && hz <= highCut && freqData[i] > 0 && shouldRenderBin(i)) indices.push(i)
+            for (let bucketIndex = 0; bucketIndex < logBucketCount; bucketIndex++) {
+                if (!shouldRenderBucket(bucketIndex, logBucketCount)) continue
+                if (!(bucketCenters[bucketIndex] >= freqNormMinHz && bucketCenters[bucketIndex] <= freqNormMaxHz)) continue
+                if (bucketBytes[bucketIndex] > 0) indices.push(bucketIndex)
             }
-            indices.sort((a, b) => freqData[b] - freqData[a])
+            indices.sort((a, b) => bucketBytes[b] - bucketBytes[a])
             const fallbackCount = Math.min(96, indices.length)
             for (let k = 0; k < fallbackCount && writeIndex < this._N; k++) {
-                const i = indices[k]
-                const byte = freqData[i]
-                const raw = byte / 255
-                const energy = Math.max(0.08, raw * gainMult)
-                writeParticle(i, byte, energy, 0.85)
+                const bucketIndex = indices[k]
+                const byte = bucketBytes[bucketIndex]
+                const raw = bucketEnergies[bucketIndex]
+                const energy = Math.max(0.08, raw)
+                writeParticle({
+                    hz: bucketCenters[bucketIndex],
+                    byte,
+                    energy,
+                    binPan: ae.pan ?? 0,
+                }, 0.85)
             }
         }
 

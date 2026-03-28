@@ -44,6 +44,7 @@ import {
     RULE_ACTION_OPERATORS,
     annotateRuleContradictions,
 } from './rules/RuleDictionary.js'
+import { openColorDesignEditor } from './ColorDesignEditor.js'
 import { parseProjectText } from './project/ProjectIO.js'
 
 // Phase checklist workflow anchor:
@@ -193,7 +194,7 @@ function buildSliderRow(p) {
     })
 
     // Default display input (editable via typing then Enter)
-    const savedDefaults = (() => { try { return JSON.parse(localStorage.getItem('seesound_user_defaults_v3') || '{}') } catch { return {} } })()
+    const savedDefaults = (() => { try { return JSON.parse(localStorage.getItem('seesound_user_defaults_v4') || '{}') } catch { return {} } })()
     const defInput = el('input', 'cp-def-input', {
         type: 'number', step: p.step,
         value: fmt(p, savedDefaults[p.key] ?? p.default),
@@ -373,9 +374,10 @@ function buildPresetBar() {
     const projectLabel = el('span', 'cp-preset-label', { text: 'PROJECT' })
     const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project (Ctrl+S / Ctrl+Shift+S)' })
     const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
+    const btnPaletteMgr = el('button', 'cp-preset-btn', { text: '🎨', title: 'Open Palette Manager' })
     const projectInput = el('input', '', { type: 'file', accept: '.json,.seesound-project,.seesound-project.json' })
     projectInput.style.display = 'none'
-    row0.append(projectLabel, btnProjectSave, btnProjectLoad)
+    row0.append(projectLabel, btnProjectSave, btnProjectLoad, btnPaletteMgr)
 
     // ── Row 1: select + Load + Delete
     const row1 = el('div', 'cp-preset-row')
@@ -465,6 +467,10 @@ function buildPresetBar() {
 
     btnProjectLoad.addEventListener('click', () => {
         projectInput.click()
+    })
+
+    btnPaletteMgr.addEventListener('click', () => {
+        openColorDesignEditor()
     })
 
     projectInput.addEventListener('change', async (e) => {
@@ -714,7 +720,9 @@ function buildGroup(groupDef, groupParams, startOpen) {
 // § 7  RULE BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _inputIds = getInputDictionary().entries.map((e) => e.id)
+const _allInputEntries = getInputDictionary().entries
+const _allInputIds = _allInputEntries.filter((e) => !e.hidden).map((e) => e.id)
+let _inputIds = [..._allInputIds]
 const _outputMeta = getOutputDictionary().entries
 const _outputIds = _outputMeta.map((e) => e.id)
 const _outputMetaById = new Map(_outputMeta.map((e) => [e.id, e]))
@@ -730,6 +738,17 @@ const _targetLabels = {
 }
 
 let _ruleBuilderApi = null
+
+function _setCalculatedRuleInputs(calculatedInputs) {
+    const allowed = new Set(_allInputIds)
+    const calculated = Array.isArray(calculatedInputs)
+        ? [...new Set(calculatedInputs)].filter((id) => allowed.has(id))
+        : []
+
+    // Keep all valid inputs selectable to avoid a rule-creation deadlock.
+    // Calculated inputs are listed first to reflect current active usage.
+    _inputIds = [...new Set([...calculated, ..._allInputIds])]
+}
 
 function _defaultRuleName(index = 0) {
     return `rule-${Math.max(1, Math.floor(index) + 1)}`
@@ -772,6 +791,20 @@ function _outputIdsForTarget(target) {
     return _outputMeta
         .filter((entry) => !Array.isArray(entry.targets) || entry.targets.includes(target))
         .map((entry) => entry.id)
+}
+
+function _isNormalizedScalarOutput(meta) {
+    if (!meta || meta.type !== 'number') return false
+    const min = Number(meta?.range?.[0])
+    const max = Number(meta?.range?.[1])
+    return Number.isFinite(min) && Number.isFinite(max) && min === 0 && max === 1
+}
+
+function _outputLabel(outputId) {
+    if (outputId === 'rgb' || outputId === 'hsv') return outputId
+    const meta = _outputMetaById.get(outputId)
+    if (_isNormalizedScalarOutput(meta)) return `${outputId} (norm)`
+    return outputId
 }
 
 function _ensureValidOutputForTarget(row) {
@@ -831,6 +864,149 @@ function _parseInputScaleExpression(expr) {
     return null
 }
 
+function _normalizeExpressionSyntax(expr) {
+    if (typeof expr !== 'string') return ''
+    let out = expr.trim()
+    if (!out) return ''
+    out = out.replace(/×/g, '*').replace(/÷/g, '/')
+    out = out.replace(/\band\b/gi, '&&')
+    out = out.replace(/\bor\b/gi, '||')
+    out = out.replace(/\bnot\b/gi, '!')
+    return out
+}
+
+function _safeEvalExpression(expr, inputs) {
+    const text = _normalizeExpressionSyntax(expr)
+    if (!text) return 0
+    if (!/^[0-9A-Za-z_+\-*/%().,\s<>!=&|?:]+$/.test(text)) return 0
+
+    const scope = {
+        clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
+        lerp: (a, b, t) => a + (b - a) * t,
+        smoothstep: (e0, e1, x) => {
+            const t = Math.max(0, Math.min(1, (x - e0) / Math.max(1e-9, e1 - e0)))
+            return t * t * (3 - 2 * t)
+        },
+        pow: Math.pow,
+        min: Math.min,
+        max: Math.max,
+        abs: Math.abs,
+        PI: Math.PI,
+        E: Math.E,
+    }
+    for (const id of _allInputIds) scope[id] = Number(inputs?.[id]) || 0
+
+    try {
+        const keys = Object.keys(scope)
+        const vals = keys.map((k) => scope[k])
+        const fn = new Function(...keys, `return (${text});`)
+        const out = fn(...vals)
+        if (typeof out === 'boolean') return out ? 1 : 0
+        const n = Number(out)
+        return Number.isFinite(n) ? n : 0
+    } catch {
+        return 0
+    }
+}
+
+function _defaultOutputProbeValue(outputId) {
+    const meta = _outputMetaById.get(outputId)
+    if (!meta) return 0
+    if (meta.type === 'enum') {
+        if (outputId === 'shapeType') return 'square'
+        return Array.isArray(meta.values) && meta.values.length > 0 ? meta.values[0] : 0
+    }
+
+    const rawMin = Number(meta?.range?.[0])
+    const rawMax = Number(meta?.range?.[1])
+    const minFinite = Number.isFinite(rawMin)
+    const maxFinite = Number.isFinite(rawMax)
+    if (minFinite && maxFinite) return (rawMin + rawMax) * 0.5
+    if (minFinite && !maxFinite) return rawMin === 0 ? 1 : rawMin
+    if (!minFinite && maxFinite) return rawMax === 0 ? -1 : rawMax
+    return 1
+}
+
+function _evaluateConditionRow(row, inputs) {
+    if (!row?.conditionEnabled || row?.conditionOp === 'always') return true
+    const lhs = Number(inputs?.[row.conditionInput]) || 0
+    const rhs = row.conditionRhsMode === 'input'
+        ? (Number(inputs?.[row.conditionRhsInput]) || 0)
+        : (Number(row.conditionRhsLiteral) || 0)
+
+    switch (row.conditionOp) {
+        case '>': return lhs > rhs
+        case '>=': return lhs >= rhs
+        case '<': return lhs < rhs
+        case '<=': return lhs <= rhs
+        case '==': return lhs === rhs
+        case '!=': return lhs !== rhs
+        default: return true
+    }
+}
+
+function _evaluateRuleRhs(row, inputs) {
+    const source = String(row?.actionValueText || '').trim()
+    if (!source) return 0
+    if (_inputIds.includes(source)) return Number(inputs?.[source]) || 0
+    if (_isShapeOutput(row?.actionOutput)) return source === 'circle' ? 'circle' : 'square'
+
+    const n = Number(source)
+    if (Number.isFinite(n)) return n
+    return _safeEvalExpression(source, inputs)
+}
+
+function _computeRuleProbeStates(rows, inputs) {
+    const byTarget = new Map()
+    const probes = new Map()
+
+    const ensureTargetState = (target) => {
+        if (!byTarget.has(target)) byTarget.set(target, Object.create(null))
+        return byTarget.get(target)
+    }
+
+    for (const row of rows) {
+        const target = _normalizeTarget(row)
+        const state = ensureTargetState(target)
+        const key = row.actionOutput
+
+        if (!(key in state)) state[key] = _defaultOutputProbeValue(key)
+        const inValue = state[key]
+        let outValue = inValue
+
+        if (row.enabled !== false && _evaluateConditionRow(row, inputs)) {
+            const rhs = _evaluateRuleRhs(row, inputs)
+            if (_isShapeOutput(key)) {
+                outValue = String(rhs) === 'circle' ? 'circle' : 'square'
+            } else {
+                const lhsNum = Number(inValue)
+                const rhsNum = Number(rhs)
+                const base = Number.isFinite(lhsNum) ? lhsNum : 0
+                const arg = Number.isFinite(rhsNum) ? rhsNum : 0
+                switch (row.actionOp) {
+                    case 'set': outValue = arg; break
+                    case 'add': outValue = base + arg; break
+                    case 'subtract': outValue = base - arg; break
+                    case 'multiply': outValue = base * arg; break
+                    case 'divide': outValue = Math.abs(arg) > 1e-6 ? (base / arg) : base; break
+                    case 'clamp': outValue = Math.max(-Math.abs(arg), Math.min(Math.abs(arg), base)); break
+                    default: outValue = base; break
+                }
+            }
+            state[key] = outValue
+        }
+
+        probes.set(row._uid, {
+            inKey: key,
+            outKey: key,
+            inValue,
+            outValue,
+        })
+    }
+
+    return probes
+}
+
 function _refreshSelectOptions(select, options, selectedValue) {
     select.innerHTML = ''
     for (const optionDef of options) {
@@ -838,6 +1014,7 @@ function _refreshSelectOptions(select, options, selectedValue) {
         if (String(optionDef.value) === String(selectedValue)) option.selected = true
         select.appendChild(option)
     }
+    if (typeof select._autoSize === 'function') select._autoSize()
 }
 
 function _rowToRule(row, order) {
@@ -860,7 +1037,7 @@ function _rowToRule(row, order) {
         const numericValue = Number(rawValueText)
         if (rawValueText && Number.isFinite(numericValue)) action.value = numericValue
         else if (_inputIds.includes(rawValueText)) action.input = rawValueText
-        else action.expression = rawValueText || '0'
+        else action.expression = rawValueText
     }
 
     return {
@@ -880,7 +1057,7 @@ function _ruleToRow(rule, index) {
     const conditionOp = rule.condition?.operator || 'always'
     const hasCondition = conditionOp !== 'always'
     const actionValueText = (() => {
-        if (typeof action.expression === 'string' && action.expression.trim()) return action.expression.trim()
+        if (typeof action.expression === 'string') return action.expression
         if (typeof action.input === 'string' && action.input.trim()) return action.input.trim()
         if (action.value === 'circle' || action.value === 'square') return action.value
         if (Number.isFinite(Number(action.value))) return String(Number(action.value))
@@ -907,63 +1084,8 @@ function _ruleToRow(rule, index) {
     }
 }
 
-function _probeRuleValue(row, inputs) {
-    const source = String(row.actionValueText || '').trim()
-    let rhsValue = 0
-    if (_inputIds.includes(source)) {
-        rhsValue = Number(inputs?.[source]) || 0
-    } else {
-        const n = Number(source)
-        rhsValue = Number.isFinite(n) ? n : 0
-    }
-
-    const meta = _outputMetaById.get(row.actionOutput)
-    const rawMin = Number(meta?.range?.[0])
-    const rawMax = Number(meta?.range?.[1])
-    const minFinite = Number.isFinite(rawMin)
-    const maxFinite = Number.isFinite(rawMax)
-
-    let baseValue = 1
-    if (minFinite && maxFinite) baseValue = (rawMin + rawMax) * 0.5
-    else if (minFinite && !maxFinite) baseValue = rawMin === 0 ? 1 : rawMin
-    else if (!minFinite && maxFinite) baseValue = rawMax === 0 ? -1 : rawMax
-
-    // Probe contract:
-    //  - inValue  = target value before this rule executes
-    //  - outValue = target value after applying (operator, rhsValue)
-    let inValue = baseValue
-    let outValue = inValue
-    switch (row.actionOp) {
-        case 'set':
-            outValue = rhsValue
-            break
-        case 'add':
-            outValue = inValue + rhsValue
-            break
-        case 'subtract':
-            outValue = inValue - rhsValue
-            break
-        case 'multiply':
-            outValue = inValue * rhsValue
-            break
-        case 'divide':
-            outValue = Math.abs(rhsValue) > 1e-6 ? (inValue / rhsValue) : inValue
-            break
-        case 'clamp':
-            outValue = Math.max(-Math.abs(rhsValue), Math.min(Math.abs(rhsValue), inValue))
-            break
-        default:
-            outValue = inValue
-            break
-    }
-
-    return {
-        inValue,
-        outValue,
-    }
-}
-
 function _formatProbeNumber(value) {
+    if (typeof value === 'string') return value
     const n = Number(value)
     if (!Number.isFinite(n)) return '0.000'
     return n.toFixed(3)
@@ -976,6 +1098,50 @@ function _ruleSummary(row) {
     return `When ${cond}, ${row.actionOp} ${row.actionOutput} using ${String(row.actionValueText || '0')}`
 }
 
+function _templateOptionsForOutput(outputId) {
+    const paletteIds = (() => {
+        const raw = Array.isArray(params?.palettes) ? params.palettes : []
+        const out = []
+        for (const palette of raw) {
+            const id = String(palette?.id || '').trim()
+            if (!id || out.includes(id)) continue
+            out.push(id)
+        }
+        return out
+    })()
+
+    const paletteTemplates = paletteIds.flatMap((id) => {
+        const escapedId = id.replace(/'/g, "\\'")
+        return [
+            { value: `expr:palette('${escapedId}', notePitchClass)`, label: `Discrete palette by notePitchClass (${id})` },
+            { value: `expr:gradient('${escapedId}', normFreq)`, label: `Gradient palette by normFreq (${id})` },
+        ]
+    })
+
+    if (outputId === 'rgb') {
+        return [
+            { value: '', label: 'rgb templates...' },
+            { value: 'expr:rgb(amplitude*255, bass*255, treble*255)', label: 'RGB from amp/bass/treble' },
+            ...paletteTemplates,
+            { value: 'expr:matchLuma(220,60,40, amplitude*255)', label: 'Luma-matched tone' },
+            ...(paletteTemplates.length === 0 ? [{ value: '', label: 'save a palette to unlock palette templates' }] : []),
+        ]
+    }
+
+    if (outputId === 'hsv') {
+        return [
+            { value: '', label: 'hsv templates...' },
+            { value: 'expr:hsv(normFreq*360, 85, 60 + amplitude*40)', label: 'HSV musical ramp' },
+            { value: 'expr:hsv((notePitchClass/12)*360, 90, 65)', label: 'HSV by pitch class' },
+            { value: 'expr:hsv((octave+1)*30, 80, 70)', label: 'HSV by octave' },
+            ...paletteTemplates,
+            ...(paletteTemplates.length === 0 ? [{ value: '', label: 'save a palette to unlock palette templates' }] : []),
+        ]
+    }
+
+    return [{ value: '', label: 'template...' }]
+}
+
 function _createSelect(opts, value, className = 'cp-rule-input') {
     const s = el('select', className)
     for (const o of opts) {
@@ -983,6 +1149,25 @@ function _createSelect(opts, value, className = 'cp-rule-input') {
         if (String(o.value) === String(value)) option.selected = true
         s.appendChild(option)
     }
+    const autoSize = () => {
+        const selected = s.options[s.selectedIndex]
+        const label = selected ? String(selected.textContent || selected.value || '') : ''
+        const font = getComputedStyle(s).font || '10px sans-serif'
+        if (!_createSelect._canvas) {
+            _createSelect._canvas = document.createElement('canvas')
+            _createSelect._ctx = _createSelect._canvas.getContext('2d')
+        }
+        const ctx = _createSelect._ctx
+        if (!ctx) return
+        ctx.font = font
+        const measured = Math.ceil(ctx.measureText(label).width)
+        const width = Math.max(74, Math.min(280, measured + 28))
+        s.style.width = `${width}px`
+    }
+    s._autoSize = autoSize
+    s.addEventListener('change', autoSize)
+    s.addEventListener('focus', autoSize)
+    requestAnimationFrame(autoSize)
     return s
 }
 
@@ -1472,7 +1657,7 @@ export function initRuleBuilder(container) {
         pushRules()
     }
 
-    function _buildRuleCard(row, i) {
+    function _buildRuleCard(row, i, probeStates) {
         const selected = _selectedRuleUids.has(row._uid)
         const card = el('div', `cp-rule-row${row.uiState === 'red' ? ' cp-rule-row-red' : ''}${selected ? ' cp-rule-row-selected' : ''}`)
         card.draggable = true
@@ -1491,6 +1676,10 @@ export function initRuleBuilder(container) {
             _handleRuleSelect(i, evt)
         })
         card.addEventListener('dragstart', (evt) => {
+            if (_isInteractiveTarget(evt.target)) {
+                evt.preventDefault()
+                return
+            }
             if (!_selectedRuleUids.has(row._uid)) _setSingleSelection(i)
             _dragSelectionUids = _selectedIndices().map((idx) => rows[idx]._uid)
             _dragRowIndex = i
@@ -1580,7 +1769,7 @@ export function initRuleBuilder(container) {
         }
         addConditionBtn.addEventListener('click', wireChange(() => {
             row.conditionEnabled = true
-            if (!row.conditionOp) row.conditionOp = '>'
+            if (!row.conditionOp || row.conditionOp === 'always') row.conditionOp = '>'
             condOp.value = row.conditionOp
             refreshCond()
             return true
@@ -1623,29 +1812,45 @@ export function initRuleBuilder(container) {
         const act = el('div', 'cp-rule-line')
         act.appendChild(el('span', 'cp-rule-k', { text: 'Action' }))
         _ensureValidOutputForTarget(row)
-        const out = _createSelect(_outputIdsForTarget(row.target).map(v => ({ value: v, label: v })), row.actionOutput)
+        const out = _createSelect(_outputIdsForTarget(row.target).map((v) => ({ value: v, label: _outputLabel(v) })), row.actionOutput)
         const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
         const valExprWrap = el('div', 'cp-rule-expr-wrap')
-        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'value / expression / input id' })
+        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'value / formula / input id (e.g. bass*0.5 + 0.2)' })
         valExpr.value = row.actionValueText || ''
-        const valChoose = _createSelect(
-            [{ value: '', label: 'choose input...' }, ..._inputIds.map(v => ({ value: v, label: v }))],
-            '',
-            'cp-rule-input cp-rule-tag',
-        )
-        const shapeHint = _createSelect([{ value: '', label: 'shape...' }, { value: 'square', label: 'square' }, { value: 'circle', label: 'circle' }], '', 'cp-rule-input cp-rule-tag')
+        const exprControls = el('div', 'cp-rule-expr-controls')
+        const templatePicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
+        const inputPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
+        const mathPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
+        const clearExprBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: 'Clear', title: 'Clear expression' })
         const valExprSuggest = el('div', 'cp-rule-expr-suggest')
-        valExprWrap.append(valExpr, valChoose, shapeHint, valExprSuggest)
+        exprControls.append(templatePicker, inputPicker, mathPicker, clearExprBtn)
+        valExprWrap.append(valExpr, exprControls, valExprSuggest)
+
+        const _mathTokens = ['+', '-', '*', '/', '(', ')', 'clamp(', 'min(', 'max(', 'abs(', 'pow(', 'PI', 'E', 'and', 'or', 'not']
+        const _shapeTokens = ['square', 'circle']
 
         const refreshAct = () => {
             _ensureValidOutputForTarget(row)
-            const allowedOutputs = _outputIdsForTarget(row.target).map((v) => ({ value: v, label: v }))
+            const allowedOutputs = _outputIdsForTarget(row.target).map((v) => ({ value: v, label: _outputLabel(v) }))
             _refreshSelectOptions(out, allowedOutputs, row.actionOutput)
+            const showTemplatePicker = (out.value === 'rgb' || out.value === 'hsv')
+            if (showTemplatePicker) {
+                _refreshSelectOptions(templatePicker, _templateOptionsForOutput(out.value), '')
+            }
+            templatePicker.style.display = showTemplatePicker ? '' : 'none'
             const shape = out.value === 'shapeType'
-            shapeHint.style.display = shape ? '' : 'none'
+            _refreshSelectOptions(
+                inputPicker,
+                shape
+                    ? [{ value: '', label: 'insert shape...' }, ..._shapeTokens.map((v) => ({ value: v, label: v }))]
+                    : [{ value: '', label: 'insert input...' }, ..._inputIds.map((v) => ({ value: v, label: v }))],
+                '',
+            )
+            _refreshSelectOptions(mathPicker, [{ value: '', label: 'insert math...' }, ..._mathTokens.map((v) => ({ value: v, label: v }))], '')
+            mathPicker.style.display = shape ? 'none' : ''
             if (!shape) {
-                if (valExpr.placeholder !== 'value / expression / input id') {
-                    valExpr.placeholder = 'value / expression / input id'
+                if (valExpr.placeholder !== 'value / formula / input id (e.g. bass*0.5 + 0.2)') {
+                    valExpr.placeholder = 'value / formula / input id (e.g. bass*0.5 + 0.2)'
                 }
             } else if (valExpr.placeholder !== 'shape: square or circle') {
                 valExpr.placeholder = 'shape: square or circle'
@@ -1656,7 +1861,32 @@ export function initRuleBuilder(container) {
             }
         }
 
-        const _exprSymbols = [...new Set([..._inputIds, 'clamp', 'lerp', 'smoothstep', 'pow', 'min', 'max', 'abs', 'PI', 'E'])]
+        const _exprInputSymbols = () => [...new Set(_inputIds)]
+        let _exprCaretStart = 0
+        let _exprCaretEnd = 0
+        let _exprSuggestMatches = []
+        let _exprSuggestIndex = -1
+
+        function _rememberExprCaret() {
+            const text = String(valExpr.value || '')
+            const start = Number.isFinite(valExpr.selectionStart) ? valExpr.selectionStart : text.length
+            const end = Number.isFinite(valExpr.selectionEnd) ? valExpr.selectionEnd : start
+            _exprCaretStart = Math.max(0, Math.min(text.length, start))
+            _exprCaretEnd = Math.max(_exprCaretStart, Math.min(text.length, end))
+        }
+
+        function _highlightExprSuggestion(index) {
+            const buttons = Array.from(valExprSuggest.querySelectorAll('.cp-rule-expr-suggest-btn'))
+            if (buttons.length === 0) {
+                _exprSuggestIndex = -1
+                return
+            }
+            const clamped = Math.max(0, Math.min(buttons.length - 1, index))
+            _exprSuggestIndex = clamped
+            for (let i = 0; i < buttons.length; i++) {
+                buttons[i].classList.toggle('is-active', i === clamped)
+            }
+        }
 
         function _exprActiveToken() {
             const text = String(valExpr.value || '')
@@ -1671,18 +1901,37 @@ export function initRuleBuilder(container) {
         }
 
         function _insertExprSuggestion(symbol) {
+            _rememberExprCaret()
             const text = String(valExpr.value || '')
             const tok = _exprActiveToken()
             const next = `${text.slice(0, tok.start)}${symbol}${text.slice(tok.end)}`
             valExpr.value = next
-            row.actionExpression = next
+            row.actionValueText = next
             const caret = tok.start + symbol.length
             valExpr.focus()
             valExpr.setSelectionRange(caret, caret)
-            _renderExprSuggestions()
+            _rememberExprCaret()
+            _autoSizeExprField()
+            _renderExprSuggestions(true)
         }
 
-        function _renderExprSuggestions() {
+        function _insertTokenAtCursor(symbol) {
+            const text = String(valExpr.value || '')
+            const hasLiveCaret = document.activeElement === valExpr && Number.isFinite(valExpr.selectionStart)
+            const start = hasLiveCaret ? valExpr.selectionStart : _exprCaretStart
+            const end = hasLiveCaret ? valExpr.selectionEnd : _exprCaretEnd
+            const next = `${text.slice(0, start)}${symbol}${text.slice(end)}`
+            valExpr.value = next
+            row.actionValueText = next
+            const caret = start + symbol.length
+            valExpr.focus()
+            valExpr.setSelectionRange(caret, caret)
+            _rememberExprCaret()
+            _autoSizeExprField()
+            _renderExprSuggestions(true)
+        }
+
+        function _renderExprSuggestions(showAllWhenEmpty = false) {
             if (out.value === 'shapeType') {
                 valExprSuggest.style.display = 'none'
                 valExprSuggest.innerHTML = ''
@@ -1691,17 +1940,20 @@ export function initRuleBuilder(container) {
 
             const tok = _exprActiveToken()
             const needle = String(tok.token || '').toLowerCase()
-            if (!needle) {
+            if (!needle && !showAllWhenEmpty) {
                 valExprSuggest.style.display = 'none'
                 valExprSuggest.innerHTML = ''
                 return
             }
 
-            const matches = _exprSymbols
-                .filter((s) => s.toLowerCase().startsWith(needle) && s.toLowerCase() !== needle)
-                .slice(0, 8)
+            const allInputs = _exprInputSymbols()
+            const matches = needle
+                ? allInputs.filter((s) => s.toLowerCase().includes(needle) && s.toLowerCase() !== needle).slice(0, 12)
+                : allInputs.slice(0, 12)
+            _exprSuggestMatches = matches
 
             if (matches.length === 0) {
+                _exprSuggestIndex = -1
                 valExprSuggest.style.display = 'none'
                 valExprSuggest.innerHTML = ''
                 return
@@ -1720,6 +1972,7 @@ export function initRuleBuilder(container) {
                 valExprSuggest.appendChild(b)
             }
             valExprSuggest.style.display = 'flex'
+            _highlightExprSuggestion(0)
         }
 
         function _autoSizeExprField() {
@@ -1727,6 +1980,17 @@ export function initRuleBuilder(container) {
             valExpr.style.height = 'auto'
             valExpr.style.height = `${Math.max(24, valExpr.scrollHeight)}px`
         }
+
+        // Allow text selection/editing in expression without triggering row drag.
+        valExpr.addEventListener('pointerdown', () => {
+            card.draggable = false
+        })
+        valExpr.addEventListener('pointerup', () => {
+            card.draggable = true
+        })
+        valExpr.addEventListener('dragstart', (e) => {
+            e.preventDefault()
+        })
 
         out.addEventListener('change', wireChange(() => {
             row.actionOutput = out.value
@@ -1738,29 +2002,88 @@ export function initRuleBuilder(container) {
             return true
         }))
         valExpr.addEventListener('input', () => {
+            _rememberExprCaret()
             row.actionValueText = valExpr.value
             _autoSizeExprField()
-            _renderExprSuggestions()
+            _renderExprSuggestions(true)
         })
-        valChoose.addEventListener('change', wireChange(() => {
-            if (!valChoose.value) return false
-            valExpr.value = valChoose.value
-            row.actionValueText = valChoose.value
+        inputPicker.addEventListener('change', wireChange(() => {
+            const token = inputPicker.value
+            if (!token) return false
+            _insertTokenAtCursor(token)
+            inputPicker.value = ''
+            return true
+        }))
+        templatePicker.addEventListener('change', wireChange(() => {
+            const choice = String(templatePicker.value || '')
+            if (!choice) return false
+
+            const parts = choice.split(':')
+            const payload = String(parts.length > 1 ? parts.slice(1).join(':') : parts[0]).trim()
+            if (!payload) {
+                templatePicker.value = ''
+                return false
+            }
+
+            valExpr.value = payload
+            row.actionValueText = payload
             _autoSizeExprField()
-            valChoose.value = ''
+            _renderExprSuggestions(true)
+            valExpr.focus()
+            const caret = payload.length
+            valExpr.setSelectionRange(caret, caret)
+            _rememberExprCaret()
+            templatePicker.value = ''
             return true
         }))
-        shapeHint.addEventListener('change', wireChange(() => {
-            if (!shapeHint.value) return false
-            valExpr.value = shapeHint.value
-            row.actionValueText = shapeHint.value
-            shapeHint.value = ''
+        mathPicker.addEventListener('change', wireChange(() => {
+            const token = mathPicker.value
+            if (!token) return false
+            _insertTokenAtCursor(token)
+            mathPicker.value = ''
             return true
         }))
-        valExpr.addEventListener('click', _renderExprSuggestions)
-        valExpr.addEventListener('focus', _autoSizeExprField)
-        valExpr.addEventListener('keyup', _renderExprSuggestions)
+        clearExprBtn.addEventListener('click', wireChange(() => {
+            if (!valExpr.value) return false
+            valExpr.value = ''
+            row.actionValueText = ''
+            _autoSizeExprField()
+            _renderExprSuggestions()
+            valExpr.focus()
+            return true
+        }))
+        valExpr.addEventListener('click', () => _renderExprSuggestions(true))
+        valExpr.addEventListener('focus', () => {
+            _rememberExprCaret()
+            _autoSizeExprField()
+            _renderExprSuggestions(true)
+        })
+        valExpr.addEventListener('keyup', () => {
+            _rememberExprCaret()
+            _renderExprSuggestions(true)
+        })
+        valExpr.addEventListener('select', _rememberExprCaret)
         valExpr.addEventListener('keydown', wireChange((e) => {
+            const hasSuggestions = valExprSuggest.style.display !== 'none' && _exprSuggestMatches.length > 0
+            if (hasSuggestions && e.key === 'ArrowDown') {
+                e.preventDefault()
+                _highlightExprSuggestion((_exprSuggestIndex + 1) % _exprSuggestMatches.length)
+                return false
+            }
+            if (hasSuggestions && e.key === 'ArrowUp') {
+                e.preventDefault()
+                const prev = _exprSuggestIndex <= 0 ? (_exprSuggestMatches.length - 1) : (_exprSuggestIndex - 1)
+                _highlightExprSuggestion(prev)
+                return false
+            }
+            if (hasSuggestions && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault()
+                const idx = _exprSuggestIndex >= 0 ? _exprSuggestIndex : 0
+                const picked = _exprSuggestMatches[idx]
+                if (!picked) return false
+                _insertExprSuggestion(picked)
+                return true
+            }
             if (!(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return false
             e.preventDefault()
             row.actionValueText = valExpr.value
@@ -1769,6 +2092,10 @@ export function initRuleBuilder(container) {
         }))
         valExpr.addEventListener('blur', () => {
             row.actionValueText = valExpr.value
+            _rememberExprCaret()
+            card.draggable = true
+            _exprSuggestMatches = []
+            _exprSuggestIndex = -1
             setTimeout(() => {
                 valExprSuggest.style.display = 'none'
             }, 120)
@@ -1782,23 +2109,35 @@ export function initRuleBuilder(container) {
         const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
         const live = el('div', 'cp-rule-live')
         const inChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-in')
-        const inKey = el('span', 'cp-rule-live-key', { text: 'in' })
+        const inKey = el('span', 'cp-rule-live-key')
+        inKey.dataset.ruleUid = row._uid
+        inKey.dataset.probeKind = 'in'
+        inKey.dataset.probeField = 'key'
         const inVal = el('span', 'cp-rule-live-value')
         inVal.dataset.ruleUid = row._uid
         inVal.dataset.probeKind = 'in'
+        inVal.dataset.probeField = 'value'
         inChip.append(inKey, inVal)
 
         const outChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-out')
-        const outKey = el('span', 'cp-rule-live-key', { text: 'out' })
+        const outKey = el('span', 'cp-rule-live-key')
+        outKey.dataset.ruleUid = row._uid
+        outKey.dataset.probeKind = 'out'
+        outKey.dataset.probeField = 'key'
         const outVal = el('span', 'cp-rule-live-value')
         outVal.dataset.ruleUid = row._uid
         outVal.dataset.probeKind = 'out'
+        outVal.dataset.probeField = 'value'
         outChip.append(outKey, outVal)
 
         live.append(inChip, outChip)
-        const probeVals = _probeRuleValue(row, _lastProbeInputs)
-        inVal.textContent = _formatProbeNumber(probeVals.inValue)
-        outVal.textContent = _formatProbeNumber(probeVals.outValue)
+        const probeVals = probeStates?.get(row._uid)
+        const inProbeKey = probeVals?.inKey || row.actionOutput
+        const outProbeKey = probeVals?.outKey || row.actionOutput
+        inKey.textContent = `${inProbeKey} in`
+        outKey.textContent = `${outProbeKey} out`
+        inVal.textContent = _formatProbeNumber(probeVals?.inValue)
+        outVal.textContent = _formatProbeNumber(probeVals?.outValue)
 
         const body = el('div', 'cp-rule-body')
         body.append(cond, act, live, summary)
@@ -1835,6 +2174,7 @@ export function initRuleBuilder(container) {
 
     function _buildLane(indices, groupName = '', subgroupName = '') {
         const lane = el('div', 'cp-rule-lane')
+        const probeStates = _computeRuleProbeStates(rows, _lastProbeInputs)
         if (indices.length === 0) {
             lane.appendChild(_buildDropSlot(rows.length, groupName, subgroupName))
             return lane
@@ -1842,7 +2182,7 @@ export function initRuleBuilder(container) {
 
         lane.appendChild(_buildDropSlot(indices[0], groupName, subgroupName))
         for (const idx of indices) {
-            lane.appendChild(_buildRuleCard(rows[idx], idx))
+            lane.appendChild(_buildRuleCard(rows[idx], idx, probeStates))
             lane.appendChild(_buildDropSlot(idx + 1, groupName, subgroupName))
         }
         return lane
@@ -1978,15 +2318,24 @@ export function initRuleBuilder(container) {
     })
 
     drawRows()
+    window.addEventListener('seesound:calculated-rule-inputs', (e) => {
+        _setCalculatedRuleInputs(e?.detail?.calculatedInputs)
+        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    })
     window.addEventListener('seesound:rule-probe', (e) => {
         _lastProbeInputs = e?.detail?.inputs || Object.create(null)
-        const probes = rowsWrap.querySelectorAll('.cp-rule-live-value[data-rule-uid]')
+        const probeStates = _computeRuleProbeStates(rows, _lastProbeInputs)
+        const probes = rowsWrap.querySelectorAll('[data-rule-uid][data-probe-field]')
         for (const node of probes) {
             const uid = node.getAttribute('data-rule-uid')
             const kind = node.getAttribute('data-probe-kind')
-            const row = rows.find((r) => r._uid === uid)
-            if (!row) continue
-            const vals = _probeRuleValue(row, _lastProbeInputs)
+            const field = node.getAttribute('data-probe-field')
+            const vals = probeStates.get(uid)
+            if (!vals) continue
+            if (field === 'key') {
+                node.textContent = kind === 'out' ? `${vals.outKey} out` : `${vals.inKey} in`
+                continue
+            }
             node.textContent = kind === 'out'
                 ? _formatProbeNumber(vals.outValue)
                 : _formatProbeNumber(vals.inValue)
@@ -2049,7 +2398,7 @@ export function initControlPanel(container) {
     const collapseBtn = el('button', 'cp-collapse-btn', { text: '»', title: 'Collapse panel' })
     const title = el('span', 'cp-title', { text: 'Parameters' })
     const resetBtn = el('button', 'cp-reset-btn', { text: '↺', title: 'Reset all to factory defaults' })
-    header.append(collapseBtn, title, resetBtn)
+    header.append(title, resetBtn, collapseBtn)
 
     // ── Scrollable body
     const body = el('div', 'cp-body')
@@ -2136,5 +2485,16 @@ export function initControlPanel(container) {
         if (!confirm('Reset all parameters to factory defaults?')) return
         resetToDefaults()
         for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
+    })
+
+    // Keep controls in sync when params are changed outside direct row handlers
+    // (preset load, project load, runtime normalization).
+    subscribe((_, key) => {
+        if (key === 'ruleBlocks') return
+        if (key === '*' || key === 'disabled') {
+            for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
+            return
+        }
+        _rowSyncMap.get(key)?.(params[key])
     })
 }

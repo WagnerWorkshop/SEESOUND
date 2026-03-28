@@ -109,6 +109,114 @@ export function computeInharmonicity(freq, sr) {
     return clamp01((weightedDev / weightedMag) * 2)
 }
 
+export function computePeakAmplitude(freq) {
+    if (!freq || !freq.length) return 0
+    let peak = 0
+    for (let i = 0; i < freq.length; i++) {
+        if (freq[i] > peak) peak = freq[i]
+    }
+    return clamp01(peak / 255)
+}
+
+export function computeZeroCrossingRate(timeDomain) {
+    if (!timeDomain || timeDomain.length < 2) return 0
+    let crossings = 0
+    let prev = (timeDomain[0] - 128) >= 0 ? 1 : -1
+    for (let i = 1; i < timeDomain.length; i++) {
+        const curr = (timeDomain[i] - 128) >= 0 ? 1 : -1
+        if (curr !== prev) crossings++
+        prev = curr
+    }
+    return clamp01(crossings / Math.max(1, timeDomain.length - 1))
+}
+
+export function computeSpectralRolloff(freq, sr, percent = 0.85) {
+    if (!freq || !freq.length || !Number.isFinite(sr) || sr <= 0) return 0
+    const n = freq.length
+    const nyquist = sr / 2
+    const p = Math.max(0, Math.min(1, Number.isFinite(percent) ? percent : 0.85))
+    let total = 0
+    for (let i = 0; i < n; i++) total += Math.max(0, freq[i] / 255)
+    if (total <= 1e-9) return 0
+    const threshold = total * p
+    let run = 0
+    for (let i = 0; i < n; i++) {
+        run += Math.max(0, freq[i] / 255)
+        if (run >= threshold) {
+            const hz = (i / Math.max(1, n - 1)) * nyquist
+            return clamp01(hz / Math.max(1, nyquist))
+        }
+    }
+    return 1
+}
+
+export function computeSpectralSpread(freq, sr, centroidHz = null) {
+    if (!freq || !freq.length || !Number.isFinite(sr) || sr <= 0) return 0
+    const n = freq.length
+    const nyquist = sr / 2
+    const cHz = Number.isFinite(centroidHz) ? centroidHz : computeSpectralCentroid(freq, sr)
+    let total = 0
+    let varAcc = 0
+    for (let i = 0; i < n; i++) {
+        const mag = Math.max(0, freq[i] / 255)
+        const hz = (i / Math.max(1, n - 1)) * nyquist
+        const d = hz - cHz
+        varAcc += (d * d) * mag
+        total += mag
+    }
+    if (total <= 1e-9) return 0
+    const stdHz = Math.sqrt(varAcc / total)
+    return clamp01(stdHz / Math.max(1, nyquist))
+}
+
+export function computeSpectralSkewness(freq, sr, centroidHz = null, spreadNorm = null) {
+    if (!freq || !freq.length || !Number.isFinite(sr) || sr <= 0) return 0
+    const n = freq.length
+    const nyquist = sr / 2
+    const cHz = Number.isFinite(centroidHz) ? centroidHz : computeSpectralCentroid(freq, sr)
+    const spread = Number.isFinite(spreadNorm)
+        ? Math.max(1e-6, Number(spreadNorm) * nyquist)
+        : Math.max(1e-6, computeSpectralSpread(freq, sr, cHz) * nyquist)
+
+    let total = 0
+    let m3 = 0
+    for (let i = 0; i < n; i++) {
+        const mag = Math.max(0, freq[i] / 255)
+        const hz = (i / Math.max(1, n - 1)) * nyquist
+        const z = (hz - cHz) / spread
+        m3 += (z * z * z) * mag
+        total += mag
+    }
+    if (total <= 1e-9) return 0
+    // Map common skewness range roughly from [-2, 2] into [0, 1].
+    const skew = m3 / total
+    return clamp01((skew + 2) / 4)
+}
+
+export function computeChromagram(freq, sr) {
+    if (!freq || !freq.length || !Number.isFinite(sr) || sr <= 0) return 0
+    const n = freq.length
+    const nyquist = sr / 2
+    const chroma = new Float32Array(12)
+    let total = 0
+
+    for (let i = 1; i < n; i++) {
+        const mag = Math.max(0, freq[i] / 255)
+        if (mag <= 0) continue
+        const hz = (i / Math.max(1, n - 1)) * nyquist
+        if (hz < 20) continue
+        const midi = 69 + 12 * Math.log2(hz / 440)
+        const cls = ((Math.round(midi) % 12) + 12) % 12
+        chroma[cls] += mag
+        total += mag
+    }
+
+    if (total <= 1e-9) return 0
+    let peak = 0
+    for (let i = 0; i < 12; i++) if (chroma[i] > peak) peak = chroma[i]
+    return clamp01(peak / total)
+}
+
 export function smoothFeature(prev, next, alpha = 0.2) {
     const a = clamp01(alpha)
     const p = Number.isFinite(prev) ? prev : 0

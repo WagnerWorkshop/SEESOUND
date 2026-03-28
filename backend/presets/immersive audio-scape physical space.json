@@ -1,0 +1,181 @@
+{
+    "name": "immersive audio-scape physical space",
+    "params": {
+        "inputGain": 1,
+        "amplitudeThreshold": -56,
+        "defaultParticleSize": 2,
+        "canvasWidth": 2400,
+        "canvasHeight": 1400,
+        "canvasScale": 52,
+        "maxParticles": 2000000,
+        "particleRenderPercent": 26,
+        "blendMode": "screen",
+        "cameraProjection": "perspective",
+        "cameraAxoPreset": "orthoXY",
+        "persistMode": 1,
+        "tonicHz": 261.63,
+        "ruleBlocks": [
+            {
+                "id": "gatekeeper-low-bin-magnitude",
+                "group": "GATE",
+                "subgroup": "gatekeeper",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "<",
+                    "input": "binMagnitude",
+                    "value": 0.1
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "value": 0
+                    },
+                    {
+                        "operator": "set",
+                        "output": "particleCount",
+                        "value": 0
+                    }
+                ],
+                "order": 0
+            },
+            {
+                "id": "x-from-pan",
+                "group": "SPATIAL",
+                "subgroup": "X",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "pan * (canvasWidthUnits) * 0.48"
+                    }
+                ],
+                "order": 1
+            },
+            {
+                "id": "y-from-normfreq",
+                "group": "SPATIAL",
+                "subgroup": "Y",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "(normFreq - 0.5) * (canvasHeightUnits) * 0.95"
+                    }
+                ],
+                "order": 2
+            },
+            {
+                "id": "z-depth-from-attack-time",
+                "group": "SPATIAL",
+                "subgroup": "Z",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "clamp(binAttackTime, 0, 1) * max(canvasWidthUnits, canvasHeightUnits) * 0.34"
+                    }
+                ],
+                "order": 3
+            },
+            {
+                "id": "hue-from-normfreq",
+                "group": "COLOR",
+                "subgroup": "HUE",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "hue",
+                        "input": "normFreq"
+                    }
+                ],
+                "order": 4
+            },
+            {
+                "id": "opacity-bin-magnitude-times-global-rms",
+                "group": "APPEARANCE",
+                "subgroup": "OPACITY",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "clamp(binMagnitude * globalRmsEnergy * 2.2, 0, 1)"
+                    }
+                ],
+                "order": 5
+            },
+            {
+                "id": "size-from-bin-magnitude",
+                "group": "APPEARANCE",
+                "subgroup": "SIZE",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "size",
+                        "expression": "0.2 + binMagnitude * 6"
+                    }
+                ],
+                "order": 6
+            }
+        ],
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 1,
+        "_disabled": [],
+        "freqNormMin": 64,
+        "freqNormMax": 20000,
+        "binFluxNormMin": 0,
+        "binFluxNormMax": 0.5,
+        "binPhaseDeviationNormMin": 0,
+        "binPhaseDeviationNormMax": 3.14,
+        "binMagnitudeNormMin": -70,
+        "binMagnitudeNormMax": 0,
+        "globalRmsNormMin": -60,
+        "globalRmsNormMax": 0,
+        "globalSpectralFluxNormMin": 0,
+        "globalSpectralFluxNormMax": 100,
+        "spectralCentroidNormMin": 150,
+        "spectralCentroidNormMax": 8000,
+        "spectralFlatnessNormMin": 0,
+        "spectralFlatnessNormMax": 1,
+        "binAttackTimeNormMin": 5,
+        "binAttackTimeNormMax": 500
+    }
+}

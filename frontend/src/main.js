@@ -34,6 +34,12 @@ import {
     computeSpectralFlux,
     computeSpectralFlatness,
     computeInharmonicity,
+    computePeakAmplitude,
+    computeZeroCrossingRate,
+    computeSpectralRolloff,
+    computeSpectralSpread,
+    computeSpectralSkewness,
+    computeChromagram,
     normalizeCentroidHzToUnit,
 } from './engine/audio/AudioFeatures.js'
 
@@ -406,6 +412,227 @@ applyAxoPresetFromParams()
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
 const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
+
+function _collectUsedRuleInputs(requiredInputsByTarget = null) {
+    return new Set([
+        ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
+        ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
+    ])
+}
+
+function _deriveAudioUsage(requiredInputsByTarget = null) {
+    const used = _collectUsedRuleInputs(requiredInputsByTarget)
+    const alwaysCalculated = new Set([
+        'amplitude',
+        'bass',
+        'mid',
+        'high',
+        'peakFreq',
+        'pan',
+        'time',
+        'deltaTime',
+        'frequencyHz',
+        'normFreq',
+        'canvasWidthPx',
+        'canvasHeightPx',
+        'canvasWidthUnits',
+        'canvasHeightUnits',
+        'canvasBoundaryLeft',
+        'canvasBoundaryRight',
+        'canvasBoundaryTop',
+        'canvasBoundaryBottom',
+        'audioLengthSec',
+        'binEnergy',
+    ])
+
+    const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState')
+    const needFlux = used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState') || used.has('binAttackTime')
+    const needPhaseDeviation = used.has('binPhaseDeviation') || used.has('binPhasedeviation')
+    const needEnvelope = used.has('binEnvelope') || used.has('binEnvelopeState')
+    const needPhase = used.has('binPhase')
+    const needAttackTime = used.has('binAttackTime')
+    const needRms = used.has('globalRmsEnergy') || used.has('binRMSEnergy') || used.has('amplitude')
+    const needCentroid = used.has('spectralCentroid')
+    const needGlobalFlux = used.has('spectralFlux')
+    const needFlatness = used.has('spectralFlatness')
+    const needInharmonicity = used.has('inharmonicity')
+    const needPeakAmplitude = used.has('peakAmplitude')
+    const needZeroCrossingRate = used.has('zeroCrossingRate')
+    const needSpectralRolloff = used.has('spectralRolloff')
+    const needSpectralSpread = used.has('spectralSpread')
+    const needSpectralSkewness = used.has('spectralSkewness')
+    const needChromagram = used.has('chromagram')
+
+    const calculatedInputs = new Set(alwaysCalculated)
+    if (needRms) calculatedInputs.add('globalRmsEnergy')
+    if (needCentroid) calculatedInputs.add('spectralCentroid')
+    if (needGlobalFlux) calculatedInputs.add('spectralFlux')
+    if (needFlatness) calculatedInputs.add('spectralFlatness')
+    if (needInharmonicity) calculatedInputs.add('inharmonicity')
+    if (needPeakAmplitude) calculatedInputs.add('peakAmplitude')
+    if (needZeroCrossingRate) calculatedInputs.add('zeroCrossingRate')
+    if (needSpectralRolloff) calculatedInputs.add('spectralRolloff')
+    if (needSpectralSpread) calculatedInputs.add('spectralSpread')
+    if (needSpectralSkewness) calculatedInputs.add('spectralSkewness')
+    if (needChromagram) calculatedInputs.add('chromagram')
+    if (needMagnitude) calculatedInputs.add('binMagnitude')
+    if (needFlux) calculatedInputs.add('binFlux')
+    if (needPhaseDeviation) calculatedInputs.add('binPhaseDeviation')
+    if (needPhase) calculatedInputs.add('binPhase')
+    if (needEnvelope) calculatedInputs.add('binEnvelope')
+    if (needEnvelope) calculatedInputs.add('binEnvelopeState')
+    if (needAttackTime) calculatedInputs.add('binAttackTime')
+    if (needRms) calculatedInputs.add('binRMSEnergy')
+    if (used.has('binFreq')) calculatedInputs.add('binFreq')
+
+    return {
+        used,
+        calculatedInputs,
+        worklet: {
+            enabled: needMagnitude || needFlux || needPhaseDeviation || needEnvelope || needAttackTime || needPhase,
+            needMagnitude,
+            needFlux,
+            needPhaseDeviation,
+            needPhase,
+            needEnvelope,
+            needAttackTime,
+        },
+        engine: {
+            needRms,
+            needSpectralCentroid: needCentroid,
+            needGlobalSpectralFlux: needGlobalFlux,
+            needSpectralFlatness: needFlatness,
+            needInharmonicity,
+            needPeakAmplitude,
+            needZeroCrossingRate,
+            needSpectralRolloff,
+            needSpectralSpread,
+            needSpectralSkewness,
+            needChromagram,
+        },
+        backend: {
+            calc_fft: true,
+            calc_magnitude: needMagnitude || needFlux || needCentroid || needFlatness || needGlobalFlux,
+            calc_magnitude_dbfs: needMagnitude || needRms,
+            calc_phase: needPhaseDeviation || needPhase,
+            calc_phase_deviation: needPhaseDeviation,
+            calc_local_spectral_flux: needFlux || needEnvelope,
+            calc_envelope_state: needEnvelope,
+            calc_rms_energy: needRms,
+            calc_peak_amplitude: needPeakAmplitude,
+            calc_zero_crossing_rate: needZeroCrossingRate,
+            calc_spectral_centroid: needCentroid,
+            calc_global_spectral_flux: needGlobalFlux,
+            calc_spectral_flatness: needFlatness,
+            calc_spectral_rolloff: needSpectralRolloff,
+            calc_spectral_spread: needSpectralSpread,
+            calc_spectral_skewness: needSpectralSkewness,
+            calc_spectral_kurtosis: used.has('spectralKurtosis'),
+            calc_mfcc: used.has('mfcc'),
+            calc_chromagram: needChromagram,
+        },
+    }
+}
+
+function _normBoundsFromParams(snapshot = {}) {
+    const dbToAmp = (db) => Math.pow(10, Number(db) / 20)
+    return {
+        scalar: {
+            center_frequency_hz: {
+                min_value: Number(snapshot.freqNormMin ?? 40),
+                max_value: Number(snapshot.freqNormMax ?? 12000),
+            },
+            magnitude_dbfs: {
+                min_value: Number(snapshot.binMagnitudeNormMin ?? -70),
+                max_value: Number(snapshot.binMagnitudeNormMax ?? 0),
+            },
+            magnitude_linear: {
+                min_value: dbToAmp(Number(snapshot.binMagnitudeNormMin ?? -70)),
+                max_value: dbToAmp(Number(snapshot.binMagnitudeNormMax ?? 0)),
+            },
+            phase_deviation: {
+                min_value: Number(snapshot.binPhaseDeviationNormMin ?? 0),
+                max_value: Number(snapshot.binPhaseDeviationNormMax ?? Math.PI),
+            },
+            spectral_flux: {
+                min_value: Number(snapshot.binFluxNormMin ?? 0),
+                max_value: Number(snapshot.binFluxNormMax ?? 0.5),
+            },
+            rms_energy: {
+                min_value: dbToAmp(Number(snapshot.globalRmsNormMin ?? -60)),
+                max_value: dbToAmp(Number(snapshot.globalRmsNormMax ?? 0)),
+            },
+            spectral_centroid_hz: {
+                min_value: Number(snapshot.spectralCentroidNormMin ?? 150),
+                max_value: Number(snapshot.spectralCentroidNormMax ?? 8000),
+            },
+            global_spectral_flux: {
+                min_value: Number(snapshot.globalSpectralFluxNormMin ?? 0),
+                max_value: Number(snapshot.globalSpectralFluxNormMax ?? 100),
+            },
+            spectral_flatness: {
+                min_value: Number(snapshot.spectralFlatnessNormMin ?? 0),
+                max_value: Number(snapshot.spectralFlatnessNormMax ?? 1),
+            },
+        },
+        vector: {},
+    }
+}
+
+function _normalizeByRange(value, minValue, maxValue) {
+    const lo = Number(minValue)
+    const hi = Number(maxValue)
+    const v = Number(value)
+    if (!Number.isFinite(v) || !Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return 0
+    return Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
+}
+
+const _ALLOWED_FFT_SIZES = Object.freeze([1024, 2048, 4096, 8192, 16384])
+
+function _snapFftSize(value) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return 2048
+    let best = _ALLOWED_FFT_SIZES[0]
+    let bestDist = Math.abs(n - best)
+    for (let i = 1; i < _ALLOWED_FFT_SIZES.length; i++) {
+        const candidate = _ALLOWED_FFT_SIZES[i]
+        const dist = Math.abs(n - candidate)
+        if (dist < bestDist) {
+            best = candidate
+            bestDist = dist
+        }
+    }
+    return best
+}
+
+function _buildBackendAudioAnalysisConfig(snapshot = {}, requiredInputsByTarget = null) {
+    const usage = _deriveAudioUsage(requiredInputsByTarget)
+    const fftSize = _snapFftSize(snapshot.fftSize)
+    return {
+        sample_rate: 44100,
+        fft_size: fftSize,
+        hop_size: Math.max(64, Math.floor(fftSize / 4)),
+        rolloff_percent: 0.85,
+        n_mfcc: 13,
+        ...usage.backend,
+        normalize_features: true,
+        normalization_bounds: _normBoundsFromParams(snapshot),
+    }
+}
+
+function _emitCalculatedRuleInputs(requiredInputsByTarget = null) {
+    const usage = _deriveAudioUsage(requiredInputsByTarget)
+    window.dispatchEvent(new CustomEvent('seesound:calculated-rule-inputs', {
+        detail: {
+            calculatedInputs: [...usage.calculatedInputs],
+        },
+    }))
+}
+
+_emitCalculatedRuleInputs(_initialCompileState?.requiredInputsByTarget)
+
 window.addEventListener('seesound:particle-size-apply-all', (e) => {
     const oldDefaultSize = Number(e?.detail?.oldDefaultSize)
     const newDefaultSize = Number(e?.detail?.newDefaultSize)
@@ -424,6 +651,7 @@ class AudioEngine {
         this.audioEl = null; this.splitter = null
         this.analyserL = null; this.analyserR = null
         this.binAnalysisNode = null
+        this._workletConnected = false
         this._workletReady = false
         this._workletLoadPromise = null
         this._workletConfig = {
@@ -431,6 +659,7 @@ class AudioEngine {
             needMagnitude: false,
             needFlux: false,
             needPhaseDeviation: false,
+            needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
             attackThreshold: 0.0005,
@@ -438,8 +667,21 @@ class AudioEngine {
             sustainMagThreshold: 0.08,
             decayThreshold: 0.008,
         }
+        this._calcUsage = {
+            needRms: true,
+            needSpectralCentroid: false,
+            needGlobalSpectralFlux: false,
+            needSpectralFlatness: false,
+            needInharmonicity: false,
+            needPeakAmplitude: false,
+            needZeroCrossingRate: false,
+            needSpectralRolloff: false,
+            needSpectralSpread: false,
+            needSpectralSkewness: false,
+            needChromagram: false,
+        }
 
-        this.FFT_SIZE = 2048
+        this.FFT_SIZE = _snapFftSize(params.fftSize)
         this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this.timeDomainData = new Uint8Array(this.FFT_SIZE)
         this._freqL = new Uint8Array(128)
@@ -449,6 +691,7 @@ class AudioEngine {
         this._binMagnitude = null
         this._binFlux = null
         this._binPhaseDeviation = null
+        this._binPhase = null
         this._binEnvelope = null
         this._binAttackTime = null
         this.featureSmoothingAlpha = 0.2
@@ -463,7 +706,36 @@ class AudioEngine {
         this.spectralFlux = 0
         this.spectralFlatness = 0
         this.inharmonicity = 0
+        this.peakAmplitude = 0
+        this.zeroCrossingRate = 0
+        this.spectralRolloff = 0
+        this.spectralSpread = 0
+        this.spectralSkewness = 0
+        this.chromagram = 0
         this.ctxState = 'none'
+    }
+
+    _createBinAnalysisNode() {
+        if (!this.ctx) return null
+        const node = new AudioWorkletNode(this.ctx, 'bin-analysis-processor', {
+            numberOfInputs: 1,
+            numberOfOutputs: 0,
+            processorOptions: {
+                fftSize: this.FFT_SIZE,
+                hopSize: Math.floor(this.FFT_SIZE / 4),
+            },
+        })
+        node.port.onmessage = (event) => {
+            const msg = event.data || {}
+            if (msg.type !== 'binMetrics') return
+            if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
+            if (msg.flux) this._binFlux = new Float32Array(msg.flux)
+            if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
+            if (msg.phase) this._binPhase = new Float32Array(msg.phase)
+            if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
+            if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+        }
+        return node
     }
 
     _ensureWorkletLoaded() {
@@ -472,24 +744,9 @@ class AudioEngine {
             const moduleUrl = new URL('./engine/audio/BinAnalysisWorklet.js', import.meta.url)
             this._workletLoadPromise = this.ctx.audioWorklet.addModule(moduleUrl)
                 .then(() => {
-                    this.binAnalysisNode = new AudioWorkletNode(this.ctx, 'bin-analysis-processor', {
-                        numberOfInputs: 1,
-                        numberOfOutputs: 0,
-                        processorOptions: {
-                            fftSize: this.FFT_SIZE,
-                            hopSize: Math.floor(this.FFT_SIZE / 4),
-                        },
-                    })
-                    this.binAnalysisNode.port.onmessage = (event) => {
-                        const msg = event.data || {}
-                        if (msg.type !== 'binMetrics') return
-                        if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
-                        if (msg.flux) this._binFlux = new Float32Array(msg.flux)
-                        if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
-                        if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
-                        if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
-                    }
+                    this.binAnalysisNode = this._createBinAnalysisNode()
                     this._workletReady = true
+                    this._connectSourceToWorklet()
                     this._postWorkletConfig()
                 })
                 .catch((err) => {
@@ -506,26 +763,72 @@ class AudioEngine {
         })
     }
 
-    setRuleInputUsage(requiredInputsByTarget = null) {
-        const used = new Set([
-            ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
-            ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
-            ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
-            ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
-        ])
-        const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope')
-        const needFlux = used.has('binFlux') || used.has('binEnvelope') || used.has('binAttackTime')
-        const needPhaseDeviation = used.has('binPhaseDeviation') || used.has('binPhasedeviation')
-        const needEnvelope = used.has('binEnvelope')
-        const needAttackTime = used.has('binAttackTime')
+    _connectSourceToWorklet() {
+        if (!this.binAnalysisNode) return false
+        const srcNode = this.source || this.streamSource
+        if (!srcNode) return false
+        if (this._workletConnected) return true
+        try {
+            srcNode.connect(this.binAnalysisNode)
+            this._workletConnected = true
+            return true
+        } catch {
+            return false
+        }
+    }
 
-        this._workletConfig.enabled = needMagnitude || needFlux || needPhaseDeviation || needEnvelope || needAttackTime
-        this._workletConfig.needMagnitude = needMagnitude
-        this._workletConfig.needFlux = needFlux
-        this._workletConfig.needPhaseDeviation = needPhaseDeviation
-        this._workletConfig.needEnvelope = needEnvelope
-        this._workletConfig.needAttackTime = needAttackTime
+    setRuleInputUsage(requiredInputsByTarget = null) {
+        const usage = _deriveAudioUsage(requiredInputsByTarget)
+        this._workletConfig.enabled = usage.worklet.enabled
+        this._workletConfig.needMagnitude = usage.worklet.needMagnitude
+        this._workletConfig.needFlux = usage.worklet.needFlux
+        this._workletConfig.needPhaseDeviation = usage.worklet.needPhaseDeviation
+        this._workletConfig.needPhase = usage.worklet.needPhase
+        this._workletConfig.needEnvelope = usage.worklet.needEnvelope
+        this._workletConfig.needAttackTime = usage.worklet.needAttackTime
+        this._calcUsage = usage.engine
         this._postWorkletConfig()
+    }
+
+    setFftSize(nextValue) {
+        const nextSize = _snapFftSize(nextValue)
+        if (nextSize === this.FFT_SIZE) return
+        this.FFT_SIZE = nextSize
+        this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this.timeDomainData = new Uint8Array(this.FFT_SIZE)
+        this._prevFrequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+        this._binMagnitude = null
+        this._binFlux = null
+        this._binPhaseDeviation = null
+        this._binPhase = null
+        this._binEnvelope = null
+        this._binAttackTime = null
+
+        if (this.analyser) {
+            this.analyser.fftSize = this.FFT_SIZE
+            this.analyser.smoothingTimeConstant = 0
+        }
+
+        if (this.binAnalysisNode) {
+            try {
+                this.source?.disconnect(this.binAnalysisNode)
+            } catch { }
+            try {
+                this.streamSource?.disconnect(this.binAnalysisNode)
+            } catch { }
+            try {
+                this.binAnalysisNode.disconnect()
+            } catch { }
+            this.binAnalysisNode = null
+            this._workletConnected = false
+        }
+
+        if (this.ctx && this._workletReady) {
+            this.binAnalysisNode = this._createBinAnalysisNode()
+            this._connectSourceToWorklet()
+            this._postWorkletConfig()
+        }
     }
 
     init(el) {
@@ -547,7 +850,7 @@ class AudioEngine {
             this.source = null
             this.streamSource = null
             this.streamNode = null
-            let workletConnected = false
+            this._workletConnected = false
 
             try {
                 this.source = this.ctx.createMediaElementSource(el)
@@ -573,17 +876,11 @@ class AudioEngine {
                 srcNode?.connect(this.splitter)
                 this.splitter.connect(this.analyserL, 0)
                 this.splitter.connect(this.analyserR, 1)
-                if (this.binAnalysisNode) {
-                    srcNode?.connect(this.binAnalysisNode)
-                    workletConnected = true
-                }
+                this._connectSourceToWorklet()
             } catch { /* mono */ }
 
             // Ensure worklet receives source even if splitter setup fails.
-            try {
-                const srcNode = this.source || this.streamSource
-                if (this.binAnalysisNode && !workletConnected) srcNode?.connect(this.binAnalysisNode)
-            } catch { /* no-op */ }
+            this._connectSourceToWorklet()
         }
         if (this.ctx.state === 'suspended') this.ctx.resume()
         this.ctxState = this.ctx.state
@@ -615,21 +912,80 @@ class AudioEngine {
         this.peakFreq = Math.round(hz(pb))
         this.peakByte = peak
 
-        const centroidHz = computeSpectralCentroid(this.frequencyData, sr)
-        const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
-        const fluxAu = fluxNorm * 100
-        const flatnessNorm = computeSpectralFlatness(this.frequencyData)
-        const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
-
         const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
-        this.spectralCentroidHz += (centroidHz - this.spectralCentroidHz) * alpha
-        this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
-        this.spectralFlatnessRatio += (flatnessNorm - this.spectralFlatnessRatio) * alpha
-        this.inharmonicity += (inharmonicityNorm - this.inharmonicity) * alpha
+        if (this._calcUsage.needSpectralCentroid) {
+            const centroidHz = computeSpectralCentroid(this.frequencyData, sr)
+            this.spectralCentroidHz += (centroidHz - this.spectralCentroidHz) * alpha
+            this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
+        } else {
+            this.spectralCentroidHz = 0
+            this.spectralCentroid = 0
+        }
 
-        this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
-        this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
-        this.spectralFlatness = Math.max(0, Math.min(1, this.spectralFlatnessRatio))
+        if (this._calcUsage.needGlobalSpectralFlux) {
+            const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
+            const fluxAu = fluxNorm * 100
+            this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
+            this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
+        } else {
+            this.spectralFluxAU = 0
+            this.spectralFlux = 0
+        }
+
+        if (this._calcUsage.needSpectralFlatness) {
+            const flatnessNorm = computeSpectralFlatness(this.frequencyData)
+            this.spectralFlatnessRatio += (flatnessNorm - this.spectralFlatnessRatio) * alpha
+            this.spectralFlatness = Math.max(0, Math.min(1, this.spectralFlatnessRatio))
+        } else {
+            this.spectralFlatnessRatio = 0
+            this.spectralFlatness = 0
+        }
+
+        if (this._calcUsage.needInharmonicity) {
+            const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
+            this.inharmonicity += (inharmonicityNorm - this.inharmonicity) * alpha
+        } else {
+            this.inharmonicity = 0
+        }
+
+        if (this._calcUsage.needPeakAmplitude) {
+            this.peakAmplitude += (computePeakAmplitude(this.frequencyData) - this.peakAmplitude) * alpha
+        } else {
+            this.peakAmplitude = 0
+        }
+
+        if (this._calcUsage.needZeroCrossingRate) {
+            this.zeroCrossingRate += (computeZeroCrossingRate(this.timeDomainData) - this.zeroCrossingRate) * alpha
+        } else {
+            this.zeroCrossingRate = 0
+        }
+
+        if (this._calcUsage.needSpectralRolloff) {
+            this.spectralRolloff += (computeSpectralRolloff(this.frequencyData, sr, 0.85) - this.spectralRolloff) * alpha
+        } else {
+            this.spectralRolloff = 0
+        }
+
+        if (this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness) {
+            const spread = computeSpectralSpread(this.frequencyData, sr, this.spectralCentroidHz)
+            if (this._calcUsage.needSpectralSpread) this.spectralSpread += (spread - this.spectralSpread) * alpha
+            else this.spectralSpread = 0
+            if (this._calcUsage.needSpectralSkewness) {
+                const skew = computeSpectralSkewness(this.frequencyData, sr, this.spectralCentroidHz, spread)
+                this.spectralSkewness += (skew - this.spectralSkewness) * alpha
+            } else {
+                this.spectralSkewness = 0
+            }
+        } else {
+            this.spectralSpread = 0
+            this.spectralSkewness = 0
+        }
+
+        if (this._calcUsage.needChromagram) {
+            this.chromagram += (computeChromagram(this.frequencyData, sr) - this.chromagram) * alpha
+        } else {
+            this.chromagram = 0
+        }
 
         // Keep an isolated copy of the current FFT frame for next-frame deltas.
         this._prevFrequencyDataBins.set(this.frequencyData)
@@ -673,6 +1029,10 @@ class AudioEngine {
         return this._binPhaseDeviation
     }
 
+    getBinPhase() {
+        return this._binPhase
+    }
+
     getBinEnvelope() {
         return this._binEnvelope
     }
@@ -699,13 +1059,20 @@ function setStatus(state, text) {
 
 function connectWS() {
     const ws = new WebSocket(`ws://${location.hostname}:8000/ws`)
-    ws.onopen = () => setStatus('open', 'Backend connected')
+    ws.onopen = () => setStatus('open', '')
     ws.onclose = () => { setStatus('closed', 'Backend offline'); setTimeout(connectWS, 3000) }
     ws.onerror = () => setStatus('closed', 'WS error')
     ws.onmessage = () => { }  // future: handle server-pushed rules
     subscribe(snapshot => {
-        if (ws.readyState === WebSocket.OPEN)
-            ws.send(JSON.stringify({ type: 'params_update', payload: snapshot }))
+        if (ws.readyState === WebSocket.OPEN) {
+            const compileState = ps.getRuleCompileState?.()
+            const requiredInputsByTarget = compileState?.requiredInputsByTarget || _initialCompileState?.requiredInputsByTarget || null
+            const payload = {
+                ...snapshot,
+                audio_analysis_config: _buildBackendAudioAnalysisConfig(snapshot, requiredInputsByTarget),
+            }
+            ws.send(JSON.stringify({ type: 'params_update', payload }))
+        }
     })
 }
 connectWS()
@@ -1088,15 +1455,48 @@ function animate() {
         }
         ps.update(ae, updateParams, w, h)
         applyRuleCameraOutput(ps.getCameraOutput())
-        const binMagnitude0 = ae.getBinMagnitude?.()?.[0] ?? 0
+        const binMagnitudeArr = ae.getBinMagnitude?.() || null
+        const binFluxArr = ae.getBinFlux?.() || null
+        const binPhaseDeviationArr = ae.getBinPhaseDeviation?.() || null
+        const binPhaseArr = ae.getBinPhase?.() || null
+        const binAttackTimeArr = ae.getBinAttackTime?.() || null
+        const binEnvelopeArr = ae.getBinEnvelope?.() || null
         const peakFreqHz = ae.peakFreq ?? 0
         const nyquist = ae.ctx?.sampleRate ? ae.ctx.sampleRate * 0.5 : 22050
+        const normGlobalRms = _normalizeByRange(ae.rmsDbfs, params.globalRmsNormMin ?? -60, params.globalRmsNormMax ?? 0)
+        const normSpectralCentroid = _normalizeByRange(ae.spectralCentroidHz, params.spectralCentroidNormMin ?? 150, params.spectralCentroidNormMax ?? 8000)
+        const normSpectralFlux = _normalizeByRange(ae.spectralFluxAU, params.globalSpectralFluxNormMin ?? 0, params.globalSpectralFluxNormMax ?? 100)
+        const normSpectralFlatness = _normalizeByRange(ae.spectralFlatnessRatio, params.spectralFlatnessNormMin ?? 0, params.spectralFlatnessNormMax ?? 1)
+        const _averageNormalized = (arr, mapFn) => {
+            if (!arr || !arr.length) return 0
+            let sum = 0
+            for (let i = 0; i < arr.length; i++) sum += mapFn(arr[i])
+            return sum / arr.length
+        }
+        const normBinMagnitude = _averageNormalized(
+            binMagnitudeArr,
+            (v) => _normalizeByRange(v, params.binMagnitudeNormMin ?? -70, params.binMagnitudeNormMax ?? 0)
+        )
+        const normBinFlux = _averageNormalized(
+            binFluxArr,
+            (v) => _normalizeByRange(v, params.binFluxNormMin ?? 0, params.binFluxNormMax ?? 0.5)
+        )
+        const normBinPhaseDeviation = _averageNormalized(
+            binPhaseDeviationArr,
+            (v) => _normalizeByRange(v, params.binPhaseDeviationNormMin ?? 0, params.binPhaseDeviationNormMax ?? Math.PI)
+        )
+        const normBinPhase = _averageNormalized(binPhaseArr, (v) => _normalizeByRange(v, -Math.PI, Math.PI))
+        const normBinAttackTime = _averageNormalized(
+            binAttackTimeArr,
+            (v) => _normalizeByRange(v, params.binAttackTimeNormMin ?? 5, params.binAttackTimeNormMax ?? 500)
+        )
+        const normBinEnvelope = _averageNormalized(binEnvelopeArr, (v) => _normalizeByRange(v, 0, 3))
         window.dispatchEvent(new CustomEvent('seesound:rule-probe', {
             detail: {
                 inputs: {
-                    amplitude: ae.amplitude ?? 0,
-                    globalRmsEnergy: ae.rmsDbfs ?? -96,
-                    binEnergy: binMagnitude0,
+                    amplitude: normGlobalRms,
+                    globalRmsEnergy: normGlobalRms,
+                    binEnergy: normBinMagnitude,
                     frequencyHz: peakFreqHz,
                     normFreq: Math.max(0, Math.min(1, peakFreqHz / Math.max(1e-6, nyquist))),
                     bass: ae.bass ?? 0,
@@ -1104,16 +1504,25 @@ function animate() {
                     high: ae.high ?? 0,
                     peakFreq: peakFreqHz,
                     pan: ae.pan ?? 0,
-                    spectralCentroid: ae.spectralCentroidHz ?? 0,
-                    spectralFlux: ae.spectralFluxAU ?? 0,
-                    spectralFlatness: ae.spectralFlatnessRatio ?? 0,
+                    spectralCentroid: normSpectralCentroid,
+                    spectralFlux: normSpectralFlux,
+                    spectralFlatness: normSpectralFlatness,
                     inharmonicity: ae.inharmonicity ?? 0,
-                    binMagnitude: binMagnitude0,
-                    binFlux: ae.getBinFlux?.()?.[0] ?? 0,
-                    binPhaseDeviation: ae.getBinPhaseDeviation?.()?.[0] ?? 0,
-                    binPhasedeviation: ae.getBinPhaseDeviation?.()?.[0] ?? 0,
-                    binAttackTime: ae.getBinAttackTime?.()?.[0] ?? 0,
-                    binEnvelope: ae.getBinEnvelope?.()?.[0] ?? 0,
+                    peakAmplitude: ae.peakAmplitude ?? 0,
+                    zeroCrossingRate: ae.zeroCrossingRate ?? 0,
+                    spectralRolloff: ae.spectralRolloff ?? 0,
+                    spectralSpread: ae.spectralSpread ?? 0,
+                    spectralSkewness: ae.spectralSkewness ?? 0,
+                    chromagram: ae.chromagram ?? 0,
+                    binMagnitude: normBinMagnitude,
+                    binFreq: peakFreqHz,
+                    binPhase: normBinPhase,
+                    binFlux: normBinFlux,
+                    binPhaseDeviation: normBinPhaseDeviation,
+                    binAttackTime: normBinAttackTime,
+                    binEnvelope: normBinEnvelope,
+                    binEnvelopeState: normBinEnvelope,
+                    binRMSEnergy: normGlobalRms,
                     time: ae.audioEl?.currentTime ?? 0,
                     deltaTime: 1 / 60,
                     canvasWidthPx: w,
@@ -1321,9 +1730,18 @@ subscribe((_, key) => {
         if (params.maxParticles !== nextCap) params.maxParticles = nextCap
         ps.setMaxParticles(nextCap)
     }
+    if (key === 'fftSize') {
+        const snapped = _snapFftSize(params.fftSize)
+        if (params.fftSize !== snapped) {
+            set('fftSize', snapped)
+            return
+        }
+        ae.setFftSize(snapped)
+    }
     if (key === 'ruleBlocks') {
         const state = ps.onRulesChanged(params.ruleBlocks ?? [])
         ae.setRuleInputUsage(state?.requiredInputsByTarget)
+        _emitCalculatedRuleInputs(state?.requiredInputsByTarget)
         window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
         if (RULE_DEBUG_FLAGS.logCompilerStatus) {
             console.info('[RuleEngine] recompilation', {
@@ -1339,6 +1757,7 @@ subscribe((_, key) => {
 
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))
+_emitCalculatedRuleInputs(ps.getRuleCompileState?.()?.requiredInputsByTarget)
 
 const startupRuleCount = Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0
 const startupCompile = ps.getRuleCompileState()

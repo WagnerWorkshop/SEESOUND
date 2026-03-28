@@ -145,7 +145,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 try:
                     chunk_bytes = base64.b64decode(message["data"])
                     audio_data, sr = sf.read(BytesIO(chunk_bytes))
-                    frame_data = analyzer.process_frame(audio_data)
+                    frame_model = analyzer.process_frame(audio_data)
+                    frame_data = frame_model.model_dump() if hasattr(frame_model, "model_dump") else frame_model.dict()
                     frame_data["type"] = "analysis_frame"
                     await websocket.send_text(json.dumps(frame_data))
                 except Exception as e:
@@ -154,6 +155,14 @@ async def websocket_endpoint(websocket: WebSocket):
             elif message.get("type") == "params_update":
                 # Forward to all other connected clients (multi-window sync)
                 payload = message.get("payload", {})
+
+                # Try to apply incoming analyzer config if present.
+                try:
+                    analysis_cfg = payload.get("audio_analysis_config", payload)
+                    analyzer.update_config(analysis_cfg)
+                except Exception:
+                    pass
+
                 for ws in connections:
                     if ws is not websocket:
                         try:

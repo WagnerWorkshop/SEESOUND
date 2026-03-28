@@ -141,7 +141,7 @@
           {
             "operator": "multiply",
             "output": "x",
-            "expression": "(canvasWidthUnits) * 1"
+            "expression": "(canvasWidthPx) * 1"
           }
         ],
         "order": 6

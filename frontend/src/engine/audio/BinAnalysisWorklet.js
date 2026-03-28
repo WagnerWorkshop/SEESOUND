@@ -32,6 +32,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             needMagnitude: false,
             needFlux: false,
             needPhaseDeviation: false,
+            needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
             attackThreshold: 0.03,
@@ -48,6 +49,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._cfg.needMagnitude = !!cfg.needMagnitude
             this._cfg.needFlux = !!cfg.needFlux
             this._cfg.needPhaseDeviation = !!cfg.needPhaseDeviation
+            this._cfg.needPhase = !!cfg.needPhase
             this._cfg.needEnvelope = !!cfg.needEnvelope
             this._cfg.needAttackTime = !!cfg.needAttackTime
             this._cfg.attackThreshold = Number.isFinite(cfg.attackThreshold) ? cfg.attackThreshold : this._cfg.attackThreshold
@@ -154,7 +156,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
     _analyzeAndPost() {
         const cfg = this._cfg
-        const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needEnvelope || cfg.needAttackTime
+        const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needPhase || cfg.needEnvelope || cfg.needAttackTime
         if (!cfg.enabled || !needsAny || this._filled < this.fftSize || this._hopCounter < this.hopSize) return
         this._hopCounter = 0
         const hopMs = (this.hopSize / Math.max(1, sampleRate)) * 1000
@@ -165,6 +167,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const magnitude = (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
         const flux = (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
         const phaseDeviation = cfg.needPhaseDeviation ? new Float32Array(this.binCount) : null
+        const phaseOut = cfg.needPhase ? new Float32Array(this.binCount) : null
         const envelope = cfg.needEnvelope ? new Float32Array(this.binCount) : null
         const attackTime = cfg.needAttackTime ? new Float32Array(this.binCount) : null
 
@@ -177,11 +180,18 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             if (magnitude) magnitude[k] = magNowDb
 
             const prevMag = this._prevMag[k]
-            const f = Math.max(0, magNowLin - prevMag)
-            if (flux) flux[k] = f
+            const rise = magNowLin - prevMag
+            // Scale linear rise so defaults produce useful 0..1-ish values.
+            const fluxValue = Math.max(0, rise) * 64
+            if (flux) flux[k] = fluxValue
+
+            if (phaseDeviation || phaseOut) {
+                const phase = Math.atan2(im, re)
+                if (phaseOut) phaseOut[k] = phase
+            }
 
             if (phaseDeviation) {
-                const phase = Math.atan2(im, re)
+                const phase = phaseOut ? phaseOut[k] : Math.atan2(im, re)
                 const d1 = this._phaseDelta(phase, this._prevPhase[k])
                 const d2 = this._phaseDelta(d1, this._prevPhaseDelta[k])
                 phaseDeviation[k] = Math.max(0, Math.min(Math.PI, Math.abs(d2)))
@@ -190,7 +200,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             }
 
             if (attackTime) {
-                const isRising = f > Math.max(1e-6, cfg.attackThreshold)
+                const isRising = rise > Math.max(1e-6, cfg.attackThreshold)
                 if (isRising) {
                     this._attackActive[k] = 1
                     this._attackElapsedMs[k] += hopMs
@@ -204,9 +214,9 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
             if (envelope) {
                 let state = 0
-                if (f > cfg.attackThreshold) state = 1
-                else if (Math.abs(f) <= cfg.sustainFluxEps && magNowLin >= cfg.sustainMagThreshold) state = 2
-                else if (f < -cfg.decayThreshold) state = 3
+                if (rise > cfg.attackThreshold) state = 1
+                else if (Math.abs(rise) <= cfg.sustainFluxEps && magNowLin >= cfg.sustainMagThreshold) state = 2
+                else if (rise < -cfg.decayThreshold) state = 3
                 envelope[k] = state
             }
 
@@ -226,6 +236,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         if (phaseDeviation) {
             payload.phaseDeviation = phaseDeviation.buffer
             transfers.push(phaseDeviation.buffer)
+        }
+        if (phaseOut) {
+            payload.phase = phaseOut.buffer
+            transfers.push(phaseOut.buffer)
         }
         if (envelope) {
             payload.envelope = envelope.buffer
