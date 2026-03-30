@@ -1,314 +1,321 @@
-# SEESOUND v1.0
+# SEESOUND Engine
 
-SEESOUND is a real-time audio-to-visual system. It listens to music, extracts audio features, and renders them as a persistent or momentary particle field in a Three.js canvas.
+SEESOUND is a browser-first audio-to-visual engine for turning music into particle-based motion graphics.
 
-In practical terms, this project lets you:
+This document is a developer handoff guide. It explains the architecture, runtime data flow, extension points, persistence model, and practical maintenance workflow so future contributors can continue confidently.
 
-- Load audio and paint visuals from frequency energy over time.
-- Control geometry, blending, camera, and persistence behavior.
-- Build custom visual logic with a low-code rule builder (no hand-written shader code needed).
-- Save and load full presets and complete project files.
+## 1. Repository Scope
 
-## 1. What It Is
+Top-level folders:
 
-SEESOUND v1.0 is split into two apps:
+- backend: FastAPI service and preset JSON corpus.
+- frontend: Vite app containing renderer, audio analysis, rule engine, UI, and project lifecycle.
 
-- Frontend (Vite + Three.js): real-time rendering, control panel, rule builder, player, canvas tools.
-- Backend (FastAPI): preset persistence, optional audio conversion endpoint, WebSocket bridge.
+Current product direction:
 
-The frontend does the heavy real-time visual work. The backend stores and serves preset JSON data and broadcasts parameter changes across connected clients.
+- Primary runtime is frontend-first and static-host compatible.
+- Presets and projects are handled locally in-browser.
+- Backend remains available for legacy workflows, migration, and offline preset corpus authoring.
 
-## 2. What It Does
+## 2. Runtime Architecture
 
-At runtime, SEESOUND converts audio into visual state using several layers:
+At runtime, the app runs as a single orchestrated loop in frontend/src/main.js.
 
-1. Audio analysis:
-- Reads FFT bins and waveform energy from Web Audio API.
-- Computes aggregate bands (bass, mid, high), peak frequency, pan.
-- Computes advanced spectral metrics (centroid, flux, flatness, inharmonicity).
+Flow per frame:
 
-2. Base particle generation:
-- For each eligible bin, spawns or updates particle attributes such as position, size, opacity, and color channels.
+1. Audio extraction from Web Audio graph.
+2. Feature calculation (bin + global metrics).
+3. Spawn/update particle attributes.
+4. Rule engine mutation pass on spawned and/or living particles.
+5. Three.js render.
+6. UI event dispatch for readouts and tooling.
 
-3. Rule engine overrides:
-- Applies user-defined rules to spawned particles, living particles, background, or camera.
-- Supports conditions, arithmetic operators, expressions, grouping, and ordering.
+High-level modules:
 
-4. Render + interaction:
-- Draws particles via Three.js points.
-- Supports camera orbit/pan/look/zoom, fit-to-content, reset, and canvas resize/scale.
+- frontend/src/main.js: Composition root and event wiring.
+- frontend/src/engine/audio/AudioEngine.js: FFT + audio analysis state.
+- frontend/src/engine/audio/AudioFeatures.js: feature math helpers.
+- frontend/src/engine/ParticleSystem.js: geometry buffers, particle life, render data.
+- frontend/src/engine/ParamStore.js: canonical params, undo/redo, persistence API.
+- frontend/src/engine/ControlPanel.js: control panel and rule-builder UI.
+- frontend/src/engine/rules/RuleCompiler.js: compiles rule blocks into executable functions.
+- frontend/src/engine/rules/RuleDictionary.js: schema and allowed inputs/outputs/operators.
+- frontend/src/components/AudioPlayer.js: bottom transport and export controls.
+- frontend/src/engine/project/ProjectIO.js: project payload build/parse/download utilities.
 
-5. Persistence:
-- Saves full parameter snapshots and rule sets as named presets.
-- Saves full projects including audio blob + parameters into a downloadable JSON package.
+## 3. Data Model
 
-## 3. How It Works (Architecture)
+### 3.1 Params
 
-### Frontend flow
+The live state object is params from ParamStore.
 
-Main orchestration is in `frontend/src/main.js`:
+It includes:
 
-- Initializes renderer, scene, and orthographic/perspective cameras.
-- Creates `ParticleSystem` and feeds it live audio features every animation frame.
-- Wires control panel state to runtime updates.
-- Handles PNG export and project save/load events.
+- Analysis normalization ranges.
+- Canvas and camera settings.
+- Particle generation limits and blending behavior.
+- Rule system state: ruleBlocks, palettes, ruleEngineEnabled, ruleUiState.
 
-Core modules:
+Guideline:
 
-- `frontend/src/engine/ParticleSystem.js`: particle buffer management, spawn/living passes, render path.
-- `frontend/src/engine/ControlPanel.js`: dynamic UI for all controls and rule builder.
-- `frontend/src/engine/ParamStore.js`: canonical params, snapshots, local defaults, preset REST calls.
-- `frontend/src/engine/rules/RuleCompiler.js`: compiles rule blocks into executable JS functions.
-- `frontend/src/engine/rules/RuleDictionary.js`: allowed inputs, outputs, operators, validation.
+- Any new render behavior should be parameterized through ParamStore first, then consumed in main or ParticleSystem.
 
-### Backend flow
+### 3.2 Rule Blocks
 
-Backend server is in `backend/main.py`:
+A rule block generally contains:
 
-- REST:
-  - `GET /api/presets`
-  - `GET /api/presets/{name}`
-  - `POST /api/presets`
-  - `DELETE /api/presets/{name}`
-  - `POST /api/audio/convert`
-- WebSocket:
-  - `WS /ws` for subscription, chunk analysis messages, and params broadcast.
+- id, group, subgroup, enabled, order.
+- target and scope.
+- condition.
+- actions array.
 
-Preset files are stored as JSON in `backend/presets`.
-
-## 4. Main Concepts
-
-### Rule targets and scopes
-
-Targets define what a rule can affect:
+Targets in current schema:
 
 - spawnedParticles
 - allParticles
 - background
 - camera
 
-Scopes define when particle rules apply:
+Scopes (particle targets):
 
-- spawnedOnly: applies to newly created particles.
-- allLivingFrame: re-applies across currently visible particles each frame.
+- spawnedOnly
+- allLivingFrame
 
-### Rule structure
+### 3.3 Presets
 
-A rule block is composed of:
+Preset storage in current frontend mode is localStorage.
 
-- metadata: id, group, subgroup, enabled, order
-- condition: input/operator/value or expression
-- actions: output/operator/value or expression
+Key behavior:
 
-Rules execute in order. If two rules conflict on a set operation, later rules win.
+- listPresets, savePreset, loadPreset, deletePreset are async wrappers around local map storage.
+- Presets are canonicalized through migration/sanitization before use.
+- Rule presets use names prefixed with rule__.
 
-### Preset types
+Storage keys are defined in ParamStore (for defaults, disabled controls, and preset map).
 
-- Main presets: complete param snapshots.
-- Rule presets: stored with the `rule__` name prefix and used for selected-rule workflows in the rule builder.
+### 3.4 Projects
 
-## 5. Project Structure
+Project payload shape is created by buildProjectPayload in ProjectIO.
 
-Top-level files/folders in v1.0:
+Core fields:
 
-- `backend/`: FastAPI server, audio analyzer, presets, requirements.
-- `frontend/`: Vite app, renderer/runtime engine, UI modules, styles.
-- `start backend.bat`: starts backend on port 8000 (and installs missing Python deps).
-- `start frontend.bat`: starts frontend dev server on port 5173.
+- schemaVersion
+- createdAt, updatedAt
+- projectName
+- presetName
+- params
+- presetLibrary
 
-## 6. Setup and Installation (Windows)
+Important behavior in main.js:
 
-## Prerequisites
+- Project load replaces preset library to enforce project-file source-of-truth.
+- Autosave writes only when a File System Access file handle is attached.
+- Save writes to attached handle; Save As attaches a new handle.
+- If no handle exists, fallback is download-based project export.
 
-- Python 3.10+ available on PATH.
-- Node.js LTS.
-- pnpm (global install recommended).
+## 4. Default Project Bootstrapping
 
-Install pnpm globally if needed:
+Default startup project is defined in frontend/src/config/DefaultProject.js.
 
-```powershell
-npm install -g pnpm
-```
+Current bundled default presets:
 
-### Install backend dependencies
+- linear basic
+- linear colors
+- linear timbre colors
+- textured timbre colors
 
-From `SEESOUND v1.0` root:
+Preset JSON source for startup bundle:
 
-```powershell
-cd backend
-python -m pip install -r requirements.txt
-```
+- frontend/src/presets/default-project/*.json
 
-### Install frontend dependencies
+Bootstrap behavior:
 
-From `SEESOUND v1.0` root:
+- On startup, app loads this default project payload.
+- It seeds params and preset library before normal interaction.
+- Default file label is seesound-default-project.ssp.json until user binds a handle.
+
+## 5. UI Event Contract
+
+The app relies on window CustomEvent messages between UI modules and orchestrator.
+
+Key project/preset events:
+
+- seesound:preset-library-changed
+- seesound:project-save-request
+- seesound:project-save-as-request
+- seesound:project-load-request
+- seesound:project-open-request
+- seesound:project-new-request
+- seesound:project-file-state
+- seesound:project-autosaved
+- seesound:project-loaded
+
+When extending UI:
+
+- Reuse existing event names where possible.
+- Keep event detail payloads stable.
+- Avoid direct module coupling if event contract already exists.
+
+## 6. Build and Run
+
+### Frontend only (recommended day-to-day)
+
+From repository root:
 
 ```powershell
 cd frontend
 pnpm install
-```
-
-## 7. Running the App
-
-### Option A: batch scripts
-
-Run in two separate terminals:
-
-1. `start backend.bat`
-2. `start frontend.bat`
-
-Then open:
-
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-
-### Option B: manual commands
-
-Backend:
-
-```powershell
-cd backend
-python main.py
-```
-
-Frontend:
-
-```powershell
-cd frontend
 pnpm dev
 ```
 
-## 8. Usage Guide
-
-### Basic workflow
-
-1. Start backend and frontend.
-2. Load an audio file in the player (bottom overlay).
-3. Press play to render live, or use Paint All to process the full track quickly.
-4. Adjust parameters in the right control panel.
-5. Optionally add rules in Rule Builder.
-6. Save a main preset and/or project file.
-7. Export PNG from the player controls.
-
-### Camera and canvas controls
-
-- Left drag: orbit around origin.
-- Middle drag: pan.
-- Right drag: look/rotate view.
-- Mouse wheel: zoom/dolly.
-- HUD buttons:
-  - reset camera
-  - fit to visible particles
-  - clear canvas
-
-Canvas has explicit width, height, and scale controls. Scale changes on-screen display size, not render resolution.
-
-### Rule builder workflow
-
-1. Create rules with condition + action.
-2. Group/subgroup rules for organization.
-3. Drag and reorder to control evaluation order.
-4. Select rules and save/load selected rule presets.
-5. Use delete key for selected items.
-
-## 9. Data and Persistence
-
-### Presets
-
-- Stored on backend as JSON under `backend/presets`.
-- Payload shape:
-
-```json
-{
-  "name": "preset-name",
-  "params": {
-    "inputGain": 1.0,
-    "maxParticles": 262144,
-    "ruleBlocks": []
-  }
-}
-```
-
-### Projects
-
-Project save includes:
-
-- current parameter snapshot
-- optional preset name
-- embedded audio data URL and file name
-
-This lets a project file restore both settings and source audio.
-
-## 10. API Summary
-
-### REST
-
-- `GET /api/presets`: list preset names.
-- `GET /api/presets/{name}`: load one preset.
-- `POST /api/presets`: save/overwrite preset.
-- `DELETE /api/presets/{name}`: remove preset.
-- `POST /api/audio/convert`: convert uploaded audio to WAV PCM16.
-
-### WebSocket messages
-
-Common message types on `WS /ws`:
-
-- `subscribe`
-- `audio_chunk`
-- `params_update`
-- `pong`
-
-## 11. Troubleshooting
-
-### Frontend cannot reach backend
-
-- Confirm backend is running on port 8000.
-- Check status indicator in UI (connection text/dot).
-- Verify no firewall rule blocks localhost traffic.
-
-### pnpm not found
-
-- Install with `npm install -g pnpm`.
-- Reopen terminal after install.
-
-### Python package errors
-
-- Re-run:
-
-```powershell
-cd backend
-python -m pip install -r requirements.txt
-```
-
-### Large scenes run slowly
-
-- Lower max particle capacity.
-- Reduce Particle Render %.
-- Prefer spawned-only rules when possible.
-- Use simpler blend modes and reduce expensive all-particles logic.
-
-## 12. Development Notes
-
-- Frontend build:
+Production build:
 
 ```powershell
 cd frontend
 pnpm build
+pnpm preview
 ```
 
-- Backend stack: FastAPI, Uvicorn, librosa, numpy, soundfile.
-- Frontend stack: Vite, Three.js, modular JS runtime.
+### Backend (optional / legacy support)
 
-## 13. Current Scope and Non-Goals
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+python main.py
+```
 
-SEESOUND v1.0 is optimized for local creative exploration and iterative visual design.
+Batch helpers are available in repository root:
 
-It is not currently designed as:
+- start backend.bat
+- start frontend.bat
 
-- a hardened multi-tenant cloud service
-- a long-term media asset database
-- a finalized plugin/sdk product
+## 7. Directory Guide
 
-## 14. License and Credits
+Frontend folders of interest:
 
-Add your preferred license at repository level (MIT, Apache-2.0, etc.) if public distribution is planned.
+- src/components: UI primitives and player controls.
+- src/config: constants and default project config.
+- src/engine: renderer/runtime logic and state.
+- src/engine/audio: analysis pipeline.
+- src/engine/rules: rule schema + compiler.
+- src/engine/project: project file serialization.
+- src/presets/default-project: startup preset bundle.
+
+Backend folders of interest:
+
+- backend/main.py: API entrypoint.
+- backend/audio_analyzer.py: server-side analysis utilities.
+- backend/presets: preset JSON corpus used for migration/defaults.
+
+## 8. Extension Playbook
+
+### Add a new parameter
+
+1. Define it in ParamStore PARAMS.
+2. Add default and migration-safe behavior.
+3. Consume it in render/audio logic.
+4. Ensure it survives snapshot/save/load round-trip.
+5. Verify undo/redo and project save/load.
+
+### Add a new rule input/output/operator
+
+1. Update RuleDictionary schema.
+2. Extend RuleCompiler logic.
+3. Validate UI controls in ControlPanel.
+4. Confirm expression and non-expression paths.
+5. Test with existing presets and empty state.
+
+### Add a new export format
+
+1. Implement in main.js orchestration or dedicated module.
+2. Reuse current snapshot/project helpers when possible.
+3. Ensure deterministic filenames and metadata.
+
+## 9. Known Risks and Guardrails
+
+1. Partial setMany updates can accidentally wipe schema-heavy state if not merged before migration.
+2. Rule/palette context must include params when evaluating palette or gradient helpers.
+3. Any change that merges preset libraries on project load can reintroduce cross-project contamination.
+4. Browser APIs for file handles require secure context constraints and user gestures.
+
+## 10. Testing Checklist (Manual)
+
+Minimum smoke tests before merge:
+
+1. Launch app and load an audio file.
+2. Verify play/pause/stop and paint-all paths.
+3. Change key params and observe live render updates.
+4. Save preset, reload preset, verify parity.
+5. Save project, modify state, reload project, verify full restoration.
+6. Attach file handle and verify autosave triggers after edits.
+7. Export PNG and verify file output.
+
+Rule engine checks:
+
+1. Create spawned-only rule and observe effect.
+2. Create allLivingFrame rule and verify persistent frame-by-frame influence.
+3. Test color logic using palette helpers.
+
+## 11. Release Workflow
+
+Typical publish path when this engine is embedded by seesound-platform:
+
+1. Build frontend dist in this repository.
+2. Sync dist into platform public assets.
+3. Build platform.
+4. Deploy platform.
+
+Keep source-of-truth discipline:
+
+- Engine source changes belong here.
+- Vendored build artifacts belong in seesound-platform.
+
+## 12. Troubleshooting
+
+### App opens but audio analysis is silent
+
+- Confirm user interaction occurred before playback (browser autoplay policy).
+- Check AudioContext state and resume path.
+- Verify supported audio format and successful decode.
+
+### Project autosave does not fire
+
+- Ensure a file handle is attached via open/save-as picker.
+- Confirm no active project-load transaction is in progress.
+
+### Presets missing after reload
+
+- Inspect localStorage for preset map key.
+- Confirm load path is project payload replacement (not merge) behavior.
+
+### Visual performance is low
+
+- Reduce max particles and particle render percent.
+- Lower canvas resolution.
+- Simplify rules that run every living frame.
+
+## 13. Contribution Guidelines
+
+1. Keep changes modular and local to one subsystem when possible.
+2. Preserve parameter schema compatibility; add migrations, do not silently break.
+3. Prefer small, testable event-contract changes over global rewrites.
+4. Document any new runtime event names in this README.
+5. If adding dependencies, justify runtime impact.
+
+## 14. Roadmap Suggestions
+
+Potential next milestones:
+
+1. Add automated unit tests for rule compilation and project payload migration.
+2. Add end-to-end browser tests for project save/load/autosave behavior.
+3. Separate render pipeline stages into testable micro-modules.
+4. Add optional worker/off-main-thread processing for heavy paint-all flows.
+5. Introduce explicit schema migration registry for project payload versions.
+
+## 15. Quick Start for New Developers
+
+1. Read this file fully once.
+2. Open frontend/src/main.js and trace startup to first render.
+3. Inspect ParamStore and RuleDictionary to understand the state contract.
+4. Run frontend dev server and validate one full preset + project save/load loop.
+5. Make one small feature branch change and ensure no project persistence regressions.
