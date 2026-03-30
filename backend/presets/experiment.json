@@ -355,6 +355,16 @@
       "resizableAndCollapsibleTabs": true,
       "tooltipsForAllControls": true,
       "tooltipContent": "feature_and_current_value"
+    },
+    "palettes": [],
+    "ruleUiState": {
+      "collapsedGroups": [],
+      "collapsedSubgroups": [],
+      "collapsedRules": [],
+      "selectedContextGroup": "spawnedParticles",
+      "selectedGroupPath": "",
+      "selectedGroupName": "",
+      "selectedSubgroup": ""
     }
   }
 }

@@ -18,15 +18,28 @@ import './styles/canvas.css'
 
 // ── Modules ───────────────────────────────────────────────────────────────────
 import * as THREE from 'three'
-import { params, setMany, subscribe, getSnapshot, RULE_SCHEMA_VERSION, RULE_DEBUG_FLAGS } from './engine/ParamStore.js'
+import {
+    params,
+    setMany,
+    subscribe,
+    getSnapshot,
+    resetToDefaults,
+    undo,
+    redo,
+    listPresets,
+    loadPreset,
+    savePreset,
+    RULE_SCHEMA_VERSION,
+    RULE_DEBUG_FLAGS,
+} from './engine/ParamStore.js'
 import { initControlPanel } from './engine/ControlPanel.js'
 import { ParticleSystem } from './engine/ParticleSystem.js'
 import { initAudioPlayer } from './components/AudioPlayer.js'
 import { initCanvasResizer } from './components/CanvasResizer.js'
 import {
-    blobToDataUrl,
     buildProjectPayload,
-    dataUrlToFile,
+    parseProjectText,
+    PROJECT_FILE_EXTENSION,
     triggerProjectDownload,
 } from './engine/project/ProjectIO.js'
 import {
@@ -66,9 +79,25 @@ renderer.setClearColor(0x000000, 1)
 renderer.autoClear = true
 
 const scene = new THREE.Scene()
-const originAxes = new THREE.AxesHelper(180)
+const ORIGIN_SIGN_SIZE = 250
+const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
+let originSignEnabled = true
 originAxes.userData.excludeFromPng = true
 scene.add(originAxes)
+function emitOriginSignState() {
+    window.dispatchEvent(new CustomEvent('seesound:origin-sign-state', {
+        detail: { enabled: originSignEnabled, size: ORIGIN_SIGN_SIZE },
+    }))
+}
+
+window.addEventListener('seesound:origin-sign-toggle', (e) => {
+    const requested = e?.detail?.enabled
+    if (typeof requested === 'boolean') originSignEnabled = requested
+    else originSignEnabled = !originSignEnabled
+    originAxes.visible = originSignEnabled
+    emitOriginSignState()
+})
+emitOriginSignState()
 const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 5000)
 const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, 5000)
 let camera = cameraOrtho
@@ -439,10 +468,6 @@ function _deriveAudioUsage(requiredInputsByTarget = null) {
         'canvasHeightPx',
         'canvasWidthUnits',
         'canvasHeightUnits',
-        'canvasBoundaryLeft',
-        'canvasBoundaryRight',
-        'canvasBoundaryTop',
-        'canvasBoundaryBottom',
         'audioLengthSec',
         'binEnergy',
     ])
@@ -1152,6 +1177,11 @@ let isPlaying = false
 let frameN = 0
 let paintAllRunId = 0
 let _currentAudioFileName = ''
+let _mediaRecorder = null
+let _recordingStream = null
+let _recordedChunks = []
+let _recordingAudioCleanup = null
+let _recordingEndedHandler = null
 
 function _sanitizeFilePart(value, fallback = 'untitled') {
     const text = String(value || '').trim()
@@ -1200,7 +1230,7 @@ async function _audioBlobFromElement(audioEl) {
 
 function _defaultProjectName() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    return `seesound-project-${stamp}.json`
+    return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
 }
 
 async function saveCanvasPng() {
@@ -1284,8 +1314,153 @@ function emitPaintAllState(playerEl, running) {
     }))
 }
 
+function emitRecordState(playerEl, running) {
+    playerEl.dispatchEvent(new CustomEvent('player:recordvideo-state', {
+        detail: { running }, bubbles: false,
+    }))
+}
+
+async function _buildRecordingAudioTrack(audioEl) {
+    if (!audioEl) return { track: null, cleanup: null }
+    try {
+        if (typeof audioEl.captureStream === 'function') {
+            const stream = audioEl.captureStream()
+            const track = stream.getAudioTracks()[0] || null
+            if (track) return { track, cleanup: null }
+        }
+    } catch {
+        // Fallback below.
+    }
+
+    ae.init(audioEl)
+    if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
+    const srcNode = ae.source || ae.streamSource
+    if (!srcNode || !ae.ctx) return { track: null, cleanup: null }
+
+    const dest = ae.ctx.createMediaStreamDestination()
+    srcNode.connect(dest)
+    const track = dest.stream.getAudioTracks()[0] || null
+    const cleanup = () => {
+        try { srcNode.disconnect(dest) } catch { }
+        try { dest.disconnect() } catch { }
+    }
+    return { track, cleanup }
+}
+
+async function startVideoRecording(playerEl, audioEl) {
+    if (_mediaRecorder) return
+    if (!audioEl?.src) return
+    if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
+        alert('Video recording is not supported in this browser.')
+        return
+    }
+
+    const canvasStream = canvas.captureStream(60)
+    const outputStream = new MediaStream()
+    for (const track of canvasStream.getVideoTracks()) outputStream.addTrack(track)
+
+    const { track: audioTrack, cleanup: audioCleanup } = await _buildRecordingAudioTrack(audioEl)
+    _recordingAudioCleanup = audioCleanup
+    if (audioTrack) outputStream.addTrack(audioTrack)
+
+    const mimeCandidates = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+    ]
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported?.(m)) || ''
+    const recorder = new MediaRecorder(outputStream, mimeType ? { mimeType } : undefined)
+    _recordedChunks = []
+    _recordingStream = outputStream
+    _mediaRecorder = recorder
+
+    recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) _recordedChunks.push(e.data)
+    }
+    recorder.onstop = () => {
+        const chunks = _recordedChunks
+        _recordedChunks = []
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
+        if (blob.size > 0) {
+            const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+            const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = `${audioTitle} - ${presetTitle}.webm`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            URL.revokeObjectURL(a.href)
+        }
+
+        if (_recordingStream) {
+            for (const t of _recordingStream.getTracks()) {
+                try { t.stop() } catch { }
+            }
+        }
+        _recordingStream = null
+        if (typeof _recordingAudioCleanup === 'function') {
+            try { _recordingAudioCleanup() } catch { }
+        }
+        _recordingAudioCleanup = null
+        if (_recordingEndedHandler) {
+            audioEl.removeEventListener('ended', _recordingEndedHandler)
+            _recordingEndedHandler = null
+        }
+        _mediaRecorder = null
+        emitRecordState(playerEl, false)
+    }
+
+    if (audioEl.paused) {
+        try { await audioEl.play() } catch { }
+    }
+
+    _recordingEndedHandler = () => {
+        if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop()
+    }
+    audioEl.addEventListener('ended', _recordingEndedHandler, { once: true })
+
+    recorder.start(200)
+    emitRecordState(playerEl, true)
+}
+
+function stopVideoRecording(playerEl) {
+    if (!_mediaRecorder) return
+    try {
+        if (_mediaRecorder.state !== 'inactive') _mediaRecorder.stop()
+    } catch {
+        _mediaRecorder = null
+        emitRecordState(playerEl, false)
+    }
+}
+
 async function runPaintAll(playerEl, audioEl) {
-    if (!(audioEl?.duration > 0)) return
+    if (!audioEl) return
+
+    if (!(audioEl.duration > 0)) {
+        await new Promise((resolve) => {
+            if (audioEl.duration > 0) {
+                resolve()
+                return
+            }
+            const done = () => {
+                cleanup()
+                resolve()
+            }
+            const cleanup = () => {
+                audioEl.removeEventListener('loadedmetadata', done)
+                audioEl.removeEventListener('canplay', done)
+                audioEl.removeEventListener('error', done)
+            }
+            audioEl.addEventListener('loadedmetadata', done, { once: true })
+            audioEl.addEventListener('canplay', done, { once: true })
+            audioEl.addEventListener('error', done, { once: true })
+        })
+        if (!(audioEl.duration > 0)) return
+    }
+
+    const liveWasPlaying = !!(!audioEl.paused && !audioEl.ended)
+    if (liveWasPlaying) audioEl.pause()
 
     const runId = ++paintAllRunId
     const srcBlob = await _audioBlobFromElement(audioEl)
@@ -1337,9 +1512,17 @@ async function runPaintAll(playerEl, audioEl) {
 
         await paintAudio.play()
 
+        const startedAt = performance.now()
+        const hardTimeoutMs = 3 * 60 * 1000
         let lastTime = -1
         let stalledFrames = 0
+        let stallRecoveries = 0
         while (runId === paintAllRunId && !paintAudio.ended) {
+            if ((performance.now() - startedAt) > hardTimeoutMs) {
+                console.warn('[PaintAll] Aborting due to timeout.')
+                break
+            }
+
             await new Promise((resolve) => requestAnimationFrame(resolve))
 
             paintAe.update()
@@ -1359,10 +1542,6 @@ async function runPaintAll(playerEl, audioEl) {
                 },
                 cameraCanvasWidthUnits: cameraUnits.w,
                 cameraCanvasHeightUnits: cameraUnits.h,
-                cameraCanvasBoundaryLeft: cameraUnits.left,
-                cameraCanvasBoundaryRight: cameraUnits.right,
-                cameraCanvasBoundaryTop: cameraUnits.top,
-                cameraCanvasBoundaryBottom: cameraUnits.bottom,
             }
             ps.update(paintAe, paintParams, w, h)
             applyRuleCameraOutput(ps.getCameraOutput())
@@ -1379,9 +1558,22 @@ async function runPaintAll(playerEl, audioEl) {
                 try { await paintAudio.play() } catch { break }
             }
 
-            // If playback gets stuck near the end, force completion.
-            if (stalledFrames > 120 && nowTime >= Math.max(0, (paintAudio.duration || 0) - 0.25)) {
-                paintAudio.currentTime = paintAudio.duration || nowTime
+            if (stalledFrames > 120) {
+                const dur = Number(paintAudio.duration) || 0
+                if (dur > 0 && nowTime >= Math.max(0, dur - 0.25)) {
+                    paintAudio.currentTime = dur
+                    break
+                }
+
+                if (dur > 0 && stallRecoveries < 12) {
+                    const step = Math.max(0.15, dur / 240)
+                    paintAudio.currentTime = Math.min(dur, nowTime + step)
+                    stallRecoveries++
+                    stalledFrames = 0
+                    continue
+                }
+
+                console.warn('[PaintAll] Aborting due to persistent playback stall.')
                 break
             }
         }
@@ -1398,6 +1590,9 @@ async function runPaintAll(playerEl, audioEl) {
         try { paintAe.analyser?.disconnect() } catch { }
         try { await paintAe.ctx?.close() } catch { }
         emitPaintAllState(playerEl, false)
+        if (liveWasPlaying && runId === paintAllRunId) {
+            try { await audioEl.play() } catch { }
+        }
     }
 }
 
@@ -1448,10 +1643,6 @@ function animate() {
             },
             cameraCanvasWidthUnits: cameraUnits.w,
             cameraCanvasHeightUnits: cameraUnits.h,
-            cameraCanvasBoundaryLeft: cameraUnits.left,
-            cameraCanvasBoundaryRight: cameraUnits.right,
-            cameraCanvasBoundaryTop: cameraUnits.top,
-            cameraCanvasBoundaryBottom: cameraUnits.bottom,
         }
         ps.update(ae, updateParams, w, h)
         applyRuleCameraOutput(ps.getCameraOutput())
@@ -1552,7 +1743,7 @@ function animate() {
         const cameraUnits = getCameraCanvasUnits()
         const canvW = cameraUnits.w
         const canvH = cameraUnits.h
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)}`
+        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
     }
 }
 animate()
@@ -1589,7 +1780,25 @@ animate()
         await saveCanvasPng()
     })
     playerEl.addEventListener('player:paintall', async () => {
-        await runPaintAll(playerEl, audioEl)
+        try {
+            await runPaintAll(playerEl, audioEl)
+        } catch (err) {
+            console.warn('[PaintAll] failed:', err)
+            alert('Paint-all failed before completion. Check console for details.')
+        }
+    })
+    playerEl.addEventListener('player:recordvideo-toggle', async () => {
+        if (_mediaRecorder) {
+            stopVideoRecording(playerEl)
+            return
+        }
+        try {
+            await startVideoRecording(playerEl, audioEl)
+        } catch (err) {
+            console.warn('[Recorder] start failed:', err)
+            alert('Failed to start recording.')
+            emitRecordState(playerEl, false)
+        }
     })
     playerEl.addEventListener('player:playbackrate', (e) => {
         const next = Number(e?.detail?.rate)
@@ -1602,54 +1811,247 @@ animate()
         _currentAudioFileName = loadedAudioFile?.name || ''
     })
 
-    const saveProject = async () => {
+    let projectFileHandle = null
+    let projectFileName = ''
+    let projectAutoSaveTimer = null
+    let projectLoadInProgress = false
+
+    const emitProjectFileState = () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-file-state', {
+            detail: { fileName: String(projectFileName || '').trim() },
+        }))
+    }
+
+    const _collectPresetLibrary = async () => {
+        const names = await listPresets()
+        const out = []
+        for (const name of names) {
+            const data = await loadPreset(name)
+            if (!data?.params || typeof data.params !== 'object') continue
+            out.push({ name: String(name || ''), params: data.params })
+        }
+        return out
+    }
+
+    const _ensureAtLeastOnePreset = async () => {
+        const names = await listPresets()
+        const normal = names.filter((name) => !String(name || '').startsWith('rule__'))
+        if (normal.length > 0) return
+        await savePreset('default', getSnapshot())
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    }
+
+    const _restorePresetLibrary = async (presetLibrary) => {
+        if (!Array.isArray(presetLibrary)) return
+        for (const entry of presetLibrary) {
+            const name = String(entry?.name || '').trim()
+            const presetParams = entry?.params
+            if (!name || !presetParams || typeof presetParams !== 'object') continue
+            await savePreset(name, presetParams)
+        }
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    }
+
+    const _writeProjectToHandle = async (handle, payload) => {
+        const writable = await handle.createWritable()
+        await writable.write(JSON.stringify(payload, null, 2))
+        await writable.close()
+    }
+
+    const _buildCurrentProjectPayload = async () => {
+        const snapshot = getSnapshot()
+        const presetLibrary = await _collectPresetLibrary()
+        const title = _currentPresetTitle()
+        return buildProjectPayload({
+            params: snapshot,
+            presetName: title,
+            presetLibrary,
+            projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
+        })
+    }
+
+    const saveProject = async ({ forceDownload = false } = {}) => {
         try {
-            const snapshot = getSnapshot()
-            const audioBlob = loadedAudioFile || await _audioBlobFromElement(audioEl)
-            const audioDataUrl = audioBlob ? await blobToDataUrl(audioBlob) : ''
-            const payload = buildProjectPayload({
-                params: snapshot,
-                presetName: '',
-                audioDataUrl,
-                audioFileName: loadedAudioFile?.name || 'project-audio.wav',
-            })
+            const payload = await _buildCurrentProjectPayload()
+            if (!forceDownload && projectFileHandle) {
+                await _writeProjectToHandle(projectFileHandle, payload)
+                window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
+                    detail: { fileName: projectFileName || _defaultProjectName() },
+                }))
+                emitProjectFileState()
+                return
+            }
             triggerProjectDownload(payload, _defaultProjectName())
         } catch (err) {
             console.warn('[Project] save failed:', err)
         }
     }
 
+    const scheduleProjectAutosave = () => {
+        if (!projectFileHandle || projectLoadInProgress) return
+        if (projectAutoSaveTimer) clearTimeout(projectAutoSaveTimer)
+        projectAutoSaveTimer = setTimeout(async () => {
+            projectAutoSaveTimer = null
+            await saveProject({ forceDownload: false })
+        }, 450)
+    }
+
     const loadProjectFromPayload = async (payload) => {
         try {
+            projectLoadInProgress = true
             if (payload.params && typeof payload.params === 'object') {
                 setMany(payload.params)
             }
-
-            const dataUrl = payload?.audio?.dataUrl
-            if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
-                const fileName = payload?.audio?.fileName || 'project-audio.wav'
-                const file = dataUrlToFile(dataUrl, fileName)
-                loadedAudioFile = file
-                _currentAudioFileName = file?.name || ''
-                if (audioEl.src?.startsWith('blob:')) URL.revokeObjectURL(audioEl.src)
-                audioEl.src = URL.createObjectURL(file)
-                audioEl.load()
-                ae.audioEl = audioEl
+            if (Array.isArray(payload.presetLibrary)) {
+                await _restorePresetLibrary(payload.presetLibrary)
             }
+            await _ensureAtLeastOnePreset()
+            window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+                detail: {
+                    fileName: projectFileName,
+                    presetName: String(payload?.presetName || ''),
+                },
+            }))
         } catch (err) {
             console.warn('[Project] load failed:', err)
+        } finally {
+            projectLoadInProgress = false
         }
     }
 
-    playerEl.addEventListener('player:saveproject', saveProject)
+    const openProjectWithPicker = async () => {
+        if (typeof window.showOpenFilePicker !== 'function') return false
+        try {
+            const [handle] = await window.showOpenFilePicker({
+                multiple: false,
+                excludeAcceptAllOption: false,
+                types: [{
+                    description: 'SEESOUND Project',
+                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
+                }],
+            })
+            if (!handle) return false
+            const file = await handle.getFile()
+            const text = await file.text()
+            const payload = parseProjectText(text)
+            projectFileHandle = handle
+            projectFileName = String(file.name || '').trim()
+            await loadProjectFromPayload(payload)
+            emitProjectFileState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    const createNewProjectWithPicker = async (suggested = '', resetState = true) => {
+        if (typeof window.showSaveFilePicker !== 'function') return false
+        try {
+            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
+            const handle = await window.showSaveFilePicker({
+                suggestedName,
+                types: [{
+                    description: 'SEESOUND Project',
+                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
+                }],
+            })
+            if (!handle) return false
+
+            if (resetState) {
+                resetToDefaults()
+                await _ensureAtLeastOnePreset()
+            }
+
+            projectFileHandle = handle
+            projectFileName = String(handle.name || suggestedName).trim()
+            await saveProject({ forceDownload: false })
+            emitProjectFileState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    const saveProjectAsWithPicker = async (suggested = '') => {
+        if (typeof window.showSaveFilePicker !== 'function') return false
+        try {
+            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
+            const handle = await window.showSaveFilePicker({
+                suggestedName,
+                types: [{
+                    description: 'SEESOUND Project',
+                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
+                }],
+            })
+            if (!handle) return false
+            projectFileHandle = handle
+            projectFileName = String(handle.name || suggestedName).trim()
+            await saveProject({ forceDownload: false })
+            emitProjectFileState()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    playerEl.addEventListener('player:saveproject', async () => {
+        if (projectFileHandle) {
+            await saveProject({ forceDownload: false })
+            return
+        }
+        const ok = await saveProjectAsWithPicker(_defaultProjectName())
+        if (!ok) await saveProject({ forceDownload: true })
+    })
     playerEl.addEventListener('player:loadproject', async (e) => {
         await loadProjectFromPayload(e?.detail?.payload || {})
     })
 
-    window.addEventListener('seesound:project-save-request', saveProject)
-    window.addEventListener('seesound:project-load-request', async (e) => {
-        await loadProjectFromPayload(e?.detail?.payload || {})
+    window.addEventListener('seesound:project-save-request', async () => {
+        if (projectFileHandle) {
+            await saveProject({ forceDownload: false })
+            return
+        }
+        const ok = await saveProjectAsWithPicker(_defaultProjectName())
+        if (!ok) await saveProject({ forceDownload: true })
     })
+    window.addEventListener('seesound:project-save-as-request', async () => {
+        const suggested = projectFileName
+            ? `${projectFileName}${PROJECT_FILE_EXTENSION}`
+            : _defaultProjectName()
+        const ok = await saveProjectAsWithPicker(suggested)
+        if (!ok) await saveProject({ forceDownload: true })
+    })
+    window.addEventListener('seesound:project-load-request', async (e) => {
+        const detail = e?.detail || {}
+        const incomingName = String(detail.fileName || '').trim()
+        if (incomingName) {
+            projectFileName = incomingName
+            emitProjectFileState()
+        }
+        await loadProjectFromPayload(detail.payload || {})
+        if (!projectFileHandle && typeof window.showSaveFilePicker === 'function') {
+            const shouldAttach = window.confirm('Attach this project to an autosave file now?')
+            if (shouldAttach) {
+                await createNewProjectWithPicker(String(detail.fileName || _defaultProjectName()), false)
+            }
+        }
+    })
+    window.addEventListener('seesound:project-open-request', async () => {
+        await openProjectWithPicker()
+    })
+    window.addEventListener('seesound:project-new-request', async () => {
+        await createNewProjectWithPicker()
+    })
+    window.addEventListener('seesound:preset-library-changed', () => {
+        scheduleProjectAutosave()
+    })
+
+    subscribe((_, key) => {
+        if (!key || key === '*' || projectLoadInProgress) return
+        scheduleProjectAutosave()
+    })
+
+    emitProjectFileState()
 
 }
 
@@ -1681,6 +2083,32 @@ function emitCanvasSize(w, h) {
         },
     }))
 }
+
+function _isTypingTarget(node) {
+    const elNode = node instanceof Element ? node : null
+    if (!elNode) return false
+    return !!elNode.closest('input,textarea,select,[contenteditable="true"]')
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return
+    if (!(e.ctrlKey || e.metaKey)) return
+    if (e.altKey) return
+    if (_isTypingTarget(e.target)) return
+
+    const key = String(e.key || '').toLowerCase()
+    if (key === 'z' && !e.shiftKey) {
+        if (!undo()) return
+        e.preventDefault()
+        e.stopPropagation()
+        return
+    }
+    if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        if (!redo()) return
+        e.preventDefault()
+        e.stopPropagation()
+    }
+})
 
 function applyCanvasScaleFromParams() {
     const scalePct = Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale) || 100)))

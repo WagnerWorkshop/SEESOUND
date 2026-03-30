@@ -1,12 +1,12 @@
 {
-  "name": "linear colors",
+  "name": "experiment2",
   "params": {
     "inputGain": 0.79,
     "amplitudeThreshold": 0,
     "freqNormMin": 64,
-    "freqNormMax": 4000,
+    "freqNormMax": 5000,
     "fftSize": 16384,
-    "binMagnitudeNormMin": -90,
+    "binMagnitudeNormMin": -70,
     "binMagnitudeNormMax": 0,
     "binFluxNormMin": 0,
     "binFluxNormMax": 0.5,
@@ -90,7 +90,7 @@
           {
             "operator": "set",
             "output": "y",
-            "expression": "(normFreq-0.5)*canvasHeightPx"
+            "expression": "(zeroCrossingRate*20-0.5)*canvasHeightPx"
           }
         ],
         "order": 2
@@ -128,7 +128,7 @@
           {
             "operator": "set",
             "output": "particleCount",
-            "input": "binMagnitude"
+            "expression": "binMagnitude*2"
           }
         ],
         "order": 4
@@ -151,25 +151,6 @@
           }
         ],
         "order": 5
-      },
-      {
-        "id": "soft",
-        "group": "Appearance / size",
-        "subgroup": "",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "always"
-        },
-        "actions": [
-          {
-            "operator": "multiply",
-            "output": "size",
-            "expression": "(binMagnitude) * 6"
-          }
-        ],
-        "order": 6
       },
       {
         "id": "shape",
@@ -208,6 +189,25 @@
           }
         ],
         "order": 8
+      },
+      {
+        "id": "z stereo",
+        "group": "SPACING / group-1",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "z",
+            "expression": "(pan)*canvasHeightPx"
+          }
+        ],
+        "order": 9
       }
     ],
     "ruleEngineEnabled": true,
@@ -352,7 +352,7 @@
       "collapsedGroups": [],
       "collapsedSubgroups": [],
       "collapsedRules": [],
-      "selectedContextGroup": "spawnedParticles",
+      "selectedContextGroup": "camera",
       "selectedGroupPath": "",
       "selectedGroupName": "",
       "selectedSubgroup": ""

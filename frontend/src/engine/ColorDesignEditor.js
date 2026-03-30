@@ -1208,10 +1208,16 @@ export function openColorDesignEditor() {
         }
         overlay.remove()
         document.removeEventListener('keydown', _onKey)
+        window.removeEventListener('seesound:commit-pending-color-edits', _onCommitPendingColorEdits)
     }
 
     function _onKey(e) {
         if (e.key === 'Escape') _close()
+    }
+
+    function _onCommitPendingColorEdits() {
+        _syncRowsToPalette(true)
+        if (state.dirty) _applyToStore()
     }
 
     btnClose.addEventListener('click', _close)
@@ -1219,6 +1225,7 @@ export function openColorDesignEditor() {
         if (e.target === overlay) _close()
     })
     document.addEventListener('keydown', _onKey)
+    window.addEventListener('seesound:commit-pending-color-edits', _onCommitPendingColorEdits)
 
     state.unsubscribe = subscribe((snapshot, key) => {
         if (key !== 'palettes' && key !== '*') return

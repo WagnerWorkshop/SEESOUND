@@ -30,7 +30,31 @@ const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     ruleEngineEnabled: true,
     ruleSchemaVersion: RULE_SCHEMA_VERSION,
     palettes: [],
+    ruleUiState: {
+        collapsedGroups: [],
+        collapsedSubgroups: [],
+        collapsedRules: [],
+        standaloneGroups: [],
+        selectedContextGroup: 'spawnedParticles',
+        selectedGroupPath: '',
+        selectedGroupName: '',
+        selectedSubgroup: '',
+    },
 })
+
+function _sanitizeRuleUiState(raw) {
+    const source = (raw && typeof raw === 'object') ? raw : {}
+    return {
+        collapsedGroups: Array.isArray(source.collapsedGroups) ? source.collapsedGroups.map((v) => String(v || '').trim()).filter(Boolean) : [],
+        collapsedSubgroups: [],
+        collapsedRules: Array.isArray(source.collapsedRules) ? source.collapsedRules.map((v) => String(v || '').trim()).filter(Boolean) : [],
+        selectedContextGroup: String(source.selectedContextGroup || 'spawnedParticles'),
+        selectedGroupPath: String(source.selectedGroupPath || source.selectedGroupName || ''),
+        selectedGroupName: String(source.selectedGroupPath || source.selectedGroupName || ''),
+        selectedSubgroup: '',
+        standaloneGroups: Array.isArray(source.standaloneGroups) ? source.standaloneGroups.map((v) => String(v || '').trim()).filter(Boolean) : [],
+    }
+}
 
 function _sanitizePalettes(rawPalettes) {
     if (!Array.isArray(rawPalettes)) return []
@@ -349,9 +373,9 @@ export const PARAMS = [
         canDisable: false,
     },
     {
-        key: 'particlesPerOctave', group: 'geometry', label: 'Particles Per Octave',
-        min: 10, max: 500, step: 1, default: 100, unit: 'bins/oct',
-        desc: 'Controls log-bucket density. Total buckets = 10 octaves × this value (16 Hz to 16 kHz).',
+        key: 'particlesByFrame', group: 'geometry', label: 'Particles By Frame',
+        min: 100, max: 5000, step: 1, default: 1000, unit: 'N',
+        desc: 'Number of log-frequency spawn buckets per frame. Step ratio is k = (freqMax / freqMin)^(1/N).',
         canDisable: false,
     },
 
@@ -424,6 +448,14 @@ export function migrateRuleSchema(snapshot) {
         ? Number(source.ruleSchemaVersion)
         : DEFAULT_RULE_ENGINE_STATE.ruleSchemaVersion
     migrated.palettes = _sanitizePalettes(source.palettes)
+    migrated.ruleUiState = _sanitizeRuleUiState(source.ruleUiState)
+
+    // Legacy compatibility: old presets used particlesPerOctave (10..500),
+    // where total buckets were 10 * particlesPerOctave (100..5000).
+    if (!Number.isFinite(Number(source.particlesByFrame)) && Number.isFinite(Number(source.particlesPerOctave))) {
+        const legacy = Math.round(Number(source.particlesPerOctave) * 10)
+        migrated.particlesByFrame = Math.max(100, Math.min(5000, legacy))
+    }
 
     if (sanitization.rejected.length > 0) {
         console.warn('[RuleEngine] Rejected malformed ruleBlocks during migration', sanitization.rejected)
@@ -443,6 +475,7 @@ function _buildInitial() {
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
     out.palettes = _sanitizePalettes(saved.palettes)
+    out.ruleUiState = _sanitizeRuleUiState(saved.ruleUiState)
     return out
 }
 
@@ -451,6 +484,84 @@ export const params = _buildInitial()
 
 /** Set of bypassed (disabled) param keys. */
 export const disabled = _loadDisabled()
+
+const _historyPast = []
+const _historyFuture = []
+const _HISTORY_LIMIT = 300
+let _historyPaused = false
+
+function _deepClone(value) {
+    return JSON.parse(JSON.stringify(value))
+}
+
+function _captureState() {
+    return {
+        params: _deepClone(params),
+        disabled: [...disabled],
+    }
+}
+
+function _statesEqual(a, b) {
+    if (!a || !b) return false
+    if (JSON.stringify(a.params) !== JSON.stringify(b.params)) return false
+    const ad = Array.isArray(a.disabled) ? [...a.disabled].sort() : []
+    const bd = Array.isArray(b.disabled) ? [...b.disabled].sort() : []
+    return JSON.stringify(ad) === JSON.stringify(bd)
+}
+
+function _applyState(state) {
+    const merged = migrateRuleSchema((state && typeof state === 'object' ? state.params : {}) || {})
+    for (const key of Object.keys(params)) delete params[key]
+    for (const [k, v] of Object.entries(merged)) {
+        params[k] = v
+        _notify(k, v)
+    }
+
+    const nextDisabled = new Set(Array.isArray(state?.disabled) ? state.disabled : [])
+    disabled.clear()
+    for (const key of nextDisabled) disabled.add(key)
+    try { localStorage.setItem(DISABLED_KEY, JSON.stringify([...disabled])) } catch { }
+    _notify('disabled', null)
+    _notify('*', merged)
+}
+
+function _pushUndoSnapshot() {
+    if (_historyPaused) return
+    const snapshot = _captureState()
+    const prev = _historyPast[_historyPast.length - 1]
+    if (prev && _statesEqual(prev, snapshot)) return
+    _historyPast.push(snapshot)
+    if (_historyPast.length > _HISTORY_LIMIT) _historyPast.splice(0, _historyPast.length - _HISTORY_LIMIT)
+    _historyFuture.length = 0
+}
+
+export function canUndo() {
+    return _historyPast.length > 0
+}
+
+export function canRedo() {
+    return _historyFuture.length > 0
+}
+
+export function undo() {
+    if (!canUndo()) return false
+    const prev = _historyPast.pop()
+    const current = _captureState()
+    _historyFuture.push(current)
+    _historyPaused = true
+    try { _applyState(prev) } finally { _historyPaused = false }
+    return true
+}
+
+export function redo() {
+    if (!canRedo()) return false
+    const next = _historyFuture.pop()
+    const current = _captureState()
+    _historyPast.push(current)
+    _historyPaused = true
+    try { _applyState(next) } finally { _historyPaused = false }
+    return true
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 4  SUBSCRIBER PATTERN
@@ -477,12 +588,15 @@ function _notify(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function set(key, value) {
+    _pushUndoSnapshot()
     params[key] = value
     _notify(key, value)
 }
 
 export function setMany(updates) {
-    const normalized = migrateRuleSchema(updates)
+    _pushUndoSnapshot()
+    const merged = { ...params, ...(updates && typeof updates === 'object' ? updates : {}) }
+    const normalized = migrateRuleSchema(merged)
     for (const [k, v] of Object.entries(normalized)) {
         params[k] = v
         _notify(k, v)
@@ -491,12 +605,14 @@ export function setMany(updates) {
 }
 
 export function resetToDefaults() {
+    _pushUndoSnapshot()
     for (const p of PARAMS) params[p.key] = p.default
     params.tonicHz = 261.63
     params.ruleBlocks = []
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
     params.palettes = []
+    params.ruleUiState = _sanitizeRuleUiState(DEFAULT_RULE_ENGINE_STATE.ruleUiState)
     _notify('*', null)
 }
 
@@ -509,6 +625,7 @@ export function saveUserDefault(key, value) {
 }
 
 export function toggleDisabled(key) {
+    _pushUndoSnapshot()
     if (disabled.has(key)) disabled.delete(key)
     else disabled.add(key)
     try { localStorage.setItem(DISABLED_KEY, JSON.stringify([...disabled])) } catch { /**/ }
@@ -566,9 +683,16 @@ function _buildCanonicalPresetParams(source) {
     try {
         const incoming = (source && typeof source === 'object') ? source : {}
         const canonical = { ...incoming }
+        const legacyParticlesPerOctave = Number(incoming.particlesPerOctave)
+        const hasLegacyParticlesPerOctave = Number.isFinite(legacyParticlesPerOctave)
 
         for (const paramDef of PARAMS) {
             const hasSavedValue = Object.prototype.hasOwnProperty.call(incoming, paramDef.key)
+            if (paramDef.key === 'particlesByFrame' && !hasSavedValue && hasLegacyParticlesPerOctave) {
+                const legacy = Math.round(legacyParticlesPerOctave * 10)
+                canonical.particlesByFrame = Math.max(100, Math.min(5000, legacy))
+                continue
+            }
             if (!hasSavedValue || incoming[paramDef.key] === undefined || incoming[paramDef.key] === null) {
                 canonical[paramDef.key] = paramDef.default
                 continue
@@ -594,6 +718,7 @@ function _buildCanonicalPresetParams(source) {
             canonical.ruleSchemaVersion = Number(incoming.ruleSchemaVersion)
         }
         canonical.palettes = _sanitizePalettes(incoming.palettes)
+        canonical.ruleUiState = _sanitizeRuleUiState(incoming.ruleUiState)
 
         if (Array.isArray(incoming._disabled)) {
             canonical._disabled = [...incoming._disabled]

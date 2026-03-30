@@ -48,10 +48,6 @@ const _inputEntries = [
     { id: 'canvasHeightPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'canvasWidthUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'canvasHeightUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasBoundaryLeft', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasBoundaryRight', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasBoundaryTop', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasBoundaryBottom', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], category: 'context' },
     { id: 'audioLengthSec', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
 ]
 

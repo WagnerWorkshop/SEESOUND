@@ -1,54 +1,15 @@
 export const PROJECT_SCHEMA_VERSION = 1
+export const PROJECT_FILE_EXTENSION = '.ssp.json'
 
-function _toBase64(bytes) {
-    let out = ''
-    const chunk = 0x8000
-    for (let i = 0; i < bytes.length; i += chunk) {
-        const slice = bytes.subarray(i, i + chunk)
-        out += String.fromCharCode(...slice)
-    }
-    return btoa(out)
-}
-
-function _fromBase64(base64) {
-    const binary = atob(base64)
-    const out = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
-    return out
-}
-
-export async function blobToDataUrl(blob) {
-    const bytes = new Uint8Array(await blob.arrayBuffer())
-    const mime = blob.type || 'application/octet-stream'
-    return `data:${mime};base64,${_toBase64(bytes)}`
-}
-
-export function dataUrlToFile(dataUrl, fileName = 'audio.bin') {
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
-        throw new Error('Invalid embedded audio payload.')
-    }
-    const comma = dataUrl.indexOf(',')
-    if (comma < 0) throw new Error('Malformed data URL.')
-    const head = dataUrl.slice(0, comma)
-    const body = dataUrl.slice(comma + 1)
-    const mimeMatch = head.match(/^data:([^;]+);base64$/)
-    const mime = mimeMatch?.[1] || 'application/octet-stream'
-    const bytes = _fromBase64(body)
-    return new File([bytes], fileName, { type: mime })
-}
-
-export function buildProjectPayload({ params, presetName = '', audioDataUrl = '', audioFileName = '' }) {
+export function buildProjectPayload({ params, presetName = '', presetLibrary = [], projectName = '' }) {
     return {
         schemaVersion: PROJECT_SCHEMA_VERSION,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        projectName: String(projectName || ''),
         presetName: String(presetName || ''),
         params: params && typeof params === 'object' ? params : {},
-        audio: audioDataUrl
-            ? {
-                fileName: audioFileName || 'audio.bin',
-                dataUrl: audioDataUrl,
-            }
-            : null,
+        presetLibrary: Array.isArray(presetLibrary) ? presetLibrary : [],
     }
 }
 
@@ -60,7 +21,15 @@ export function parseProjectText(text) {
     if (!payload.params || typeof payload.params !== 'object') {
         throw new Error('Project file has no params object.')
     }
-    return payload
+    return {
+        schemaVersion: Number.isFinite(Number(payload.schemaVersion)) ? Number(payload.schemaVersion) : PROJECT_SCHEMA_VERSION,
+        createdAt: payload.createdAt || null,
+        updatedAt: payload.updatedAt || null,
+        projectName: String(payload.projectName || ''),
+        presetName: String(payload.presetName || ''),
+        params: payload.params,
+        presetLibrary: Array.isArray(payload.presetLibrary) ? payload.presetLibrary : [],
+    }
 }
 
 export function triggerProjectDownload(payload, fileName = 'seesound-project.json') {

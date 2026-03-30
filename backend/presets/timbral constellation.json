@@ -1,50 +1,47 @@
 {
-  "name": "timbral constellation abstract clustering",
+  "name": "timbral constellation",
   "params": {
     "inputGain": 1,
     "amplitudeThreshold": -56,
+    "freqNormMin": 64,
+    "freqNormMax": 20000,
+    "fftSize": 2048,
+    "binMagnitudeNormMin": -70,
+    "binMagnitudeNormMax": 0,
+    "binFluxNormMin": 0,
+    "binFluxNormMax": 0.5,
+    "binPhaseDeviationNormMin": 0,
+    "binPhaseDeviationNormMax": 3.14,
+    "binAttackTimeNormMin": 5,
+    "binAttackTimeNormMax": 500,
+    "globalRmsNormMin": -60,
+    "globalRmsNormMax": 0,
+    "spectralCentroidNormMin": 150,
+    "spectralCentroidNormMax": 8000,
+    "globalSpectralFluxNormMin": 0,
+    "globalSpectralFluxNormMax": 100,
+    "spectralFlatnessNormMin": 0,
+    "spectralFlatnessNormMax": 1,
     "defaultParticleSize": 2,
     "canvasWidth": 2400,
     "canvasHeight": 1400,
     "canvasScale": 52,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
     "maxParticles": 2000000,
     "particleRenderPercent": 28,
-    "blendMode": "screen",
+    "particlesByFrame": 1000,
+    "blendMode": "alpha",
     "cameraProjection": "perspective",
     "cameraAxoPreset": "orthoXY",
     "persistMode": 1,
     "tonicHz": 261.63,
     "ruleBlocks": [
       {
-        "id": "gatekeeper-low-bin-magnitude",
-        "group": "GATE",
-        "subgroup": "gatekeeper",
-        "enabled": true,
-        "target": "spawnedParticles",
-        "scope": "spawnedOnly",
-        "condition": {
-          "operator": "<",
-          "input": "binMagnitude",
-          "value": 0.1
-        },
-        "actions": [
-          {
-            "operator": "set",
-            "output": "opacity",
-            "value": 0
-          },
-          {
-            "operator": "set",
-            "output": "particleCount",
-            "value": 0
-          }
-        ],
-        "order": 0
-      },
-      {
         "id": "x-from-bin-flux",
-        "group": "SPATIAL",
-        "subgroup": "X",
+        "group": "SPATIAL / X",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -55,15 +52,15 @@
           {
             "operator": "set",
             "output": "x",
-            "expression": "binFlux * (canvasWidthUnits) * 0.45"
+            "expression": "binFlux * (canvasWidthPx)"
           }
         ],
-        "order": 1
+        "order": 0
       },
       {
         "id": "y-from-bin-phase-deviation",
-        "group": "SPATIAL",
-        "subgroup": "Y",
+        "group": "SPATIAL / Y",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -74,15 +71,15 @@
           {
             "operator": "set",
             "output": "y",
-            "expression": "(binPhaseDeviation - 0.5) * (canvasHeightUnits) * 0.95"
+            "expression": "(binPhaseDeviation - 0.5) * (canvasHeightPx) * 0.95"
           }
         ],
-        "order": 2
+        "order": 1
       },
       {
         "id": "z-depth-from-normfreq",
-        "group": "SPATIAL",
-        "subgroup": "Z",
+        "group": "SPATIAL / Z",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -93,15 +90,15 @@
           {
             "operator": "set",
             "output": "z",
-            "expression": "(1 - normFreq) * max(canvasWidthUnits, canvasHeightUnits) * 0.32"
+            "expression": "deltaTime*10*canvasHeightPx"
           }
         ],
-        "order": 3
+        "order": 2
       },
       {
         "id": "hue-from-bin-flux",
-        "group": "COLOR",
-        "subgroup": "HUE",
+        "group": "COLOR / HUE",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -112,15 +109,15 @@
           {
             "operator": "set",
             "output": "hue",
-            "expression": "clamp((binFlux + 1) * 0.5, 0, 1)"
+            "expression": "clamp((normFreq), 0, 1)"
           }
         ],
-        "order": 4
+        "order": 3
       },
       {
         "id": "saturation-invert-phase-deviation",
-        "group": "COLOR",
-        "subgroup": "SATURATION",
+        "group": "COLOR / SATURATION",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -134,12 +131,12 @@
             "expression": "clamp(1 - binPhaseDeviation, 0, 1)"
           }
         ],
-        "order": 5
+        "order": 4
       },
       {
         "id": "size-from-bin-magnitude",
-        "group": "APPEARANCE",
-        "subgroup": "SIZE",
+        "group": "APPEARANCE / SIZE",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -153,12 +150,12 @@
             "expression": "0.2 + binMagnitude * 6"
           }
         ],
-        "order": 6
+        "order": 5
       },
       {
         "id": "opacity-from-bin-magnitude",
-        "group": "APPEARANCE",
-        "subgroup": "OPACITY",
+        "group": "APPEARANCE / OPACITY",
+        "subgroup": "",
         "enabled": true,
         "target": "spawnedParticles",
         "scope": "spawnedOnly",
@@ -172,35 +169,11 @@
             "expression": "clamp(binMagnitude * 1.35, 0, 1)"
           }
         ],
-        "order": 7
+        "order": 6
       }
     ],
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
-    "_disabled": [],
-    "freqNormMin": 64,
-    "freqNormMax": 20000,
-    "binFluxNormMin": 0,
-    "binFluxNormMax": 0.5,
-    "binPhaseDeviationNormMin": 0,
-    "binPhaseDeviationNormMax": 3.14,
-    "binMagnitudeNormMin": -70,
-    "binMagnitudeNormMax": 0,
-    "globalRmsNormMin": -60,
-    "globalRmsNormMax": 0,
-    "globalSpectralFluxNormMin": 0,
-    "globalSpectralFluxNormMax": 100,
-    "spectralCentroidNormMin": 150,
-    "spectralCentroidNormMax": 8000,
-    "spectralFlatnessNormMin": 0,
-    "spectralFlatnessNormMax": 1,
-    "binAttackTimeNormMin": 5,
-    "binAttackTimeNormMax": 500,
-    "fftSize": 2048,
-    "defaultBackgroundHue": 0,
-    "defaultBackgroundSaturation": 0,
-    "defaultBackgroundLightness": 0,
-    "particlesPerOctave": 100,
     "palettes": [],
     "ruleUiState": {
       "collapsedGroups": [],
@@ -209,7 +182,20 @@
       "selectedContextGroup": "spawnedParticles",
       "selectedGroupPath": "",
       "selectedGroupName": "",
-      "selectedSubgroup": ""
+      "selectedSubgroup": "",
+      "standaloneGroups": []
+    },
+    "particlesPerOctave": 100,
+    "_disabled": [],
+    "cameraFov": 104,
+    "enableAggressiveThinning": true,
+    "dominantPeakCulling": true,
+    "peakEnergyThreshold": 0.18,
+    "uiDirectives": {
+      "responsiveInterface": true,
+      "resizableAndCollapsibleTabs": true,
+      "tooltipsForAllControls": true,
+      "tooltipContent": "feature_and_current_value"
     }
   }
 }

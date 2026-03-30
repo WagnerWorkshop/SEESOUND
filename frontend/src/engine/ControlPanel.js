@@ -193,15 +193,7 @@ function buildSliderRow(p) {
         title: `Current value${p.unit ? ' (' + p.unit + ')' : ''}`,
     })
 
-    // Default display input (editable via typing then Enter)
-    const savedDefaults = (() => { try { return JSON.parse(localStorage.getItem('seesound_user_defaults_v4') || '{}') } catch { return {} } })()
-    const defInput = el('input', 'cp-def-input', {
-        type: 'number', step: p.step,
-        value: fmt(p, savedDefaults[p.key] ?? p.default),
-        title: 'Saved default — press Enter to save',
-    })
-
-    const saveStar = el('button', 'cp-star-btn', { text: '★', title: 'Save current value as session default' })
+    const saveStar = el('button', 'cp-star-btn', { text: '★', title: 'Save current value as default' })
     let previousValue = Number(params[p.key])
     slider.addEventListener('input', () => {
         const v = parseFloat(slider.value)
@@ -220,19 +212,8 @@ function buildSliderRow(p) {
     })
     valInput.addEventListener('keydown', e => { if (e.key === 'Escape') valInput.value = fmt(p, params[p.key]) })
 
-    defInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            const v = parseFloat(defInput.value)
-            if (!isNaN(v)) saveUserDefault(p.key, v)
-            defInput.blur()
-        }
-        if (e.key === 'Escape') defInput.blur()
-    })
-    defInput.addEventListener('blur', () => { defInput.value = fmt(p, parseFloat(defInput.value) || (savedDefaults[p.key] ?? p.default)) })
-
     saveStar.addEventListener('click', () => {
         saveUserDefault(p.key, params[p.key])
-        defInput.value = fmt(p, params[p.key])
     })
 
     let applyAllBtn = null
@@ -261,7 +242,7 @@ function buildSliderRow(p) {
         row.classList.toggle('cp-row-disabled', disabled.has(p.key))
     })
 
-    wrap.append(slider, valInput, defInput, saveStar, ...(applyAllBtn ? [applyAllBtn] : []), buildInfoBtn(p))
+    wrap.append(slider, valInput, saveStar, ...(applyAllBtn ? [applyAllBtn] : []), buildInfoBtn(p))
     row.appendChild(wrap)
     return row
 }
@@ -372,34 +353,34 @@ function buildPresetBar() {
     // ── Row 0: project save/load
     const row0 = el('div', 'cp-preset-row')
     const projectLabel = el('span', 'cp-preset-label', { text: 'PROJECT' })
-    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project (Ctrl+S / Ctrl+Shift+S)' })
+    const btnProjectNew = el('button', 'cp-preset-btn', { text: '＋', title: 'Create new project file (defaults)' })
+    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project (current file)' })
+    const btnProjectSaveAs = el('button', 'cp-preset-btn', { text: '🖫+', title: 'Save project as...' })
     const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
     const btnPaletteMgr = el('button', 'cp-preset-btn', { text: '🎨', title: 'Open Palette Manager' })
-    const projectInput = el('input', '', { type: 'file', accept: '.json,.seesound-project,.seesound-project.json' })
+    const projectInput = el('input', '', { type: 'file', accept: '.ssp.json,.json' })
     projectInput.style.display = 'none'
-    row0.append(projectLabel, btnProjectSave, btnProjectLoad, btnPaletteMgr)
+    row0.append(projectLabel, btnProjectNew, btnProjectSave, btnProjectSaveAs, btnProjectLoad, btnPaletteMgr)
 
-    // ── Row 1: select + Load + Delete
+    // select + Load + Delete
     const row1 = el('div', 'cp-preset-row')
-    const lbl = el('span', 'cp-preset-label', { text: 'Preset' })
     const sel = el('select', 'cp-preset-sel')
     const btnLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset' })
     const btnDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
 
-    row1.append(sel, btnLoad, btnDel)
-
-    // ── Row 2: name input + Save
+    // name input + Save
     const row2 = el('div', 'cp-preset-row')
     const nameInput = el('input', 'cp-preset-name', { type: 'text', placeholder: 'preset_title' })
     const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset (Ctrl+P)' })
-    row2.append(nameInput, btnSave)
+    row1.append(sel, btnLoad, btnDel, nameInput, btnSave)
 
-    bar.append(row0, row1, row2, projectInput)
+    bar.append(row0, row1, projectInput)
 
     let presets = []
 
     async function saveRulePreset() {
         _commitPendingPanelEdits()
+        window.dispatchEvent(new CustomEvent('seesound:commit-pending-color-edits'))
         const typed = nameInput.value.trim()
         const selected = String(sel.value || '').trim()
         const name = typed || selected
@@ -417,6 +398,7 @@ function buildPresetBar() {
         const snapshot = getSnapshot()
         snapshot.ruleBlocks = latestRules
         await savePreset(name, snapshot)
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
         await refresh()
         sel.value = name
         return true
@@ -434,18 +416,22 @@ function buildPresetBar() {
         if (prev && presets.includes(prev)) sel.value = prev
     }
 
+    const loadSelectedPreset = async (name) => {
+        if (!name) return
+        const data = await loadPreset(name)
+        if (!data?.params) return
+        setMany(data.params)
+        for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
+        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    }
+
     sel.addEventListener('change', () => {
         if (sel.value) nameInput.value = sel.value
     })
 
     btnLoad.addEventListener('click', async () => {
         if (!sel.value) return
-        const data = await loadPreset(sel.value)
-        if (data?.params) {
-            setMany(data.params)
-            for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
-            _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-        }
+        await loadSelectedPreset(sel.value)
     })
 
     btnDel.addEventListener('click', async () => {
@@ -453,6 +439,7 @@ function buildPresetBar() {
         // eslint-disable-next-line no-restricted-globals
         if (!confirm(`Delete preset "${sel.value}"?`)) return
         await deletePreset(sel.value)
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
         await refresh()
         nameInput.value = ''
     })
@@ -461,11 +448,23 @@ function buildPresetBar() {
         await saveRulePreset()
     })
 
+    btnProjectNew.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-new-request'))
+    })
+
     btnProjectSave.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('seesound:project-save-request'))
     })
 
+    btnProjectSaveAs.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-save-as-request'))
+    })
+
     btnProjectLoad.addEventListener('click', () => {
+        if (typeof window.showOpenFilePicker === 'function') {
+            window.dispatchEvent(new CustomEvent('seesound:project-open-request'))
+            return
+        }
         projectInput.click()
     })
 
@@ -517,6 +516,18 @@ function buildPresetBar() {
         }
     }, { signal: shortcutAbort.signal })
 
+    window.addEventListener('seesound:project-loaded', async (e) => {
+        const presetName = String(e?.detail?.presetName || '').trim()
+        await refresh()
+        if (!presetName) return
+        if (presets.includes(presetName)) {
+            sel.value = presetName
+            nameInput.value = presetName
+            return
+        }
+        nameInput.value = presetName
+    })
+
     refresh()
     return bar
 }
@@ -526,6 +537,7 @@ function buildCanvasSizeBar() {
     const title = el('div', 'cp-canvas-size-title', { text: 'Canvas Size' })
     const row = el('div', 'cp-canvas-size-row')
     const bgRow = el('div', 'cp-canvas-size-row')
+    const originRow = el('div', 'cp-canvas-size-row')
 
     const wLabel = el('label', 'cp-canvas-size-label', { text: '↔' })
     const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '160', value: String(Math.max(160, Number(params.canvasWidth ?? 0) || 160)) })
@@ -547,6 +559,28 @@ function buildCanvasSizeBar() {
     const bgLInput = el('input', 'cp-canvas-size-input', {
         type: 'number', step: '1', min: '0', max: '100',
         value: String(Math.max(0, Math.min(100, Math.floor(Number(params.defaultBackgroundLightness ?? 0) || 0)))),
+    })
+
+    const originLabel = el('div', 'cp-canvas-size-label', { text: 'Origin' })
+    const originToggleBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'On', title: 'Toggle origin sign visibility' })
+    const originMeta = el('div', 'cp-canvas-size-label', { text: 'Size: 250 units' })
+    let originEnabled = true
+
+    const renderOriginToggle = () => {
+        originToggleBtn.textContent = originEnabled ? 'On' : 'Off'
+        originToggleBtn.setAttribute('aria-pressed', originEnabled ? 'true' : 'false')
+    }
+
+    originToggleBtn.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:origin-sign-toggle', {
+            detail: { enabled: !originEnabled },
+        }))
+    })
+    window.addEventListener('seesound:origin-sign-state', (e) => {
+        const enabled = e?.detail?.enabled
+        if (typeof enabled !== 'boolean') return
+        originEnabled = enabled
+        renderOriginToggle()
     })
 
     const live = { w: 0, h: 0, s: 100 }
@@ -675,8 +709,10 @@ function buildCanvasSizeBar() {
 
     row.append(wLabel, wInput, hLabel, hInput, sLabel, sInput, applyBtn)
     bgRow.append(bgLabel, bgHInput, bgSInput, bgLInput)
-    bar.append(title, row, bgRow)
+    originRow.append(originLabel, originToggleBtn, originMeta)
+    bar.append(title, row, bgRow, originRow)
     render()
+    renderOriginToggle()
     return bar
 }
 
@@ -721,7 +757,30 @@ function buildGroup(groupDef, groupParams, startOpen) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const _allInputEntries = getInputDictionary().entries
-const _allInputIds = _allInputEntries.filter((e) => !e.hidden).map((e) => e.id)
+function _inputSortBucket(id) {
+    const binAudio = new Set(['binMagnitude', 'binEnergy', 'binFreq', 'frequencyHz', 'normFreq', 'notePitchClass', 'octave'])
+    const binTimbre = new Set(['binPhase', 'binFlux', 'binPhaseDeviation', 'binPhasedeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'binRMSEnergy'])
+    const globalAudio = new Set(['amplitude', 'bass', 'mid', 'high', 'peakFreq', 'pan', 'time', 'deltaTime'])
+    const globalTimbre = new Set(['globalRmsEnergy', 'spectralCentroid', 'spectralFlux', 'spectralFlatness', 'inharmonicity', 'peakAmplitude', 'zeroCrossingRate', 'spectralRolloff', 'spectralSpread', 'spectralSkewness', 'chromagram'])
+
+    if (binAudio.has(id)) return 0
+    if (binTimbre.has(id)) return 1
+    if (globalAudio.has(id)) return 2
+    if (globalTimbre.has(id)) return 3
+    if (id.startsWith('canvas')) return 4
+    if (id === 'audioLengthSec') return 5
+    return 6
+}
+
+function _sortInputIds(ids) {
+    return [...ids].sort((a, b) => {
+        const bucketDelta = _inputSortBucket(a) - _inputSortBucket(b)
+        if (bucketDelta !== 0) return bucketDelta
+        return String(a).localeCompare(String(b))
+    })
+}
+
+const _allInputIds = _sortInputIds(_allInputEntries.filter((e) => !e.hidden).map((e) => e.id))
 let _inputIds = [..._allInputIds]
 const _outputMeta = getOutputDictionary().entries
 const _outputIds = _outputMeta.map((e) => e.id)
@@ -729,6 +788,7 @@ const _outputMetaById = new Map(_outputMeta.map((e) => [e.id, e]))
 const _conditionOps = ['always', '>', '>=', '<', '<=', '==', '!=']
 const _ruleTargets = [...RULE_TARGETS]
 const _actionOps = [...RULE_ACTION_OPERATORS]
+const GROUP_PATH_SEPARATOR = ' / '
 
 const _targetLabels = {
     spawnedParticles: 'spawned particles',
@@ -747,7 +807,7 @@ function _setCalculatedRuleInputs(calculatedInputs) {
 
     // Keep all valid inputs selectable to avoid a rule-creation deadlock.
     // Calculated inputs are listed first to reflect current active usage.
-    _inputIds = [...new Set([...calculated, ..._allInputIds])]
+    _inputIds = _sortInputIds([...new Set([...calculated, ..._allInputIds])])
 }
 
 function _defaultRuleName(index = 0) {
@@ -1042,8 +1102,8 @@ function _rowToRule(row, order) {
 
     return {
         id: row.id,
-        group: row.group,
-        subgroup: row.subgroup,
+        group: _normalizeGroupPath(row.group),
+        subgroup: '',
         enabled: !!row.enabled,
         target: row.target,
         condition,
@@ -1063,11 +1123,18 @@ function _ruleToRow(rule, index) {
         if (Number.isFinite(Number(action.value))) return String(Number(action.value))
         return '1'
     })()
+    const legacyGroup = typeof rule.group === 'string' ? rule.group : ''
+    const legacySubgroup = typeof rule.subgroup === 'string' ? rule.subgroup : ''
+    const mergedPath = _normalizeGroupPath(
+        legacySubgroup
+            ? `${legacyGroup || ''}/${legacySubgroup}`
+            : legacyGroup,
+    )
     return {
         _uid: typeof rule._uid === 'string' && rule._uid ? rule._uid : _newRuleUid(),
         id: (typeof rule.id === 'string' && rule.id.trim()) ? rule.id.trim() : _defaultRuleName(index),
-        group: typeof rule.group === 'string' ? rule.group : '',
-        subgroup: typeof rule.subgroup === 'string' ? rule.subgroup : '',
+        group: mergedPath,
+        subgroup: '',
         enabled: rule.enabled !== false,
         target: _normalizeTarget(rule),
         conditionEnabled: hasCondition,
@@ -1089,6 +1156,38 @@ function _formatProbeNumber(value) {
     const n = Number(value)
     if (!Number.isFinite(n)) return '0.000'
     return n.toFixed(3)
+}
+
+function _splitGroupPath(path) {
+    return String(path || '')
+        .split('/')
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+}
+
+function _joinGroupPath(parts) {
+    if (!Array.isArray(parts)) return ''
+    return parts
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join(GROUP_PATH_SEPARATOR)
+}
+
+function _normalizeGroupPath(path) {
+    return _joinGroupPath(_splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/')))
+}
+
+function _parentGroupPath(path) {
+    const parts = _splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
+    if (parts.length <= 1) return ''
+    return _joinGroupPath(parts.slice(0, -1))
+}
+
+function _appendGroupPath(parentPath, childName) {
+    const parent = _splitGroupPath(String(parentPath || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
+    const child = String(childName || '').trim()
+    if (!child) return _joinGroupPath(parent)
+    return _joinGroupPath([...parent, child])
 }
 
 function _ruleSummary(row) {
@@ -1121,7 +1220,7 @@ function _templateOptionsForOutput(outputId) {
     if (outputId === 'rgb') {
         return [
             { value: '', label: 'rgb templates...' },
-            { value: 'expr:rgb(amplitude*255, bass*255, treble*255)', label: 'RGB from amp/bass/treble' },
+            { value: 'expr:rgb(amplitude*255, bass*255, high*255)', label: 'RGB from amp/bass/high' },
             ...paletteTemplates,
             { value: 'expr:matchLuma(220,60,40, amplitude*255)', label: 'Luma-matched tone' },
             ...(paletteTemplates.length === 0 ? [{ value: '', label: 'save a palette to unlock palette templates' }] : []),
@@ -1161,7 +1260,7 @@ function _createSelect(opts, value, className = 'cp-rule-input') {
         if (!ctx) return
         ctx.font = font
         const measured = Math.ceil(ctx.measureText(label).width)
-        const width = Math.max(74, Math.min(280, measured + 28))
+        const width = Math.max(50, Math.min(280, measured + 30))
         s.style.width = `${width}px`
     }
     s._autoSize = autoSize
@@ -1171,8 +1270,43 @@ function _createSelect(opts, value, className = 'cp-rule-input') {
     return s
 }
 
+function _wireSelectAllOnFirstClick(node) {
+    if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return
+    let shouldSelectOnFocus = false
+    let selectedByHelper = false
+
+    node.addEventListener('pointerdown', () => {
+        if (!selectedByHelper) {
+            shouldSelectOnFocus = true
+            return
+        }
+        shouldSelectOnFocus = false
+        selectedByHelper = false
+    })
+
+    node.addEventListener('focus', () => {
+        if (!shouldSelectOnFocus) return
+        shouldSelectOnFocus = false
+        requestAnimationFrame(() => {
+            try {
+                node.select()
+                selectedByHelper = true
+            } catch {
+                selectedByHelper = false
+            }
+        })
+    })
+
+    node.addEventListener('blur', () => {
+        shouldSelectOnFocus = false
+        selectedByHelper = false
+    })
+}
+
 function _createInputNumber(value, step = '0.01', className = 'cp-rule-input cp-rule-num') {
-    return el('input', className, { type: 'number', value: String(value), step })
+    const input = el('input', className, { type: 'number', value: String(value), step })
+    _wireSelectAllOnFirstClick(input)
+    return input
 }
 
 export function renderCompileStatus(state) {
@@ -1192,8 +1326,7 @@ export function initRuleBuilder(container) {
     const section = el('div', 'cp-rule-section')
     const header = el('div', 'cp-rule-header')
     const title = el('span', 'cp-rule-title', { text: 'Rule Builder' })
-    const badge = el('span', 'cp-rule-status cp-rule-status-stale', { text: 'stale' })
-    header.append(title, badge)
+    header.append(title)
 
     const error = el('div', 'cp-rule-error')
 
@@ -1205,35 +1338,143 @@ export function initRuleBuilder(container) {
     const rulePresetLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset (append)' })
     const rulePresetDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
     rulePresetBar.append(rulePresetSel, rulePresetLoad, rulePresetDel, rulePresetName, rulePresetSave)
-    const actions = el('div', 'cp-rule-actions')
-    const addBtn = el('button', 'cp-preset-btn cp-rule-add', { text: '+' })
-    actions.appendChild(addBtn)
 
-    section.append(header, error, rulePresetBar, rowsWrap, actions)
+    section.append(header, error, rulePresetBar, rowsWrap)
     container.appendChild(section)
 
     let rows = (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []).map(_ruleToRow)
     let _syncingFromBuilder = false
     let _dragRowIndex = -1
     let _dragSelectionUids = []
-    let _dragGroupName = ''
     let _lastSelectedIndex = -1
     const _manualGroups = new Map()
     const _groupOrder = []
     const _collapsedGroups = new Set()
-    const _collapsedSubgroups = new Set()
+    const _collapsedContextGroups = new Set()
     const _collapsedRuleUids = new Set()
     const _selectedRuleUids = new Set()
-    let _selectedGroupName = ''
-    let _selectedSubgroup = null
+    let _selectedGroupPath = ''
     let _selectedContextGroup = 'spawnedParticles'
     const RULE_PRESET_PREFIX = 'rule__'
     let _rulePresetNames = []
     let _lastProbeInputs = Object.create(null)
+    let _ruleUiStateTimer = null
+    let _autoScrollTimer = null
+    let _autoScrollDirection = 0
+
+    function _applyRuleUiStateFromParams() {
+        const ui = (params.ruleUiState && typeof params.ruleUiState === 'object') ? params.ruleUiState : {}
+        _collapsedGroups.clear()
+        _collapsedContextGroups.clear()
+        _collapsedRuleUids.clear()
+        _manualGroups.clear()
+
+        for (const key of (Array.isArray(ui.collapsedGroups) ? ui.collapsedGroups : [])) {
+            const k = String(key || '').trim()
+            if (!k) continue
+            if (k.startsWith('context::')) _collapsedContextGroups.add(k)
+            else _collapsedGroups.add(k)
+        }
+        const collapsedRuleIds = new Set((Array.isArray(ui.collapsedRules) ? ui.collapsedRules : []).map((id) => String(id || '').trim()).filter(Boolean))
+        for (const row of rows) {
+            if (collapsedRuleIds.has(String(row.id || '').trim())) _collapsedRuleUids.add(row._uid)
+        }
+
+        const standaloneGroups = Array.isArray(ui.standaloneGroups) ? ui.standaloneGroups : []
+        for (const raw of standaloneGroups) {
+            const token = String(raw || '').trim()
+            if (!token) continue
+            const sep = token.indexOf('::')
+            if (sep <= 0) continue
+            const contextKey = token.slice(0, sep)
+            const path = _normalizeGroupPath(token.slice(sep + 2))
+            if (!path) continue
+            _ensureManualGroup(path, contextKey)
+        }
+
+        _selectedContextGroup = String(ui.selectedContextGroup || _selectedContextGroup || 'spawnedParticles')
+        _selectedGroupPath = _normalizeGroupPath(ui.selectedGroupPath || ui.selectedGroupName || '')
+    }
+
+    function _persistRuleUiState() {
+        const collapsedRules = rows
+            .filter((row) => _collapsedRuleUids.has(row._uid))
+            .map((row) => String(row.id || '').trim())
+            .filter(Boolean)
+
+        const standaloneGroups = []
+        for (const [groupPath, contexts] of _manualGroups.entries()) {
+            const path = _normalizeGroupPath(groupPath)
+            if (!path || !(contexts instanceof Set)) continue
+            for (const ctx of contexts) {
+                if (!RULE_TARGETS.includes(ctx)) continue
+                standaloneGroups.push(`${ctx}::${path}`)
+            }
+        }
+
+        set('ruleUiState', {
+            collapsedGroups: [..._collapsedGroups, ..._collapsedContextGroups],
+            collapsedSubgroups: [],
+            collapsedRules,
+            standaloneGroups,
+            selectedContextGroup: _selectedContextGroup,
+            selectedGroupPath: _selectedGroupPath,
+            selectedGroupName: _selectedGroupPath,
+            selectedSubgroup: '',
+        })
+    }
+
+    function _schedulePersistRuleUiState() {
+        if (_ruleUiStateTimer) clearTimeout(_ruleUiStateTimer)
+        _ruleUiStateTimer = setTimeout(() => {
+            _ruleUiStateTimer = null
+            _persistRuleUiState()
+        }, 120)
+    }
+
+    _applyRuleUiStateFromParams()
 
     function _commitPendingRuleEdits() {
         const active = document.activeElement
         if (active instanceof HTMLElement && active.closest('.cp-rule-section')) active.blur()
+    }
+
+    function _rulesScrollContainer() {
+        return rowsWrap.closest('.cp-pane-body') || rowsWrap
+    }
+
+    function _stopAutoScroll() {
+        _autoScrollDirection = 0
+        if (_autoScrollTimer) {
+            clearInterval(_autoScrollTimer)
+            _autoScrollTimer = null
+        }
+    }
+
+    function _startAutoScroll(direction) {
+        const nextDir = direction < 0 ? -1 : 1
+        if (_autoScrollTimer && _autoScrollDirection === nextDir) return
+        _stopAutoScroll()
+        _autoScrollDirection = nextDir
+        _autoScrollTimer = setInterval(() => {
+            const scroller = _rulesScrollContainer()
+            scroller.scrollTop += _autoScrollDirection * 14
+        }, 16)
+    }
+
+    function _updateAutoScrollByClientY(clientY) {
+        const scroller = _rulesScrollContainer()
+        const rect = scroller.getBoundingClientRect()
+        const edge = 36
+        if (clientY <= rect.top + edge) {
+            _startAutoScroll(-1)
+            return
+        }
+        if (clientY >= rect.bottom - edge) {
+            _startAutoScroll(1)
+            return
+        }
+        _stopAutoScroll()
     }
 
     function _nextUniqueRuleId(seed) {
@@ -1260,8 +1501,6 @@ export function initRuleBuilder(container) {
 
     function renderCompile(state) {
         const status = state?.compileStatus || 'stale'
-        badge.textContent = status
-        badge.className = `cp-rule-status cp-rule-status-${status.replace(/[^a-z0-9-]/gi, '-')}`
         error.textContent = state?.compileError
             ? `Compile error: ${state.compileError}${state.compileLine ? ` (line ${state.compileLine})` : ''}`
             : (Array.isArray(state?.rejected) && state.rejected.length > 0
@@ -1298,22 +1537,18 @@ export function initRuleBuilder(container) {
         return String(value || '').trim()
     }
 
-    function _subgroupKey(groupName, subgroupName) {
-        return `${_norm(groupName)}::${_norm(subgroupName)}`
-    }
-
-    function _ensureManualGroup(groupName, subgroupName = '') {
+    function _ensureManualGroup(groupName, contextKey = null) {
         const g = _norm(groupName)
         if (!g) return
         if (!_manualGroups.has(g)) _manualGroups.set(g, new Set())
-        if (subgroupName !== undefined) _manualGroups.get(g).add(_norm(subgroupName))
+        if (contextKey && RULE_TARGETS.includes(contextKey)) _manualGroups.get(g).add(contextKey)
     }
 
     function _syncManualGroupsFromRows() {
         for (const row of rows) {
             const g = _norm(row.group)
             if (!g) continue
-            _ensureManualGroup(g, _norm(row.subgroup))
+            _ensureManualGroup(g, _normalizeTarget(row))
             if (!_groupOrder.includes(g)) _groupOrder.push(g)
         }
     }
@@ -1329,8 +1564,7 @@ export function initRuleBuilder(container) {
         _selectedRuleUids.clear()
         _selectedRuleUids.add(rows[index]._uid)
         _lastSelectedIndex = index
-        _selectedGroupName = ''
-        _selectedSubgroup = null
+        _selectedGroupPath = ''
     }
 
     function _selectRangeTo(index) {
@@ -1343,8 +1577,7 @@ export function initRuleBuilder(container) {
         const hi = Math.max(_lastSelectedIndex, index)
         _selectedRuleUids.clear()
         for (let i = lo; i <= hi; i++) _selectedRuleUids.add(rows[i]._uid)
-        _selectedGroupName = ''
-        _selectedSubgroup = null
+        _selectedGroupPath = ''
     }
 
     function _toggleSelection(index) {
@@ -1353,8 +1586,7 @@ export function initRuleBuilder(container) {
         if (_selectedRuleUids.has(uid)) _selectedRuleUids.delete(uid)
         else _selectedRuleUids.add(uid)
         _lastSelectedIndex = index
-        _selectedGroupName = ''
-        _selectedSubgroup = null
+        _selectedGroupPath = ''
     }
 
     function _handleRuleSelect(index, evt) {
@@ -1370,6 +1602,7 @@ export function initRuleBuilder(container) {
         const unique = [...new Set((indices || []).filter((idx) => idx >= 0 && idx < rows.length))].sort((a, b) => a - b)
         if (unique.length === 0) return
         const withCtrl = !!(evt?.ctrlKey || evt?.metaKey)
+        _selectedGroupPath = ''
 
         if (evt?.shiftKey && _lastSelectedIndex >= 0 && _lastSelectedIndex < rows.length) {
             const target = unique[unique.length - 1]
@@ -1407,66 +1640,16 @@ export function initRuleBuilder(container) {
         if (unique.length === 0) return false
         for (let k = unique.length - 1; k >= 0; k--) rows.splice(unique[k], 1)
         _selectedRuleUids.clear()
-        _selectedGroupName = ''
-        _selectedSubgroup = null
+        _selectedGroupPath = ''
         return true
     }
 
     function _deleteSelected() {
         const selected = _selectedIndices()
-        const board = el('div', 'cp-rule-context-board')
-        const contextGroups = [
-            { key: 'spawnedParticles', label: 'Particles', includes: new Set(['spawnedParticles', 'allParticles']) },
-            { key: 'background', label: 'Background', includes: new Set(['background']) },
-            { key: 'camera', label: 'Camera', includes: new Set(['camera']) },
-        ]
-        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) _selectedContextGroup = 'spawnedParticles'
-
-        for (const group of contextGroups) {
-            const indices = []
-            for (let i = 0; i < rows.length; i++) {
-                const t = _normalizeTarget(rows[i])
-                if (group.includes.has(t)) indices.push(i)
-            }
-            _removeRowsByIndices(selected)
-            const gWrap = el('div', 'cp-group cp-rule-context-group')
-        }
-        if (_selectedContextGroup === group.key) gHeader.classList.add('cp-rule-group-header-selected')
-        gHeader.addEventListener('click', () => {
-            _selectedContextGroup = group.key
-            drawRows()
-        })
-        _collapsedSubgroups.delete(key)
-        _selectedSubgroup = null
-        _selectedGroupName = ''
-
-        if (removedRules) pushRules()
-        const gBody = el('div', 'cp-group-body cp-rule-group-body')
-        gBody.appendChild(_buildLane(indices, group.key, ''))
-        _wireAreaDrop(gBody, group.key, '')
-        if (_selectedGroupName) {
-            const g = _selectedGroupName
-            const groupIndices = []
-            for (let i = 0; i < rows.length; i++) {
-                if (_norm(rows[i].group) === g) groupIndices.push(i)
-            }
-
-            const removedRules = _removeRowsByIndices(groupIndices)
-            _insertNewRuleAt(rows.length, _selectedContextGroup, '')
-            if (orderIdx >= 0) _groupOrder.splice(orderIdx, 1)
-            _collapsedGroups.delete(g)
-            for (const key of [..._collapsedSubgroups]) {
-                if (key.startsWith(`${g}::`)) _collapsedSubgroups.delete(key)
-            }
-            _selectedGroupName = ''
-            _selectedSubgroup = null
-
-            if (removedRules) pushRules()
-            else drawRows()
-            return true
-        }
-
-        return false
+        if (selected.length === 0) return false
+        const removed = _removeRowsByIndices(selected)
+        if (removed) pushRules()
+        return removed
     }
 
     function _selectedIndices() {
@@ -1530,7 +1713,7 @@ export function initRuleBuilder(container) {
         pushRules()
     }
 
-    function _moveSelectionTo(targetIndex, nextGroup = '', nextSubgroup = '') {
+    function _moveSelectionTo(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
         let indices = _dragSelectionUids
             .map((uid) => rows.findIndex((r) => r._uid === uid))
             .filter((idx) => idx >= 0)
@@ -1560,24 +1743,26 @@ export function initRuleBuilder(container) {
         let to = Math.max(0, Math.min(rows.length, targetIndex))
         for (const idx of indices) if (idx < to) to--
 
-        const g = _norm(nextGroup)
-        const s = _norm(nextSubgroup)
+        const g = _normalizeGroupPath(nextGroupPath)
+        const targetForGroup = _ruleTargets.includes(contextTarget) ? contextTarget : _selectedContextGroup
         for (const row of moved) {
             if (_ruleTargets.includes(g)) {
                 row.target = g
                 row.group = ''
                 row.subgroup = ''
             } else {
+                row.target = targetForGroup
                 row.group = g
-                row.subgroup = s
+                row.subgroup = ''
             }
         }
 
         rows.splice(to, 0, ...moved)
-        _ensureManualGroup(g, s)
+        _ensureManualGroup(g)
         _selectedRuleUids.clear()
         for (const row of moved) _selectedRuleUids.add(row._uid)
         _lastSelectedIndex = rows.findIndex((r) => r._uid === moved[moved.length - 1]._uid)
+        _selectedGroupPath = g
         _dragRowIndex = -1
         _dragSelectionUids = []
         pushRules()
@@ -1620,24 +1805,27 @@ export function initRuleBuilder(container) {
         pushRules()
     }
 
-    function _moveDraggedTo(targetIndex, nextGroup = '', nextSubgroup = '') {
-        _moveSelectionTo(targetIndex, nextGroup, nextSubgroup)
+    function _moveDraggedTo(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
+        _moveSelectionTo(targetIndex, nextGroupPath, contextTarget)
     }
 
-    function _insertNewRuleAt(targetIndex, nextGroup = '', nextSubgroup = '') {
+    function _insertNewRuleAt(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
         const row = _ruleToRow(_defaultRule(rows.length), rows.length)
-        const g = _norm(nextGroup)
+        const g = _normalizeGroupPath(nextGroupPath)
+        const targetForGroup = _ruleTargets.includes(contextTarget) ? contextTarget : _selectedContextGroup
         if (_ruleTargets.includes(g)) {
             row.target = g
             row.group = ''
             row.subgroup = ''
         } else {
+            row.target = targetForGroup
             row.group = g
-            row.subgroup = _norm(nextSubgroup)
+            row.subgroup = ''
         }
         const to = Math.max(0, Math.min(rows.length, targetIndex))
         rows.splice(to, 0, row)
-        _ensureManualGroup(row.group, row.subgroup)
+        _ensureManualGroup(row.group)
+        _selectedGroupPath = g
         pushRules()
     }
 
@@ -1689,7 +1877,18 @@ export function initRuleBuilder(container) {
             }
             card.classList.add('cp-rule-row-dragging')
         })
+        card.addEventListener('dragover', (evt) => {
+            evt.preventDefault()
+            _updateAutoScrollByClientY(evt.clientY)
+        })
+        card.addEventListener('drop', (evt) => {
+            evt.preventDefault()
+            evt.stopPropagation()
+            _stopAutoScroll()
+            _moveDraggedTo(i + 1, _normalizeGroupPath(row.group), _normalizeTarget(row))
+        })
         card.addEventListener('dragend', () => {
+            _stopAutoScroll()
             _dragRowIndex = -1
             _dragSelectionUids = []
             card.classList.remove('cp-rule-row-dragging')
@@ -1703,10 +1902,12 @@ export function initRuleBuilder(container) {
             e.stopPropagation()
             if (_collapsedRuleUids.has(row._uid)) _collapsedRuleUids.delete(row._uid)
             else _collapsedRuleUids.add(row._uid)
+            _schedulePersistRuleUiState()
             drawRows()
         })
         const idx = el('span', 'cp-rule-index', { text: `#${i + 1}` })
         const name = el('input', 'cp-rule-input cp-rule-name', { type: 'text', value: row.id, placeholder: 'rule name' })
+        _wireSelectAllOnFirstClick(name)
         const enable = el('input', 'cp-rule-toggle', { type: 'checkbox' })
         enable.checked = !!row.enabled
         enable.addEventListener('change', wireChange(() => {
@@ -1724,7 +1925,7 @@ export function initRuleBuilder(container) {
         }))
         const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
         const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
-        const dup = el('button', 'cp-preset-btn cp-rule-mini', { text: '⧉' })
+        const dup = el('button', 'cp-preset-btn cp-rule-mini', { text: '❐' })
         dup.title = 'Duplicate rule'
         const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: '🗙' })
         up.textContent = '↑'
@@ -1747,9 +1948,9 @@ export function initRuleBuilder(container) {
         top.append(fold, idx, name, enable, up, down, dup, del)
 
         const cond = el('div', 'cp-rule-line')
-        cond.appendChild(el('span', 'cp-rule-k', { text: 'Condition' }))
-        const addConditionBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+ Condition' })
-        const removeConditionBtn = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { type: 'button', text: 'Remove' })
+        cond.appendChild(el('span', 'cp-rule-k', { text: 'IF' }))
+        const addConditionBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+' })
+        const removeConditionBtn = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { type: 'button', text: '🗙' })
         const condOp = _createSelect(_conditionOps.map(v => ({ value: v, label: v })), row.conditionOp)
         const condInput = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionInput)
         const condMode = _createSelect([{ value: 'literal', label: 'literal' }, { value: 'input', label: 'input' }], row.conditionRhsMode)
@@ -1816,12 +2017,13 @@ export function initRuleBuilder(container) {
         const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
         const valExprWrap = el('div', 'cp-rule-expr-wrap')
         const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'value / formula / input id (e.g. bass*0.5 + 0.2)' })
+        _wireSelectAllOnFirstClick(valExpr)
         valExpr.value = row.actionValueText || ''
         const exprControls = el('div', 'cp-rule-expr-controls')
         const templatePicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
         const inputPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
         const mathPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
-        const clearExprBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: 'Clear', title: 'Clear expression' })
+        const clearExprBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '🗑', title: 'Clear expression' })
         const valExprSuggest = el('div', 'cp-rule-expr-suggest')
         exprControls.append(templatePicker, inputPicker, mathPicker, clearExprBtn)
         valExprWrap.append(valExpr, exprControls, valExprSuggest)
@@ -1842,11 +2044,11 @@ export function initRuleBuilder(container) {
             _refreshSelectOptions(
                 inputPicker,
                 shape
-                    ? [{ value: '', label: 'insert shape...' }, ..._shapeTokens.map((v) => ({ value: v, label: v }))]
-                    : [{ value: '', label: 'insert input...' }, ..._inputIds.map((v) => ({ value: v, label: v }))],
+                    ? [{ value: '', label: '+ shape...' }, ..._shapeTokens.map((v) => ({ value: v, label: v }))]
+                    : [{ value: '', label: '+ input...' }, ..._inputIds.map((v) => ({ value: v, label: v }))],
                 '',
             )
-            _refreshSelectOptions(mathPicker, [{ value: '', label: 'insert math...' }, ..._mathTokens.map((v) => ({ value: v, label: v }))], '')
+            _refreshSelectOptions(mathPicker, [{ value: '', label: '+ math...' }, ..._mathTokens.map((v) => ({ value: v, label: v }))], '')
             mathPicker.style.display = shape ? 'none' : ''
             if (!shape) {
                 if (valExpr.placeholder !== 'value / formula / input id (e.g. bass*0.5 + 0.2)') {
@@ -2146,62 +2348,416 @@ export function initRuleBuilder(container) {
         return card
     }
 
-    function _buildDropSlot(targetIndex, groupName = '', subgroupName = '') {
+    function _buildDropSlot(targetIndex, groupPath = '', contextTarget = _selectedContextGroup) {
         const slot = el('div', 'cp-rule-slot')
-        const plus = el('button', 'cp-rule-slot-add', { type: 'button', text: '+' })
-        plus.title = 'Add rule here'
-        plus.addEventListener('click', (e) => {
+        const addBtn = el('button', 'cp-rule-slot-add', { type: 'button', text: '+', title: 'Insert rule here' })
+        addBtn.addEventListener('click', (e) => {
             e.preventDefault()
             e.stopPropagation()
-            _insertNewRuleAt(targetIndex, groupName, subgroupName)
+            _insertNewRuleAt(targetIndex, groupPath, contextTarget)
         })
+        slot.appendChild(addBtn)
+        let expandTimer = null
+
+        const clearExpandTimer = () => {
+            if (expandTimer) {
+                clearTimeout(expandTimer)
+                expandTimer = null
+            }
+        }
+
+        slot.addEventListener('mouseenter', () => {
+            clearExpandTimer()
+            expandTimer = setTimeout(() => {
+                slot.classList.add('cp-rule-slot-expanded')
+            }, 450)
+        })
+        slot.addEventListener('mouseleave', () => {
+            clearExpandTimer()
+            slot.classList.remove('cp-rule-slot-expanded')
+        })
+
         slot.addEventListener('dragover', (e) => {
             e.preventDefault()
+            _updateAutoScrollByClientY(e.clientY)
+            slot.classList.add('cp-rule-slot-expanded')
             slot.classList.add('cp-rule-slot-active')
         })
         slot.addEventListener('dragleave', () => {
+            _stopAutoScroll()
             slot.classList.remove('cp-rule-slot-active')
         })
         slot.addEventListener('drop', (e) => {
             e.preventDefault()
             e.stopPropagation()
+            _stopAutoScroll()
             slot.classList.remove('cp-rule-slot-active')
-            _moveDraggedTo(targetIndex, groupName, subgroupName)
+            _moveDraggedTo(targetIndex, groupPath, contextTarget)
         })
-        slot.appendChild(plus)
         return slot
     }
 
-    function _buildLane(indices, groupName = '', subgroupName = '') {
+    function _buildLane(indices, groupPath = '', contextTarget = _selectedContextGroup) {
         const lane = el('div', 'cp-rule-lane')
         const probeStates = _computeRuleProbeStates(rows, _lastProbeInputs)
         if (indices.length === 0) {
-            lane.appendChild(_buildDropSlot(rows.length, groupName, subgroupName))
+            lane.appendChild(_buildDropSlot(rows.length, groupPath, contextTarget))
             return lane
         }
 
-        lane.appendChild(_buildDropSlot(indices[0], groupName, subgroupName))
+        lane.appendChild(_buildDropSlot(indices[0], groupPath, contextTarget))
         for (const idx of indices) {
-            lane.appendChild(_buildRuleCard(rows[idx], idx, probeStates))
-            lane.appendChild(_buildDropSlot(idx + 1, groupName, subgroupName))
+            const card = _buildRuleCard(rows[idx], idx, probeStates)
+            const after = _buildDropSlot(idx + 1, groupPath, contextTarget)
+            lane.appendChild(card)
+            lane.appendChild(after)
         }
         return lane
     }
 
-    function _wireAreaDrop(node, groupName = '', subgroupName = '') {
+    function _wireAreaDrop(node, groupPath = '', contextTarget = _selectedContextGroup) {
         node.addEventListener('dragover', (e) => {
             e.preventDefault()
+            _updateAutoScrollByClientY(e.clientY)
             node.classList.add('cp-rule-dropzone-active')
         })
         node.addEventListener('dragleave', () => {
+            _stopAutoScroll()
             node.classList.remove('cp-rule-dropzone-active')
         })
         node.addEventListener('drop', (e) => {
             e.preventDefault()
             e.stopPropagation()
+            _stopAutoScroll()
             node.classList.remove('cp-rule-dropzone-active')
-            _moveDraggedTo(rows.length, groupName, subgroupName)
+            _moveDraggedTo(rows.length, groupPath, contextTarget)
         })
+    }
+
+    function _contextIncludes(contextGroup, row) {
+        const t = _normalizeTarget(row)
+        return contextGroup.includes ? contextGroup.includes.has(t) : t === contextGroup.key
+    }
+
+    function _groupParts(path) {
+        return _splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
+    }
+
+    function _countTreeRules(node) {
+        let count = node.ruleIndices.length
+        for (const child of node.children.values()) count += _countTreeRules(child)
+        return count
+    }
+
+    function _buildGroupTree(indices, contextKey) {
+        const root = { name: '', path: '', children: new Map(), ruleIndices: [] }
+        for (const idx of indices) {
+            const row = rows[idx]
+            const path = _normalizeGroupPath(row.group)
+            if (!path) {
+                root.ruleIndices.push(idx)
+                continue
+            }
+            const parts = _groupParts(path)
+            let cursor = root
+            let currentPath = ''
+            for (const part of parts) {
+                currentPath = _appendGroupPath(currentPath, part)
+                if (!cursor.children.has(part)) {
+                    cursor.children.set(part, { name: part, path: currentPath, children: new Map(), ruleIndices: [] })
+                }
+                cursor = cursor.children.get(part)
+            }
+            cursor.ruleIndices.push(idx)
+        }
+
+        const ensurePath = (path) => {
+            if (!path) return
+            const parts = _groupParts(path)
+            let cursor = root
+            let currentPath = ''
+            for (const part of parts) {
+                currentPath = _appendGroupPath(currentPath, part)
+                if (!cursor.children.has(part)) {
+                    cursor.children.set(part, { name: part, path: currentPath, children: new Map(), ruleIndices: [] })
+                }
+                cursor = cursor.children.get(part)
+            }
+        }
+
+        for (const [groupPath, contexts] of _manualGroups.entries()) {
+            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
+            ensurePath(_normalizeGroupPath(groupPath))
+        }
+
+        return root
+    }
+
+    function _findInsertIndexAfterGroup(contextGroup, groupPath) {
+        const base = _normalizeGroupPath(groupPath)
+        const prefix = `${base}${GROUP_PATH_SEPARATOR}`
+        let last = -1
+        for (let i = 0; i < rows.length; i++) {
+            if (!_contextIncludes(contextGroup, rows[i])) continue
+            const path = _normalizeGroupPath(rows[i].group)
+            if (path === base || path.startsWith(prefix)) last = i
+        }
+        if (last >= 0) return last + 1
+        for (let i = rows.length - 1; i >= 0; i--) {
+            if (_contextIncludes(contextGroup, rows[i])) return i + 1
+        }
+        return rows.length
+    }
+
+    function _insertRuleFromSelection() {
+        const selected = _selectedIndices()
+        if (selected.length > 0) {
+            const anchor = selected[selected.length - 1]
+            const row = rows[anchor]
+            _insertNewRuleAt(anchor + 1, _normalizeGroupPath(row.group), _normalizeTarget(row))
+            return
+        }
+        const contextGroup = {
+            key: _selectedContextGroup,
+            includes: _selectedContextGroup === 'spawnedParticles' ? new Set(['spawnedParticles', 'allParticles']) : undefined,
+        }
+        if (_selectedGroupPath) {
+            const at = _findInsertIndexAfterGroup(contextGroup, _selectedGroupPath)
+            _insertNewRuleAt(at, _selectedGroupPath, _selectedContextGroup)
+            return
+        }
+        _insertNewRuleAt(rows.length, '', _selectedContextGroup)
+    }
+
+    function _nextAutoGroupName(parentPath) {
+        const base = _normalizeGroupPath(parentPath)
+        const prefix = base ? `${base}${GROUP_PATH_SEPARATOR}` : ''
+        const directNames = new Set()
+        for (const row of rows) {
+            const path = _normalizeGroupPath(row.group)
+            if (!path) continue
+            if (base && !(path === base || path.startsWith(prefix))) continue
+            if (!base && path.includes(GROUP_PATH_SEPARATOR)) {
+                directNames.add(path.split(GROUP_PATH_SEPARATOR)[0])
+                continue
+            }
+            if (base) {
+                const rest = path === base ? '' : path.slice(prefix.length)
+                const next = rest.split(GROUP_PATH_SEPARATOR)[0]
+                if (next) directNames.add(next)
+            } else {
+                directNames.add(path.split(GROUP_PATH_SEPARATOR)[0])
+            }
+        }
+
+        let i = 1
+        while (directNames.has(`group-${i}`)) i++
+        return `group-${i}`
+    }
+
+    function _contextIncludesByKey(contextKey, row) {
+        const target = _normalizeTarget(row)
+        if (contextKey === 'spawnedParticles') return target === 'spawnedParticles' || target === 'allParticles'
+        return target === contextKey
+    }
+
+    function _renameGroupPath(contextKey, oldPath, nextNameRaw) {
+        const oldNorm = _normalizeGroupPath(oldPath)
+        const parentPath = _parentGroupPath(oldNorm)
+        const cleanName = _splitGroupPath(nextNameRaw).join('-').trim()
+        if (!oldNorm || !cleanName) return
+
+        const nextPath = _appendGroupPath(parentPath, cleanName)
+        if (nextPath === oldNorm) return
+
+        const oldPrefix = `${oldNorm}${GROUP_PATH_SEPARATOR}`
+
+        for (const [groupPath, contexts] of [..._manualGroups.entries()]) {
+            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
+            const path = _normalizeGroupPath(groupPath)
+            if (path === oldNorm) {
+                _manualGroups.delete(groupPath)
+                _ensureManualGroup(nextPath, contextKey)
+                continue
+            }
+            if (path.startsWith(oldPrefix)) {
+                _manualGroups.delete(groupPath)
+                const remapped = `${nextPath}${GROUP_PATH_SEPARATOR}${path.slice(oldPrefix.length)}`
+                _ensureManualGroup(remapped, contextKey)
+            }
+        }
+
+        for (const row of rows) {
+            if (!_contextIncludesByKey(contextKey, row)) continue
+            const path = _normalizeGroupPath(row.group)
+            if (path === oldNorm) {
+                row.group = nextPath
+                continue
+            }
+            if (path.startsWith(oldPrefix)) {
+                row.group = `${nextPath}${GROUP_PATH_SEPARATOR}${path.slice(oldPrefix.length)}`
+            }
+        }
+
+        if (_selectedContextGroup === contextKey) {
+            if (_selectedGroupPath === oldNorm) _selectedGroupPath = nextPath
+            else if (String(_selectedGroupPath || '').startsWith(oldPrefix)) {
+                _selectedGroupPath = `${nextPath}${GROUP_PATH_SEPARATOR}${_selectedGroupPath.slice(oldPrefix.length)}`
+            }
+        }
+
+        const remapped = new Set()
+        const keyPrefix = `${contextKey}::`
+        const oldCollapsedKey = `${keyPrefix}${oldNorm}`
+        const oldCollapsedPrefix = `${oldCollapsedKey}${GROUP_PATH_SEPARATOR}`
+        for (const key of _collapsedGroups) {
+            if (key === oldCollapsedKey) {
+                remapped.add(`${keyPrefix}${nextPath}`)
+                continue
+            }
+            if (key.startsWith(oldCollapsedPrefix)) {
+                remapped.add(`${keyPrefix}${nextPath}${GROUP_PATH_SEPARATOR}${key.slice(oldCollapsedPrefix.length)}`)
+                continue
+            }
+            remapped.add(key)
+        }
+        _collapsedGroups.clear()
+        for (const key of remapped) _collapsedGroups.add(key)
+
+        _schedulePersistRuleUiState()
+        pushRules()
+    }
+
+    function _dropManualGroupPathForContext(contextKey, groupPath) {
+        const targetPath = _normalizeGroupPath(groupPath)
+        if (!targetPath) return
+        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
+        for (const [groupKey, contexts] of [..._manualGroups.entries()]) {
+            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
+            const path = _normalizeGroupPath(groupKey)
+            if (path === targetPath || path.startsWith(prefix)) {
+                contexts.delete(contextKey)
+                if (contexts.size === 0) _manualGroups.delete(groupKey)
+            }
+        }
+    }
+
+    function _removeCollapsedGroupBranch(contextKey, groupPath) {
+        const targetPath = _normalizeGroupPath(groupPath)
+        if (!targetPath) return
+        const base = `${contextKey}::${targetPath}`
+        const prefix = `${base}${GROUP_PATH_SEPARATOR}`
+        for (const key of [..._collapsedGroups]) {
+            if (key === base || key.startsWith(prefix)) _collapsedGroups.delete(key)
+        }
+    }
+
+    function _deleteGroupBranch(contextKey, groupPath) {
+        const targetPath = _normalizeGroupPath(groupPath)
+        if (!targetPath) return
+        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
+
+        rows = rows.filter((row) => {
+            if (!_contextIncludesByKey(contextKey, row)) return true
+            const rowPath = _normalizeGroupPath(row.group)
+            return !(rowPath === targetPath || rowPath.startsWith(prefix))
+        })
+
+        _dropManualGroupPathForContext(contextKey, targetPath)
+        _removeCollapsedGroupBranch(contextKey, targetPath)
+
+        if (_selectedContextGroup === contextKey) {
+            if (_selectedGroupPath === targetPath || _selectedGroupPath.startsWith(prefix)) {
+                _selectedGroupPath = _parentGroupPath(targetPath)
+            }
+        }
+
+        _selectedRuleUids.clear()
+        _lastSelectedIndex = -1
+        pushRules()
+    }
+
+    function _ungroupGroupBranch(contextKey, groupPath) {
+        const targetPath = _normalizeGroupPath(groupPath)
+        if (!targetPath) return
+        const parentPath = _parentGroupPath(targetPath)
+        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
+
+        let touched = 0
+        for (const row of rows) {
+            if (!_contextIncludesByKey(contextKey, row)) continue
+            const rowPath = _normalizeGroupPath(row.group)
+            if (rowPath === targetPath) {
+                row.group = parentPath
+                touched++
+                continue
+            }
+            if (rowPath.startsWith(prefix)) {
+                const suffix = rowPath.slice(prefix.length)
+                row.group = _appendGroupPath(parentPath, suffix)
+                touched++
+            }
+        }
+        if (touched === 0) return
+
+        _dropManualGroupPathForContext(contextKey, targetPath)
+        _removeCollapsedGroupBranch(contextKey, targetPath)
+
+        if (_selectedContextGroup === contextKey) {
+            if (_selectedGroupPath === targetPath || _selectedGroupPath.startsWith(prefix)) {
+                _selectedGroupPath = parentPath
+            }
+        }
+
+        pushRules()
+    }
+
+    function _createGroupFromSelection() {
+        const selectedRuleIndices = _selectedIndices()
+        const selectedGroupPath = _normalizeGroupPath(_selectedGroupPath)
+        const selectedGroupIndices = []
+        if (selectedGroupPath) {
+            const prefix = `${selectedGroupPath}${GROUP_PATH_SEPARATOR}`
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i]
+                if (!_contextIncludesByKey(_selectedContextGroup, row)) continue
+                const path = _normalizeGroupPath(row.group)
+                if (path === selectedGroupPath || path.startsWith(prefix)) selectedGroupIndices.push(i)
+            }
+        }
+
+        const merged = [...new Set([...selectedRuleIndices, ...selectedGroupIndices])].sort((a, b) => a - b)
+        let parentPath = _parentGroupPath(selectedGroupPath)
+        let context = _selectedContextGroup
+
+        if (!parentPath && merged.length > 0) {
+            const firstRow = rows[merged[0]]
+            parentPath = _parentGroupPath(_normalizeGroupPath(firstRow.group))
+            context = _normalizeTarget(firstRow)
+        }
+
+        const name = _nextAutoGroupName(parentPath)
+        const newPath = _appendGroupPath(parentPath, name)
+        _selectedGroupPath = newPath
+        _selectedContextGroup = context
+        _ensureManualGroup(newPath, context)
+
+        if (merged.length === 0) {
+            _schedulePersistRuleUiState()
+            drawRows()
+            return
+        }
+
+        for (const idx of merged) {
+            const row = rows[idx]
+            row.group = newPath
+            row.target = context
+            row.subgroup = ''
+        }
+        _selectedRuleUids.clear()
+        for (const idx of merged) _selectedRuleUids.add(rows[idx]._uid)
+        _lastSelectedIndex = merged[merged.length - 1] ?? -1
+        pushRules()
     }
 
     function drawRows() {
@@ -2213,43 +2769,183 @@ export function initRuleBuilder(container) {
             { key: 'camera', label: 'Camera' },
         ]
 
-        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) {
-            _selectedContextGroup = 'spawnedParticles'
-        }
+        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) _selectedContextGroup = 'spawnedParticles'
 
-        for (const group of contextGroups) {
-            const indices = []
-            for (let i = 0; i < rows.length; i++) {
-                const t = _normalizeTarget(rows[i])
-                if (group.includes ? group.includes.has(t) : t === group.key) {
-                    indices.push(i)
+        const renderGroupNode = (node, contextGroup) => {
+            const ctxGroupKey = `${contextGroup.key}::${node.path}`
+            const isSelected = _selectedContextGroup === contextGroup.key && _selectedGroupPath === node.path
+            const groupCollapsed = _collapsedGroups.has(ctxGroupKey)
+            const groupCard = el('div', 'cp-rule-group')
+            const groupHeader = el('div', `cp-rule-group-header${isSelected ? ' cp-rule-group-header-selected' : ''}`)
+            const groupFoldBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold', { type: 'button', text: groupCollapsed ? '▸' : '▾' })
+            const groupTitle = el('span', 'cp-rule-group-title', { text: node.name, title: 'Double-click to rename group' })
+            const groupRenameBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-rename-btn', { type: 'button', text: '🖋', title: 'Rename group' })
+            const groupActions = el('div', 'cp-rule-group-actions')
+            const groupDeleteBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-delete-btn', { type: 'button', text: '⊠', title: 'Delete group and all rules/subgroups inside it' })
+            const totalRules = _countTreeRules(node)
+            const groupUngroupBtn = totalRules > 0
+                ? el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-ungroup-btn', { type: 'button', text: '⮺', title: 'Ungroup rules (keep rules, remove this group level)' })
+                : null
+
+            const startRename = () => {
+                const currentName = node.name
+                const input = el('input', 'cp-rule-group-rename', { type: 'text', value: currentName })
+                const finish = (commit) => {
+                    if (commit) _renameGroupPath(contextGroup.key, node.path, input.value)
+                    drawRows()
                 }
+                input.addEventListener('keydown', (evt) => {
+                    if (evt.key === 'Enter') {
+                        evt.preventDefault()
+                        finish(true)
+                    }
+                    if (evt.key === 'Escape') {
+                        evt.preventDefault()
+                        finish(false)
+                    }
+                })
+                input.addEventListener('blur', () => finish(true), { once: true })
+                groupTitle.replaceWith(input)
+                input.focus()
+                input.select()
             }
 
-            const gWrap = el('div', `cp-group cp-open cp-rule-context-group${_selectedContextGroup === group.key ? ' cp-rule-group-selected' : ''}`)
+            groupFoldBtn.addEventListener('click', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (_collapsedGroups.has(ctxGroupKey)) _collapsedGroups.delete(ctxGroupKey)
+                else _collapsedGroups.add(ctxGroupKey)
+                _schedulePersistRuleUiState()
+                drawRows()
+            })
+            groupRenameBtn.addEventListener('click', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                startRename()
+            })
+            groupDeleteBtn.addEventListener('click', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const message = `Delete group "${node.path}" and all nested rules/subgroups?`
+                if (!confirm(message)) return
+                _deleteGroupBranch(contextGroup.key, node.path)
+            })
+            if (groupUngroupBtn) {
+                groupUngroupBtn.addEventListener('click', (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const message = `Ungroup rules in "${node.path}" (rules are kept)?`
+                    if (!confirm(message)) return
+                    _ungroupGroupBranch(contextGroup.key, node.path)
+                })
+            }
+            groupTitle.addEventListener('dblclick', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                startRename()
+            })
+            groupHeader.addEventListener('click', () => {
+                _selectedContextGroup = contextGroup.key
+                _selectedGroupPath = node.path
+                _selectedRuleUids.clear()
+                _schedulePersistRuleUiState()
+                drawRows()
+            })
+            groupHeader.addEventListener('dragover', (e) => {
+                e.preventDefault()
+                _updateAutoScrollByClientY(e.clientY)
+                groupHeader.classList.add('cp-rule-dropzone-active')
+            })
+            groupHeader.addEventListener('dragleave', () => {
+                _stopAutoScroll()
+                groupHeader.classList.remove('cp-rule-dropzone-active')
+            })
+            groupHeader.addEventListener('drop', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                _stopAutoScroll()
+                groupHeader.classList.remove('cp-rule-dropzone-active')
+                const targetIndex = _findInsertIndexAfterGroup(contextGroup, node.path)
+                _moveDraggedTo(targetIndex, node.path, contextGroup.key)
+            })
+            groupHeader.append(
+                groupFoldBtn,
+                groupTitle,
+                groupRenameBtn,
+                el('span', 'cp-group-count', { text: String(totalRules) }),
+            )
+            if (groupUngroupBtn) groupActions.appendChild(groupUngroupBtn)
+            groupActions.appendChild(groupDeleteBtn)
+            groupHeader.appendChild(groupActions)
+            groupCard.appendChild(groupHeader)
+
+            if (!groupCollapsed) {
+                const groupBody = el('div', 'cp-rule-group-body')
+                groupBody.appendChild(_buildLane(node.ruleIndices, node.path, contextGroup.key))
+                const childWrap = el('div', 'cp-rule-groups')
+                const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name))
+                for (const child of children) childWrap.appendChild(renderGroupNode(child, contextGroup))
+                if (children.length > 0) groupBody.appendChild(childWrap)
+                _wireAreaDrop(groupBody, node.path, contextGroup.key)
+                groupCard.appendChild(groupBody)
+            }
+
+            return groupCard
+        }
+
+        for (const contextGroup of contextGroups) {
+            const indices = []
+            for (let i = 0; i < rows.length; i++) if (_contextIncludes(contextGroup, rows[i])) indices.push(i)
+
+            const gWrap = el('div', `cp-group cp-open cp-rule-context-group${_selectedContextGroup === contextGroup.key ? ' cp-rule-group-selected' : ''}`)
+            const contextCollapseKey = `context::${contextGroup.key}`
+            const contextCollapsed = _collapsedContextGroups.has(contextCollapseKey)
             const gHeader = el('div', 'cp-group-header')
+            const contextFoldBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold', {
+                type: 'button',
+                text: contextCollapsed ? '▸' : '▾',
+                title: contextCollapsed ? 'Expand section' : 'Collapse section',
+            })
+            contextFoldBtn.addEventListener('click', (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (_collapsedContextGroups.has(contextCollapseKey)) _collapsedContextGroups.delete(contextCollapseKey)
+                else _collapsedContextGroups.add(contextCollapseKey)
+                _schedulePersistRuleUiState()
+                drawRows()
+            })
             gHeader.addEventListener('click', () => {
-                _selectedContextGroup = group.key
+                _selectedContextGroup = contextGroup.key
+                _selectedGroupPath = ''
+                _schedulePersistRuleUiState()
                 drawRows()
             })
             gHeader.append(
-                el('span', 'cp-group-chevron', { text: '▾' }),
-                el('span', '', { text: group.label }),
+                contextFoldBtn,
+                el('span', '', { text: contextGroup.label }),
                 el('span', 'cp-group-count', { text: String(indices.length) }),
             )
+
             const gBody = el('div', 'cp-group-body cp-rule-group-body')
-            gBody.appendChild(_buildLane(indices, group.key, ''))
-            _wireAreaDrop(gBody, group.key, '')
+            if (!contextCollapsed) {
+                const tree = _buildGroupTree(indices, contextGroup.key)
+                gBody.appendChild(_buildLane(tree.ruleIndices, '', contextGroup.key))
+
+                const topGroups = [...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name))
+                if (topGroups.length > 0) {
+                    const groupsWrap = el('div', 'cp-rule-groups')
+                    for (const groupNode of topGroups) groupsWrap.appendChild(renderGroupNode(groupNode, contextGroup))
+                    gBody.appendChild(groupsWrap)
+                }
+                _wireAreaDrop(gBody, '', contextGroup.key)
+            }
+
             gWrap.append(gHeader, gBody)
             board.appendChild(gWrap)
         }
 
         rowsWrap.appendChild(board)
     }
-
-    addBtn.addEventListener('click', () => {
-        _insertNewRuleAt(rows.length, _selectedContextGroup, '')
-    })
 
     rulePresetSel.addEventListener('change', () => {
         const full = String(rulePresetSel.value || '')
@@ -2287,6 +2983,12 @@ export function initRuleBuilder(container) {
 
     _ruleBuilderApi = {
         serialize: () => rows.map((r, i) => _rowToRule(r, i)),
+        createGroupFromSelection: () => {
+            _createGroupFromSelection()
+        },
+        insertRuleFromSelection: () => {
+            _insertRuleFromSelection()
+        },
         addRow: (initialRule) => {
             rows.push(_ruleToRow(initialRule || _defaultRule(rows.length), rows.length))
             pushRules()
@@ -2295,17 +2997,13 @@ export function initRuleBuilder(container) {
             rows = (Array.isArray(blocks) ? blocks : []).map(_ruleToRow)
             _manualGroups.clear()
             _groupOrder.length = 0
-            _collapsedGroups.clear()
-            _collapsedSubgroups.clear()
-            _collapsedRuleUids.clear()
             _selectedRuleUids.clear()
-            _selectedGroupName = ''
-            _selectedSubgroup = null
             _lastSelectedIndex = -1
             _dragRowIndex = -1
             _dragSelectionUids = []
-            _dragGroupName = ''
+            _selectedGroupPath = ''
             _syncManualGroupsFromRows()
+            _applyRuleUiStateFromParams()
             drawRows()
             renderCompile({ compileStatus: 'stale', compileError: null })
         },
@@ -2313,14 +3011,51 @@ export function initRuleBuilder(container) {
     }
 
     subscribe((_, key) => {
+        if (key === 'ruleUiState') {
+            _applyRuleUiStateFromParams()
+            drawRows()
+            return
+        }
+        if (key === 'palettes') {
+            drawRows()
+            return
+        }
         if (key !== 'ruleBlocks' || _syncingFromBuilder) return
         _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    })
+
+    section.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented) return
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        if (!(e.key === 'ArrowUp' || e.key === 'ArrowDown')) return
+
+        const target = e.target instanceof Element
+            ? e.target.closest('input,textarea,select')
+            : null
+        if (!(target instanceof HTMLElement)) return
+        if (!target.closest('.cp-rule-row')) return
+
+        const focusables = Array.from(section.querySelectorAll(
+            '.cp-rule-row input:not([type="checkbox"]):not([disabled]), .cp-rule-row textarea:not([disabled]), .cp-rule-row select:not([disabled])',
+        ))
+        const index = focusables.indexOf(target)
+        if (index < 0) return
+
+        const delta = e.key === 'ArrowDown' ? 1 : -1
+        const next = focusables[index + delta]
+        if (!(next instanceof HTMLElement)) return
+
+        e.preventDefault()
+        next.focus()
+        if (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) {
+            try { next.select() } catch { }
+        }
     })
 
     drawRows()
     window.addEventListener('seesound:calculated-rule-inputs', (e) => {
         _setCalculatedRuleInputs(e?.detail?.calculatedInputs)
-        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+        drawRows()
     })
     window.addEventListener('seesound:rule-probe', (e) => {
         _lastProbeInputs = e?.detail?.inputs || Object.create(null)
@@ -2400,10 +3135,72 @@ export function initControlPanel(container) {
     const resetBtn = el('button', 'cp-reset-btn', { text: '↺', title: 'Reset all to factory defaults' })
     header.append(title, resetBtn, collapseBtn)
 
-    // ── Scrollable body
-    const body = el('div', 'cp-body')
-    body.appendChild(buildPresetBar())
-    body.appendChild(buildCanvasSizeBar())
+    // ── Split-pane body (File / Settings / Rules)
+    const body = el('div', 'cp-body cp-pane-stack')
+
+    const PANE_COLLAPSE_KEY = 'seesound_panel_collapsed_panes_v1'
+    const paneCollapse = (() => {
+        try {
+            const raw = JSON.parse(localStorage.getItem(PANE_COLLAPSE_KEY) || '{}')
+            return {
+                file: !!raw.file,
+                settings: !!raw.settings,
+                rules: !!raw.rules,
+            }
+        } catch {
+            return { file: false, settings: false, rules: false }
+        }
+    })()
+
+    const persistPaneCollapse = () => {
+        try {
+            localStorage.setItem(PANE_COLLAPSE_KEY, JSON.stringify(paneCollapse))
+        } catch { /* no-op */ }
+    }
+
+    const createPane = (id, titleText, extraClass = '') => {
+        const pane = el('section', `cp-pane ${extraClass}`.trim())
+        const paneHeader = el('div', 'cp-pane-header')
+        const paneTitle = el('span', 'cp-pane-title', { text: titleText })
+        const paneToggle = el('button', 'cp-pane-toggle', {
+            type: 'button',
+            text: paneCollapse[id] ? '▸' : '▾',
+            title: paneCollapse[id] ? `Expand ${titleText}` : `Collapse ${titleText}`,
+        })
+        paneHeader.append(paneToggle, paneTitle)
+        const paneBody = el('div', 'cp-pane-body')
+        pane.append(paneHeader, paneBody)
+        return { id, pane, paneHeader, paneBody, paneToggle, paneTitle }
+    }
+
+    const filePane = createPane('file', 'File', 'cp-pane-file')
+    const settingsPane = createPane('settings', 'Settings', 'cp-pane-settings')
+    const rulesPane = createPane('rules', 'Rules', 'cp-pane-rules')
+
+    const rulesPaneActions = el('div', 'cp-pane-header-actions')
+    const paneAddGroupBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-add-group', { type: 'button', text: '⮼' })
+    const paneAddRuleBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-add', { type: 'button', text: '+' })
+    rulesPaneActions.append(paneAddGroupBtn, paneAddRuleBtn)
+    rulesPane.paneHeader.appendChild(rulesPaneActions)
+
+    const updateProjectTitle = (rawName = '') => {
+        const name = String(rawName || '').trim()
+        filePane.paneTitle.textContent = name ? `File: ${name}` : 'File'
+    }
+
+    updateProjectTitle('')
+    window.addEventListener('seesound:project-file-state', (e) => {
+        updateProjectTitle(e?.detail?.fileName)
+    })
+    window.addEventListener('seesound:project-loaded', (e) => {
+        updateProjectTitle(e?.detail?.fileName)
+    })
+    window.addEventListener('seesound:project-autosaved', (e) => {
+        updateProjectTitle(e?.detail?.fileName)
+    })
+
+    filePane.paneBody.appendChild(buildPresetBar())
+    settingsPane.paneBody.appendChild(buildCanvasSizeBar())
 
     for (let i = 0; i < PARAM_GROUPS.length; i++) {
         const g = PARAM_GROUPS[i]
@@ -2417,10 +3214,141 @@ export function initControlPanel(container) {
                 p.key !== 'defaultBackgroundLightness'
         )
         if (groupParams.length === 0) continue
-        body.appendChild(buildGroup(g, groupParams, i < 3))
+        settingsPane.paneBody.appendChild(buildGroup(g, groupParams, i < 3))
     }
 
-    initRuleBuilder(body)
+    const ruleBuilder = initRuleBuilder(rulesPane.paneBody)
+
+    paneAddGroupBtn.addEventListener('click', () => {
+        ruleBuilder?.createGroupFromSelection?.()
+    })
+    paneAddRuleBtn.addEventListener('click', () => {
+        ruleBuilder?.insertRuleFromSelection?.()
+    })
+
+    const splitterA = el('div', 'cp-pane-splitter', { title: 'Resize File and Settings panes' })
+    const splitterB = el('div', 'cp-pane-splitter', { title: 'Resize Settings and Rules panes' })
+    body.append(filePane.pane, splitterA, settingsPane.pane, splitterB, rulesPane.pane)
+
+    const PANE_FILE_HEIGHT_KEY = 'seesound_panel_file_height_v1'
+    const PANE_SETTINGS_HEIGHT_KEY = 'seesound_panel_settings_height_v1'
+    const MIN_PANE = 120
+
+    let filePaneHeight = (() => {
+        try {
+            const saved = Number(localStorage.getItem(PANE_FILE_HEIGHT_KEY))
+            if (Number.isFinite(saved) && saved >= MIN_PANE) return saved
+        } catch { /* no-op */ }
+        return 138
+    })()
+    let settingsPaneHeight = (() => {
+        try {
+            const saved = Number(localStorage.getItem(PANE_SETTINGS_HEIGHT_KEY))
+            if (Number.isFinite(saved) && saved >= MIN_PANE) return saved
+        } catch { /* no-op */ }
+        return 320
+    })()
+
+    const applyPaneHeights = () => {
+        const panes = [filePane, settingsPane, rulesPane]
+        const expandedIds = panes.filter((pane) => !paneCollapse[pane.id]).map((pane) => pane.id)
+        if (expandedIds.length === 0) {
+            paneCollapse.rules = false
+            expandedIds.push('rules')
+        }
+
+        for (const pane of panes) {
+            const isCollapsedPane = !!paneCollapse[pane.id]
+            pane.pane.classList.toggle('cp-pane-collapsed', isCollapsedPane)
+            pane.paneBody.style.display = isCollapsedPane ? 'none' : ''
+            pane.paneToggle.textContent = isCollapsedPane ? '▸' : '▾'
+            pane.paneToggle.title = isCollapsedPane
+                ? `Expand ${pane.paneHeader.textContent?.trim() || 'pane'}`
+                : `Collapse ${pane.paneHeader.textContent?.trim() || 'pane'}`
+        }
+
+        const showSplitterA = !paneCollapse.file && !paneCollapse.settings
+        const showSplitterB = !paneCollapse.settings && !paneCollapse.rules
+        splitterA.style.display = showSplitterA ? '' : 'none'
+        splitterB.style.display = showSplitterB ? '' : 'none'
+
+        const splitterTotal = (showSplitterA ? splitterA.offsetHeight : 0) + (showSplitterB ? splitterB.offsetHeight : 0)
+        const collapsedSpace = panes
+            .filter((pane) => paneCollapse[pane.id])
+            .reduce((sum, pane) => sum + pane.paneHeader.offsetHeight, 0)
+        const available = Math.max(MIN_PANE, body.clientHeight - splitterTotal - collapsedSpace)
+
+        const flexPaneId = expandedIds.includes('rules')
+            ? 'rules'
+            : expandedIds[expandedIds.length - 1]
+
+        const fixedIds = expandedIds.filter((id) => id !== flexPaneId)
+        const maxFixed = Math.max(MIN_PANE, available - MIN_PANE)
+        filePaneHeight = Math.max(MIN_PANE, Math.min(maxFixed, Math.floor(filePaneHeight)))
+        settingsPaneHeight = Math.max(MIN_PANE, Math.min(maxFixed, Math.floor(settingsPaneHeight)))
+
+        if (fixedIds.includes('file') && fixedIds.includes('settings') && filePaneHeight + settingsPaneHeight > available - MIN_PANE) {
+            settingsPaneHeight = Math.max(MIN_PANE, available - MIN_PANE - filePaneHeight)
+        }
+
+        filePane.pane.style.flex = paneCollapse.file
+            ? '0 0 auto'
+            : (flexPaneId === 'file' ? '1 1 auto' : `0 0 ${filePaneHeight}px`)
+        settingsPane.pane.style.flex = paneCollapse.settings
+            ? '0 0 auto'
+            : (flexPaneId === 'settings' ? '1 1 auto' : `0 0 ${settingsPaneHeight}px`)
+        rulesPane.pane.style.flex = paneCollapse.rules
+            ? '0 0 auto'
+            : (flexPaneId === 'rules' ? '1 1 auto' : `0 0 ${MIN_PANE}px`)
+    }
+
+    let paneDrag = null
+    const beginPaneDrag = (type, ev) => {
+        if (collapsed) return
+        if (type === 'file' && (paneCollapse.file || paneCollapse.settings)) return
+        if (type === 'settings' && (paneCollapse.settings || paneCollapse.rules)) return
+        paneDrag = {
+            type,
+            startY: ev.clientY,
+            fileStart: filePaneHeight,
+            settingsStart: settingsPaneHeight,
+        }
+        ev.preventDefault()
+    }
+
+    splitterA.addEventListener('mousedown', (ev) => beginPaneDrag('file', ev))
+    splitterB.addEventListener('mousedown', (ev) => beginPaneDrag('settings', ev))
+
+    for (const pane of [filePane, settingsPane, rulesPane]) {
+        pane.paneToggle.addEventListener('click', (ev) => {
+            ev.preventDefault()
+            ev.stopPropagation()
+            if (!paneCollapse[pane.id]) {
+                const openCount = [filePane, settingsPane, rulesPane].filter((p) => !paneCollapse[p.id]).length
+                if (openCount <= 1) return
+            }
+            paneCollapse[pane.id] = !paneCollapse[pane.id]
+            persistPaneCollapse()
+            applyPaneHeights()
+        })
+    }
+
+    const onPaneDragMove = (ev) => {
+        if (!paneDrag || collapsed) return
+        const dy = ev.clientY - paneDrag.startY
+        if (paneDrag.type === 'file') filePaneHeight = paneDrag.fileStart + dy
+        else settingsPaneHeight = paneDrag.settingsStart + dy
+        applyPaneHeights()
+    }
+
+    const onPaneDragEnd = () => {
+        if (!paneDrag) return
+        paneDrag = null
+        try {
+            localStorage.setItem(PANE_FILE_HEIGHT_KEY, String(Math.floor(filePaneHeight)))
+            localStorage.setItem(PANE_SETTINGS_HEIGHT_KEY, String(Math.floor(settingsPaneHeight)))
+        } catch { /* no-op */ }
+    }
 
     container.append(resizeHandle, header, body)
 
@@ -2441,6 +3369,7 @@ export function initControlPanel(container) {
         title.style.display = collapsed ? 'none' : ''
         resetBtn.style.display = collapsed ? 'none' : ''
         body.style.display = collapsed ? 'none' : ''
+        if (!collapsed) applyPaneHeights()
     })
 
     const resizeAbortPrev = window.__seesoundPanelResizeAbort
@@ -2467,18 +3396,25 @@ export function initControlPanel(container) {
         _applyPanelWidth(nextW, false)
     }, { signal: resizeAbort.signal })
 
+    window.addEventListener('mousemove', onPaneDragMove, { signal: resizeAbort.signal })
+
     window.addEventListener('mouseup', () => {
         if (!dragState) return
         dragState = null
         try { localStorage.setItem(PANEL_WIDTH_KEY, String(expandedWidth)) } catch { /* no-op */ }
     }, { signal: resizeAbort.signal })
 
+    window.addEventListener('mouseup', onPaneDragEnd, { signal: resizeAbort.signal })
+
     window.addEventListener('resize', () => {
         if (collapsed) return
         expandedWidth = clampPanelWidth(expandedWidth)
         container.style.width = `${expandedWidth}px`
         _applyPanelWidth(expandedWidth, false)
+        applyPaneHeights()
     }, { signal: resizeAbort.signal })
+
+    applyPaneHeights()
 
     // ── Reset all params
     resetBtn.addEventListener('click', () => {

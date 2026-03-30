@@ -11,6 +11,7 @@
  *  • File input (open audio file)
  *  • > / || Play-Pause, [] Stop, <<10 / 10>> seek
  *  • [PNG] save trigger
+ *  • [REC] record canvas + audio trigger
  *  • [PAINT ALL] full-audio paint trigger
  *  • Progress bar (input[type=range], click/drag to seek)
  *  • MM:SS / MM:SS timestamp display
@@ -124,12 +125,17 @@ export function initAudioPlayer(container) {
     const btnPng = el('button', 'audio-player__btn', {
         id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
     })
-    btnPng.textContent = 'PNG'
+    btnPng.textContent = '⎙'
+
+    const btnRecord = el('button', 'audio-player__btn', {
+        id: 'btn-record', 'aria-label': 'Record video', disabled: 'true', title: 'Record canvas and audio'
+    })
+    btnRecord.textContent = '⏺'
 
     const btnPaintAll = el('button', 'audio-player__btn', {
         id: 'btn-paint-all', 'aria-label': 'Paint all', disabled: 'true', title: 'Run through full audio and stop'
     })
-    btnPaintAll.textContent = 'PAINT ALL'
+    btnPaintAll.textContent = '🖌'
 
     const speedWrap = el('div', 'audio-player__speed-wrap')
     const speedInput = el('input', 'audio-player__speed-input', {
@@ -139,7 +145,7 @@ export function initAudioPlayer(container) {
     const speedSuffix = el('span', 'audio-player__speed-suffix', { text: 'x' })
     speedWrap.append(speedInput, speedSuffix)
 
-    transport.append(btnPlayPause, btnStop, btnBack, btnFwd, btnPng, btnPaintAll, speedWrap)
+    transport.append(btnBack, btnPlayPause, btnStop, btnFwd, btnPng, btnRecord, btnPaintAll, speedWrap)
 
     // Progress row
     const progressRow = el('div', 'audio-player__progress-row')
@@ -173,6 +179,7 @@ export function initAudioPlayer(container) {
         btnStop.disabled = busy || !audioEl.src
         btnBack.disabled = busy || !audioEl.src
         btnFwd.disabled = busy || !audioEl.src
+        btnRecord.disabled = busy || !audioEl.src
         btnPaintAll.disabled = busy || !audioEl.src
         speedInput.disabled = busy || !audioEl.src
         if (busy && text) fileName.textContent = text
@@ -212,6 +219,7 @@ export function initAudioPlayer(container) {
         btnStop.disabled = false
         btnBack.disabled = false
         btnFwd.disabled = false
+        btnRecord.disabled = false
         btnPaintAll.disabled = false
         speedInput.disabled = false
     }
@@ -296,6 +304,13 @@ export function initAudioPlayer(container) {
         }))
     })
 
+    btnRecord.addEventListener('click', () => {
+        if (btnRecord.disabled) return
+        container.dispatchEvent(new CustomEvent('player:recordvideo-toggle', {
+            detail: { audioEl }, bubbles: true
+        }))
+    })
+
     btnPaintAll.addEventListener('click', () => {
         if (btnPaintAll.disabled) return
         container.dispatchEvent(new CustomEvent('player:paintall', {
@@ -306,8 +321,18 @@ export function initAudioPlayer(container) {
     container.addEventListener('player:paintall-state', (e) => {
         const running = !!e?.detail?.running
         btnPaintAll.disabled = running || !audioEl.src
+        btnRecord.disabled = running || !audioEl.src
         speedInput.disabled = running || !audioEl.src
-        btnPaintAll.textContent = running ? 'PAINTING...' : 'PAINT ALL'
+        btnPaintAll.textContent = running ? 'PAINTING...' : '🖌'
+    })
+
+    container.addEventListener('player:recordvideo-state', (e) => {
+        const running = !!e?.detail?.running
+        btnRecord.textContent = running ? '⏹' : '⏺'
+        btnRecord.classList.toggle('audio-player__btn--active', running)
+        btnPaintAll.disabled = running || !audioEl.src
+        if (!running && !btnPaintAll.disabled && audioEl.src) btnRecord.disabled = false
+        speedInput.disabled = running || !audioEl.src
     })
 
     speedInput.addEventListener('keydown', (e) => {

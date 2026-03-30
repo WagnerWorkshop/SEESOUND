@@ -86,7 +86,7 @@
           {
             "operator": "set",
             "output": "particleCount",
-            "input": "binEnergy"
+            "input": "binMagnitude"
           }
         ],
         "order": 3
@@ -361,23 +361,38 @@
     "ruleEngineEnabled": true,
     "ruleSchemaVersion": 1,
     "_disabled": [],
-    "freqNormMin": 100.0,
-    "freqNormMax": 2000.0,
-    "binFluxNormMin": 0.0,
-    "binPhaseDeviationNormMin": 0.0,
-    "spectralFlatnessNormMax": 1.0,
+    "freqNormMin": 100,
+    "freqNormMax": 2000,
+    "binFluxNormMin": 0,
+    "binPhaseDeviationNormMin": 0,
+    "spectralFlatnessNormMax": 1,
     "binMagnitudeNormMin": -70,
     "binAttackTimeNormMax": 500,
-    "spectralFlatnessNormMin": 0.0,
+    "spectralFlatnessNormMin": 0,
     "globalRmsNormMin": -60,
-    "globalSpectralFluxNormMax": 100.0,
+    "globalSpectralFluxNormMax": 100,
     "spectralCentroidNormMin": 150,
     "binPhaseDeviationNormMax": 3.14,
     "globalRmsNormMax": 0,
-    "globalSpectralFluxNormMin": 0.0,
+    "globalSpectralFluxNormMin": 0,
     "binMagnitudeNormMax": 0,
     "spectralCentroidNormMax": 8000,
     "binFluxNormMax": 0.5,
-    "binAttackTimeNormMin": 5
+    "binAttackTimeNormMin": 5,
+    "fftSize": 2048,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
+    "particlesPerOctave": 100,
+    "palettes": [],
+    "ruleUiState": {
+      "collapsedGroups": [],
+      "collapsedSubgroups": [],
+      "collapsedRules": [],
+      "selectedContextGroup": "spawnedParticles",
+      "selectedGroupPath": "",
+      "selectedGroupName": "",
+      "selectedSubgroup": ""
+    }
   }
 }
