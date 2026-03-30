@@ -2,8 +2,8 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
     constructor(options) {
         super()
         const opts = options?.processorOptions || {}
-        this.fftSize = Math.max(256, Number(opts.fftSize) || 2048)
-        this.hopSize = Math.max(64, Number(opts.hopSize) || Math.floor(this.fftSize / 4))
+        this.fftSize = this._snapFftSize(opts.fftSize)
+        this.hopSize = this._sanitizeHopSize(opts.hopSize)
         this.binCount = this.fftSize >> 1
 
         this._ring = new Float32Array(this.fftSize)
@@ -27,6 +27,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._attackLastMs = new Float32Array(this.binCount)
         this._attackActive = new Uint8Array(this.binCount)
 
+        this._outMagnitude = new Float32Array(this.binCount)
+        this._outFlux = new Float32Array(this.binCount)
+        this._outPhaseDeviation = new Float32Array(this.binCount)
+        this._outPhase = new Float32Array(this.binCount)
+        this._outEnvelope = new Float32Array(this.binCount)
+        this._outAttackTime = new Float32Array(this.binCount)
+
         this._cfg = {
             enabled: false,
             needMagnitude: false,
@@ -35,11 +42,19 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
-            attackThreshold: 0.03,
+            fluxWindowFrames: this._sanitizeFluxWindowFrames(opts.fluxWindowFrames),
+            attackThreshold: 0.0005,
+            attackRatio: 3.0,
             sustainFluxEps: 0.004,
             sustainMagThreshold: 0.08,
             decayThreshold: 0.008,
         }
+
+        this._fluxWindowFrames = this._cfg.fluxWindowFrames
+        this._fluxHistory = new Float32Array(this.binCount * this._fluxWindowFrames)
+        this._fluxHistorySums = new Float32Array(this.binCount)
+        this._fluxHistoryWritePos = 0
+        this._fluxHistoryFill = 0
 
         this.port.onmessage = (event) => {
             const msg = event.data || {}
@@ -52,11 +67,51 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._cfg.needPhase = !!cfg.needPhase
             this._cfg.needEnvelope = !!cfg.needEnvelope
             this._cfg.needAttackTime = !!cfg.needAttackTime
+            const nextFluxWindow = this._sanitizeFluxWindowFrames(cfg.fluxWindowFrames)
+            if (nextFluxWindow !== this._fluxWindowFrames) {
+                this._cfg.fluxWindowFrames = nextFluxWindow
+                this._fluxWindowFrames = nextFluxWindow
+                this._fluxHistory = new Float32Array(this.binCount * this._fluxWindowFrames)
+                this._fluxHistorySums.fill(0)
+                this._fluxHistoryWritePos = 0
+                this._fluxHistoryFill = 0
+            }
             this._cfg.attackThreshold = Number.isFinite(cfg.attackThreshold) ? cfg.attackThreshold : this._cfg.attackThreshold
+            this._cfg.attackRatio = Number.isFinite(cfg.attackRatio) ? cfg.attackRatio : this._cfg.attackRatio
             this._cfg.sustainFluxEps = Number.isFinite(cfg.sustainFluxEps) ? cfg.sustainFluxEps : this._cfg.sustainFluxEps
             this._cfg.sustainMagThreshold = Number.isFinite(cfg.sustainMagThreshold) ? cfg.sustainMagThreshold : this._cfg.sustainMagThreshold
             this._cfg.decayThreshold = Number.isFinite(cfg.decayThreshold) ? cfg.decayThreshold : this._cfg.decayThreshold
         }
+    }
+
+    _snapFftSize(value) {
+        const allowed = [512, 1024, 2048, 4096, 8192, 16384]
+        const n = Number(value)
+        if (!Number.isFinite(n)) return 2048
+        let best = allowed[0]
+        let bestDist = Math.abs(n - best)
+        for (let i = 1; i < allowed.length; i++) {
+            const candidate = allowed[i]
+            const dist = Math.abs(n - candidate)
+            if (dist < bestDist) {
+                best = candidate
+                bestDist = dist
+            }
+        }
+        return best
+    }
+
+    _sanitizeHopSize(value) {
+        const n = Math.floor(Number(value))
+        const fallback = Math.floor(this.fftSize / 4)
+        if (!Number.isFinite(n)) return Math.max(64, fallback)
+        return Math.max(64, Math.min(this.fftSize, n))
+    }
+
+    _sanitizeFluxWindowFrames(value) {
+        const n = Math.floor(Number(value))
+        if (!Number.isFinite(n)) return 10
+        return Math.max(1, Math.min(64, n))
     }
 
     _buildBitReverse(n) {
@@ -164,12 +219,17 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._copyWindowedFrame()
         this._fftInPlace(this._re, this._im)
 
-        const magnitude = (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
-        const flux = (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) ? new Float32Array(this.binCount) : null
-        const phaseDeviation = cfg.needPhaseDeviation ? new Float32Array(this.binCount) : null
-        const phaseOut = cfg.needPhase ? new Float32Array(this.binCount) : null
-        const envelope = cfg.needEnvelope ? new Float32Array(this.binCount) : null
-        const attackTime = cfg.needAttackTime ? new Float32Array(this.binCount) : null
+        const needsMagnitude = cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime
+        const needsFlux = cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime
+        const needsPhaseDeviation = cfg.needPhaseDeviation
+        const needsPhase = cfg.needPhase
+        const needsEnvelope = cfg.needEnvelope
+        const needsAttackTime = cfg.needAttackTime
+        const historyDenom = Math.max(1, this._fluxHistoryFill)
+        const attackRatio = Math.max(1.0, Number(cfg.attackRatio) || 3.0)
+        const minAttackThreshold = Math.max(1e-6, Number(cfg.attackThreshold) || 0.0005)
+        const fluxWindow = this._fluxWindowFrames
+        const fluxPos = this._fluxHistoryWritePos
 
         for (let k = 0; k < this.binCount; k++) {
             const re = this._re[k]
@@ -177,30 +237,39 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             const magNowDb = this._dbfsFromComplex(re, im)
             const magNowLin = Math.max(0, Math.pow(10, magNowDb / 20))
 
-            if (magnitude) magnitude[k] = magNowDb
+            if (needsMagnitude) this._outMagnitude[k] = magNowDb
 
             const prevMag = this._prevMag[k]
             const rise = magNowLin - prevMag
             // Scale linear rise so defaults produce useful 0..1-ish values.
             const fluxValue = Math.max(0, rise) * 64
-            if (flux) flux[k] = fluxValue
+            if (needsFlux) this._outFlux[k] = fluxValue
 
-            if (phaseDeviation || phaseOut) {
+            const prevAvgFlux = this._fluxHistorySums[k] / historyDenom
+            const dynamicAttackThreshold = Math.max(minAttackThreshold, prevAvgFlux * attackRatio)
+
+            const fluxIndex = k * fluxWindow + fluxPos
+            const oldFlux = this._fluxHistory[fluxIndex]
+            this._fluxHistory[fluxIndex] = fluxValue
+            const sumFlux = this._fluxHistorySums[k] - oldFlux + fluxValue
+            this._fluxHistorySums[k] = sumFlux
+
+            if (needsPhaseDeviation || needsPhase) {
                 const phase = Math.atan2(im, re)
-                if (phaseOut) phaseOut[k] = phase
+                if (needsPhase) this._outPhase[k] = phase
             }
 
-            if (phaseDeviation) {
-                const phase = phaseOut ? phaseOut[k] : Math.atan2(im, re)
+            if (needsPhaseDeviation) {
+                const phase = needsPhase ? this._outPhase[k] : Math.atan2(im, re)
                 const d1 = this._phaseDelta(phase, this._prevPhase[k])
                 const d2 = this._phaseDelta(d1, this._prevPhaseDelta[k])
-                phaseDeviation[k] = Math.max(0, Math.min(Math.PI, Math.abs(d2)))
+                this._outPhaseDeviation[k] = Math.max(0, Math.min(Math.PI, Math.abs(d2)))
                 this._prevPhase[k] = phase
                 this._prevPhaseDelta[k] = d1
             }
 
-            if (attackTime) {
-                const isRising = rise > Math.max(1e-6, cfg.attackThreshold)
+            if (needsAttackTime) {
+                const isRising = fluxValue > dynamicAttackThreshold
                 if (isRising) {
                     this._attackActive[k] = 1
                     this._attackElapsedMs[k] += hopMs
@@ -209,47 +278,31 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                     this._attackLastMs[k] = Math.max(hopMs, this._attackElapsedMs[k])
                     this._attackElapsedMs[k] = 0
                 }
-                attackTime[k] = this._attackActive[k] ? this._attackElapsedMs[k] : this._attackLastMs[k]
+                this._outAttackTime[k] = this._attackActive[k] ? this._attackElapsedMs[k] : this._attackLastMs[k]
             }
 
-            if (envelope) {
+            if (needsEnvelope) {
                 let state = 0
-                if (rise > cfg.attackThreshold) state = 1
+                if (fluxValue > dynamicAttackThreshold) state = 1
                 else if (Math.abs(rise) <= cfg.sustainFluxEps && magNowLin >= cfg.sustainMagThreshold) state = 2
                 else if (rise < -cfg.decayThreshold) state = 3
-                envelope[k] = state
+                this._outEnvelope[k] = state
             }
 
             this._prevMag[k] = magNowLin
         }
 
+        this._fluxHistoryWritePos = (fluxPos + 1) % fluxWindow
+        if (this._fluxHistoryFill < fluxWindow) this._fluxHistoryFill += 1
+
         const payload = { type: 'binMetrics' }
-        const transfers = []
-        if (magnitude) {
-            payload.magnitude = magnitude.buffer
-            transfers.push(magnitude.buffer)
-        }
-        if (flux) {
-            payload.flux = flux.buffer
-            transfers.push(flux.buffer)
-        }
-        if (phaseDeviation) {
-            payload.phaseDeviation = phaseDeviation.buffer
-            transfers.push(phaseDeviation.buffer)
-        }
-        if (phaseOut) {
-            payload.phase = phaseOut.buffer
-            transfers.push(phaseOut.buffer)
-        }
-        if (envelope) {
-            payload.envelope = envelope.buffer
-            transfers.push(envelope.buffer)
-        }
-        if (attackTime) {
-            payload.attackTime = attackTime.buffer
-            transfers.push(attackTime.buffer)
-        }
-        this.port.postMessage(payload, transfers)
+        if (needsMagnitude) payload.magnitude = this._outMagnitude
+        if (needsFlux) payload.flux = this._outFlux
+        if (needsPhaseDeviation) payload.phaseDeviation = this._outPhaseDeviation
+        if (needsPhase) payload.phase = this._outPhase
+        if (needsEnvelope) payload.envelope = this._outEnvelope
+        if (needsAttackTime) payload.attackTime = this._outAttackTime
+        this.port.postMessage(payload)
     }
 
     process(inputs) {

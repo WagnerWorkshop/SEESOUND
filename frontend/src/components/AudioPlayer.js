@@ -31,7 +31,7 @@
 // § 1  Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { shouldConvertAudioFile, convertAudioFileToWav } from '../engine/audio/AudioImport.js'
+import { decodeAudioFileInBrowser } from '../engine/audio/AudioImport.js'
 
 /** Format seconds → "M:SS" */
 function fmtTime(sec) {
@@ -230,16 +230,12 @@ export function initAudioPlayer(container) {
         if (!file) return
         _setBusy(true, `Loading ${file.name}...`)
         try {
-            const converted = shouldConvertAudioFile(file)
-                ? await (async () => {
-                    fileName.textContent = `Converting ${file.name}...`
-                    return convertAudioFileToWav(file)
-                })()
-                : file
-            _loadAudioFile(converted, converted.name)
+            fileName.textContent = `Decoding ${file.name}...`
+            const prepared = await decodeAudioFileInBrowser(file)
+            _loadAudioFile(prepared, prepared.name)
         } catch (err) {
-            console.warn('[AudioPlayer] conversion failed, using original file:', err)
-            _loadAudioFile(file, file.name)
+            console.warn('[AudioPlayer] decode failed:', err)
+            fileName.textContent = 'Decode failed. Try another file.'
         } finally {
             _setBusy(false)
             fileInput.value = ''

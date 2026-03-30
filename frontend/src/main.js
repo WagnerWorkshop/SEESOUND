@@ -614,7 +614,7 @@ function _normalizeByRange(value, minValue, maxValue) {
     return Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
 }
 
-const _ALLOWED_FFT_SIZES = Object.freeze([1024, 2048, 4096, 8192, 16384])
+const _ALLOWED_FFT_SIZES = Object.freeze([512, 1024, 2048, 4096, 8192, 16384])
 
 function _snapFftSize(value) {
     const n = Number(value)
@@ -630,6 +630,12 @@ function _snapFftSize(value) {
         }
     }
     return best
+}
+
+function _sanitizeFluxWindowFrames(value) {
+    const n = Math.floor(Number(value))
+    if (!Number.isFinite(n)) return 10
+    return Math.max(1, Math.min(64, n))
 }
 
 function _buildBackendAudioAnalysisConfig(snapshot = {}, requiredInputsByTarget = null) {
@@ -687,6 +693,7 @@ class AudioEngine {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
+            fluxWindowFrames: _sanitizeFluxWindowFrames(params.fluxWindowFrames),
             attackThreshold: 0.0005,
             sustainFluxEps: 0.004,
             sustainMagThreshold: 0.08,
@@ -748,17 +755,18 @@ class AudioEngine {
             processorOptions: {
                 fftSize: this.FFT_SIZE,
                 hopSize: Math.floor(this.FFT_SIZE / 4),
+                fluxWindowFrames: this._workletConfig.fluxWindowFrames,
             },
         })
         node.port.onmessage = (event) => {
             const msg = event.data || {}
             if (msg.type !== 'binMetrics') return
-            if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
-            if (msg.flux) this._binFlux = new Float32Array(msg.flux)
-            if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
-            if (msg.phase) this._binPhase = new Float32Array(msg.phase)
-            if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
-            if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+            if (msg.magnitude) this._binMagnitude = (msg.magnitude instanceof Float32Array) ? msg.magnitude : new Float32Array(msg.magnitude)
+            if (msg.flux) this._binFlux = (msg.flux instanceof Float32Array) ? msg.flux : new Float32Array(msg.flux)
+            if (msg.phaseDeviation) this._binPhaseDeviation = (msg.phaseDeviation instanceof Float32Array) ? msg.phaseDeviation : new Float32Array(msg.phaseDeviation)
+            if (msg.phase) this._binPhase = (msg.phase instanceof Float32Array) ? msg.phase : new Float32Array(msg.phase)
+            if (msg.envelope) this._binEnvelope = (msg.envelope instanceof Float32Array) ? msg.envelope : new Float32Array(msg.envelope)
+            if (msg.attackTime) this._binAttackTime = (msg.attackTime instanceof Float32Array) ? msg.attackTime : new Float32Array(msg.attackTime)
         }
         return node
     }
@@ -854,6 +862,13 @@ class AudioEngine {
             this._connectSourceToWorklet()
             this._postWorkletConfig()
         }
+    }
+
+    setFluxWindowFrames(nextValue) {
+        const next = _sanitizeFluxWindowFrames(nextValue)
+        if (next === this._workletConfig.fluxWindowFrames) return
+        this._workletConfig.fluxWindowFrames = next
+        this._postWorkletConfig()
     }
 
     init(el) {
@@ -2161,10 +2176,18 @@ subscribe((_, key) => {
     if (key === 'fftSize') {
         const snapped = _snapFftSize(params.fftSize)
         if (params.fftSize !== snapped) {
-            set('fftSize', snapped)
+            setMany({ fftSize: snapped })
             return
         }
         ae.setFftSize(snapped)
+    }
+    if (key === 'fluxWindowFrames') {
+        const clamped = _sanitizeFluxWindowFrames(params.fluxWindowFrames)
+        if (params.fluxWindowFrames !== clamped) {
+            setMany({ fluxWindowFrames: clamped })
+            return
+        }
+        ae.setFluxWindowFrames(clamped)
     }
     if (key === 'ruleBlocks') {
         const state = ps.onRulesChanged(params.ruleBlocks ?? [])

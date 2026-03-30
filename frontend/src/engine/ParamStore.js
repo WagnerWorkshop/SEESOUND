@@ -148,12 +148,19 @@ export const PARAMS = [
         desc: 'FFT analysis size. Discrete power-of-two choices; larger sizes increase frequency detail and then progressively thin high-frequency buckets.',
         isDropdown: true,
         dropdownOptions: [
+            { label: '512', value: 512 },
             { label: '1024', value: 1024 },
             { label: '2048', value: 2048 },
             { label: '4096', value: 4096 },
             { label: '8192', value: 8192 },
             { label: '16384', value: 16384 },
         ],
+        canDisable: false,
+    },
+    {
+        key: 'fluxWindowFrames', group: 'inputProcessing', label: 'Flux Window Frames',
+        min: 1, max: 64, step: 1, default: 10, unit: 'frames',
+        desc: 'Rolling window size used for per-bin spectral flux averaging in dynamic attack detection.',
         canDisable: false,
     },
     normRangeParam({

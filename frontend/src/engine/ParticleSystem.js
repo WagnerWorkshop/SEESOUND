@@ -696,8 +696,8 @@ export class ParticleSystem {
         const renderPctRaw = Number(params.particleRenderPercent)
         const renderPct = Number.isFinite(renderPctRaw) ? Math.max(1, Math.min(100, Math.floor(renderPctRaw))) : 100
         const fftSizeRaw = Number(params.fftSize)
-        const fftSize = Number.isFinite(fftSizeRaw) ? Math.max(1024, Math.min(16384, fftSizeRaw)) : 2048
-        const fftDetailScale = normalizeByRange(fftSize, 1024, 16384)
+        const fftSize = Number.isFinite(fftSizeRaw) ? Math.max(512, Math.min(16384, fftSizeRaw)) : 2048
+        const fftDetailScale = normalizeByRange(fftSize, 512, 16384)
         const particlesByFrameRaw = Number(params.particlesByFrame)
         const particlesByFrame = Number.isFinite(particlesByFrameRaw)
             ? Math.max(MIN_PARTICLES_BY_FRAME, Math.min(MAX_PARTICLES_BY_FRAME, Math.round(particlesByFrameRaw)))

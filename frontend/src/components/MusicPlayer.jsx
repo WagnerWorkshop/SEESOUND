@@ -53,6 +53,7 @@ export default function MusicPlayer({ audioFile, onFileSelect, onReady, audioRef
         if (!audioFile) return
         const audio = audioRef.current
         if (!audio) return
+        audio.crossOrigin = 'anonymous'
 
         // Revoke previous object URL
         if (srcObjRef.current) URL.revokeObjectURL(srcObjRef.current)
@@ -190,7 +191,7 @@ export default function MusicPlayer({ audioFile, onFileSelect, onReady, audioRef
     return (
         <div className="music-player">
             {/* Hidden elements */}
-            <audio ref={audioRef} preload="auto" />
+            <audio ref={audioRef} preload="auto" crossOrigin="anonymous" />
             <input
                 ref={fileInputRef}
                 type="file"
