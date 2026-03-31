@@ -44,6 +44,14 @@ import {
     RULE_ACTION_OPERATORS,
     annotateRuleContradictions,
 } from './rules/RuleDictionary.js'
+import {
+    SEMANTIC_AUDIO_TRIGGERS,
+    SEMANTIC_VISUAL_ELEMENTS,
+    SEMANTIC_ACTIONS,
+    buildSemanticSentenceRuleRow,
+    inferSemanticSentenceFromRuleBlock,
+    generateProCodeFromRuleBlock,
+} from './rules/SemanticMapper.js'
 import { openColorDesignEditor } from './ColorDesignEditor.js'
 import { parseProjectText } from './project/ProjectIO.js'
 
@@ -359,8 +367,63 @@ function buildPresetBar() {
     const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
     const btnPaletteMgr = el('button', 'cp-preset-btn', { text: '🎨', title: 'Open Palette Manager' })
     const projectInput = el('input', '', { type: 'file', accept: '.ssp.json,.json' })
+    const presetImportInput = el('input', '', { type: 'file', accept: '.json,application/json' })
+    const btnPresetImport = el('button', 'cp-preset-btn', { text: '⇪', title: 'Import preset JSON from computer' })
     projectInput.style.display = 'none'
-    row0.append(projectLabel, btnProjectNew, btnProjectSave, btnProjectSaveAs, btnProjectLoad, btnPaletteMgr)
+    presetImportInput.style.display = 'none'
+    row0.append(projectLabel, btnProjectNew, btnProjectSave, btnProjectSaveAs, btnProjectLoad, btnPaletteMgr, btnPresetImport)
+
+    const rowMode = el('div', 'cp-preset-row')
+    const modeLabel = el('span', 'cp-preset-label', { text: 'MODE' })
+    const modeSel = el('select', 'cp-preset-sel')
+    const modeOptions = [
+        { id: 'starter', label: 'Starter' },
+        { id: 'advanced', label: 'Advanced' },
+        { id: 'pro', label: 'Pro' },
+    ]
+    for (const option of modeOptions) {
+        modeSel.appendChild(el('option', '', { value: option.id, text: option.label }))
+    }
+    modeSel.value = 'advanced'
+    const modeHelp = el('span', 'cp-preset-label', { text: 'Starter: simplified macros | Advanced: human names | Pro: engine names + formulas' })
+    rowMode.append(modeLabel, modeSel, modeHelp)
+
+    const rowStarter = el('div', 'cp-preset-row')
+    const starterStyleSel = el('select', 'cp-preset-sel')
+    const starterStyles = ['linear basic', 'linear colors', 'linear timbre colors', 'textured timbre colors']
+    for (const name of starterStyles) starterStyleSel.appendChild(el('option', '', { value: name, text: name }))
+    const btnStarterStyleLoad = el('button', 'cp-preset-btn', { text: 'Apply Style', title: 'Load selected starter style preset' })
+    const starterReactivity = el('input', 'cp-rule-input cp-rule-num', { type: 'number', step: '0.05', min: '0', max: '4', value: '1.20', title: 'Reactivity multiplier (how strongly visuals react to overall volume)' })
+    const starterChaos = el('input', 'cp-rule-input cp-rule-num', { type: 'number', step: '0.05', min: '0', max: '4', value: '1.00', title: 'Chaos multiplier (how much noisy textures randomize visuals)' })
+    const btnStarterApply = el('button', 'cp-preset-btn cp-preset-save', { text: 'Apply Macros', title: 'Apply Starter Reactivity and Chaos to the canonical rule set' })
+    rowStarter.append(starterStyleSel, btnStarterStyleLoad, starterReactivity, starterChaos, btnStarterApply)
+
+    const rowSemantic = el('div', 'cp-preset-row')
+    const triggerSel = el('select', 'cp-preset-sel')
+    const visualSel = el('select', 'cp-preset-sel')
+    const actionSel = el('select', 'cp-preset-sel')
+    for (const trigger of SEMANTIC_AUDIO_TRIGGERS) {
+        triggerSel.appendChild(el('option', '', { value: trigger.id, text: trigger.label, title: trigger.description }))
+    }
+    for (const visual of SEMANTIC_VISUAL_ELEMENTS) {
+        visualSel.appendChild(el('option', '', { value: visual.id, text: visual.label, title: visual.description }))
+    }
+    for (const action of SEMANTIC_ACTIONS) {
+        actionSel.appendChild(el('option', '', { value: action.id, text: action.label, title: action.description }))
+    }
+    triggerSel.title = 'Audio trigger: choose a human-language signal to react to.'
+    visualSel.title = 'Visual element: choose what gets modified.'
+    actionSel.title = 'Action: choose how it should react.'
+    const btnAddSentence = el('button', 'cp-preset-btn cp-preset-save', { text: '＋ Rule', title: 'Add sentence as a rule block' })
+    rowSemantic.append(triggerSel, visualSel, actionSel, btnAddSentence)
+
+    const rowProCode = el('div', 'cp-preset-row')
+    const proCode = el('pre', 'cp-rule-summary')
+    proCode.style.whiteSpace = 'pre-wrap'
+    proCode.style.maxHeight = '120px'
+    proCode.style.overflow = 'auto'
+    proCode.textContent = '// Pro console\n// Creator sentence output will appear here.'
+    rowProCode.append(proCode)
 
     // select + Load + Delete
     const row1 = el('div', 'cp-preset-row')
@@ -374,7 +437,7 @@ function buildPresetBar() {
     const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset (Ctrl+P)' })
     row1.append(sel, btnLoad, btnDel, nameInput, btnSave)
 
-    bar.append(row0, row1, projectInput)
+    bar.append(row0, rowMode, rowStarter, rowSemantic, rowProCode, row1, projectInput, presetImportInput)
 
     let presets = []
 
@@ -416,6 +479,67 @@ function buildPresetBar() {
         if (prev && presets.includes(prev)) sel.value = prev
     }
 
+    const _serializeRuleBlocks = () => {
+        return _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    }
+
+    const _replaceRuleBlocks = (blocks) => {
+        const safe = Array.isArray(blocks) ? blocks.map((rule, index) => ({ ...rule, order: index })) : []
+        setMany({ ruleBlocks: safe })
+        _ruleBuilderApi?.replaceFromRuleBlocks(safe)
+    }
+
+    const _upsertRuleBlock = (nextRule) => {
+        if (!nextRule || typeof nextRule !== 'object') return
+        const rules = _serializeRuleBlocks()
+        const id = String(nextRule.id || '').trim()
+        if (!id) return
+        const idx = rules.findIndex((rule) => String(rule?.id || '').trim() === id)
+        if (idx >= 0) rules[idx] = { ...rules[idx], ...nextRule }
+        else rules.push(nextRule)
+        _replaceRuleBlocks(rules)
+    }
+
+    const _extractStarterReactivity = (rules) => {
+        const rule = rules.find((entry) => String(entry?.id || '') === 'starter-reactivity')
+        const expr = String(rule?.actions?.[0]?.expression || '')
+        const m = expr.match(/^\(\s*amplitude\s*\)\s*\*\s*(-?\d+(?:\.\d+)?)$/)
+        if (!m) return 1.2
+        const n = Number(m[1])
+        return Number.isFinite(n) ? Math.max(0, n) : 1.2
+    }
+
+    const _extractStarterChaos = (rules) => {
+        const rule = rules.find((entry) => String(entry?.id || '') === 'starter-chaos')
+        const expr = String(rule?.actions?.[0]?.expression || '')
+        const m = expr.match(/\*\s*(-?\d+(?:\.\d+)?)\s*\)\s*$/)
+        if (!m) return 1.0
+        const n = Number(m[1])
+        return Number.isFinite(n) ? Math.max(0, n) : 1.0
+    }
+
+    const _syncTierViewsFromPro = () => {
+        const rules = _serializeRuleBlocks()
+        starterReactivity.value = _extractStarterReactivity(rules).toFixed(2)
+        starterChaos.value = _extractStarterChaos(rules).toFixed(2)
+
+        const semanticRule = rules.find((rule) => {
+            const id = String(rule?.id || '')
+            if (id === 'starter-reactivity' || id === 'starter-chaos') return false
+            return !!inferSemanticSentenceFromRuleBlock(rule)
+        })
+
+        if (semanticRule) {
+            const inferred = inferSemanticSentenceFromRuleBlock(semanticRule)
+            if (inferred) {
+                triggerSel.value = inferred.triggerId
+                visualSel.value = inferred.visualId
+                actionSel.value = inferred.actionId
+                proCode.textContent = `// Pro console\n${inferred.sentence}\n\n${generateProCodeFromRuleBlock(semanticRule)}`
+            }
+        }
+    }
+
     const loadSelectedPreset = async (name) => {
         if (!name) return
         const data = await loadPreset(name)
@@ -423,6 +547,7 @@ function buildPresetBar() {
         setMany(data.params)
         for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
         _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+        _syncTierViewsFromPro()
     }
 
     sel.addEventListener('change', () => {
@@ -472,6 +597,118 @@ function buildPresetBar() {
         openColorDesignEditor()
     })
 
+    btnPresetImport.addEventListener('click', () => {
+        presetImportInput.click()
+    })
+
+    btnStarterStyleLoad.addEventListener('click', async () => {
+        const name = String(starterStyleSel.value || '').trim()
+        if (!name) return
+        await loadSelectedPreset(name)
+    })
+
+    const _applyStarterMacrosToPro = () => {
+        const reactivity = Math.max(0, Number(starterReactivity.value) || 1.2)
+        const chaos = Math.max(0, Number(starterChaos.value) || 1.0)
+
+        _upsertRuleBlock({
+            id: 'starter-reactivity',
+            group: 'Starter',
+            subgroup: 'Reactivity',
+            enabled: true,
+            target: 'spawnedParticles',
+            scope: 'spawnedOnly',
+            condition: { operator: 'always' },
+            actions: [{ operator: 'set', output: 'size', expression: `(amplitude) * ${reactivity.toFixed(2)}` }],
+        })
+
+        _upsertRuleBlock({
+            id: 'starter-chaos',
+            group: 'Starter',
+            subgroup: 'Chaos',
+            enabled: true,
+            target: 'spawnedParticles',
+            scope: 'spawnedOnly',
+            condition: { operator: 'always' },
+            actions: [{ operator: 'set', output: 'hue', expression: `abs(sin(time * 6 + (spectralFlatness + binPhaseDeviation) * ${chaos.toFixed(2)}))` }],
+        })
+
+        proCode.textContent = [
+            '// Pro console',
+            '// Starter macros translated into canonical pro-level rules.',
+            `visual.size = (amplitude) * ${reactivity.toFixed(2)};`,
+            `visual.hue = abs(sin(time * 6 + (spectralFlatness + binPhaseDeviation) * ${chaos.toFixed(2)}));`,
+        ].join('\n')
+    }
+
+    btnStarterApply.addEventListener('click', () => {
+        _applyStarterMacrosToPro()
+        _setExperienceMode('starter')
+    })
+
+    starterReactivity.addEventListener('change', _applyStarterMacrosToPro)
+    starterChaos.addEventListener('change', _applyStarterMacrosToPro)
+
+    const _setExperienceMode = (modeRaw) => {
+        const mode = String(modeRaw || '').toLowerCase()
+        const normalized = mode === 'starter' || mode === 'pro' ? mode : 'advanced'
+        modeSel.value = normalized
+        rowStarter.style.display = normalized === 'starter' ? '' : 'none'
+        rowSemantic.style.display = normalized === 'starter' ? 'none' : ''
+        rowProCode.style.display = normalized === 'pro' ? '' : 'none'
+        window.dispatchEvent(new CustomEvent('seesound:experience-mode-changed', {
+            detail: { mode: normalized },
+        }))
+    }
+
+    modeSel.addEventListener('change', () => {
+        _setExperienceMode(modeSel.value)
+    })
+
+    btnAddSentence.addEventListener('click', () => {
+        if (!_ruleBuilderApi?.addRow) {
+            alert('Rule Builder is not ready yet. Try again in a moment.')
+            return
+        }
+        const built = buildSemanticSentenceRuleRow({
+            triggerId: String(triggerSel.value || ''),
+            visualId: String(visualSel.value || ''),
+            actionId: String(actionSel.value || ''),
+            index: Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0,
+        })
+        _ruleBuilderApi.addRow(built.ruleBlock)
+        _syncTierViewsFromPro()
+        proCode.textContent = `// Pro console\n${built.sentence}\n\n${built.generatedCode}`
+        _setExperienceMode('advanced')
+    })
+
+    presetImportInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        try {
+            const text = await file.text()
+            const payload = JSON.parse(text)
+            const rawName = String(payload?.name || file.name || '').trim()
+            const name = rawName.replace(/\.[^.]+$/, '').trim()
+            if (!name) throw new Error('Preset name missing.')
+            if (!payload?.params || typeof payload.params !== 'object') {
+                throw new Error('Preset JSON must include a params object.')
+            }
+            await savePreset(name, payload.params)
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+            await refresh()
+            sel.value = name
+            nameInput.value = name
+            await loadSelectedPreset(name)
+            alert(`Imported preset: ${name}`)
+        } catch (err) {
+            console.warn('[Preset] import failed:', err)
+            alert('Failed to import preset JSON. Check file format.')
+        } finally {
+            presetImportInput.value = ''
+        }
+    })
+
     projectInput.addEventListener('change', async (e) => {
         const file = e.target.files?.[0]
         if (!file) return
@@ -519,6 +756,7 @@ function buildPresetBar() {
     window.addEventListener('seesound:project-loaded', async (e) => {
         const presetName = String(e?.detail?.presetName || '').trim()
         await refresh()
+        _syncTierViewsFromPro()
         if (!presetName) return
         if (presets.includes(presetName)) {
             sel.value = presetName
@@ -527,6 +765,9 @@ function buildPresetBar() {
         }
         nameInput.value = presetName
     })
+
+    _setExperienceMode('advanced')
+    _syncTierViewsFromPro()
 
     refresh()
     return bar
@@ -3332,6 +3573,33 @@ export function initControlPanel(container) {
             applyPaneHeights()
         })
     }
+
+    window.addEventListener('seesound:experience-mode-changed', (e) => {
+        const mode = String(e?.detail?.mode || '').toLowerCase()
+        if (mode === 'starter') {
+            paneCollapse.file = false
+            paneCollapse.settings = false
+            paneCollapse.rules = true
+            persistPaneCollapse()
+            applyPaneHeights()
+            return
+        }
+        if (mode === 'advanced') {
+            paneCollapse.file = false
+            paneCollapse.settings = false
+            paneCollapse.rules = false
+            persistPaneCollapse()
+            applyPaneHeights()
+            return
+        }
+        if (mode === 'pro') {
+            paneCollapse.file = false
+            paneCollapse.settings = false
+            paneCollapse.rules = false
+            persistPaneCollapse()
+            applyPaneHeights()
+        }
+    })
 
     const onPaneDragMove = (ev) => {
         if (!paneDrag || collapsed) return

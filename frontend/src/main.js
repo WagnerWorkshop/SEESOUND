@@ -29,6 +29,7 @@ import {
     listPresets,
     loadPreset,
     savePreset,
+    deletePreset,
     RULE_SCHEMA_VERSION,
     RULE_DEBUG_FLAGS,
 } from './engine/ParamStore.js'
@@ -42,6 +43,7 @@ import {
     PROJECT_FILE_EXTENSION,
     triggerProjectDownload,
 } from './engine/project/ProjectIO.js'
+import { getDefaultProjectDefinition } from './config/DefaultProject.js'
 import {
     computeSpectralCentroid,
     computeSpectralFlux,
@@ -1071,7 +1073,7 @@ const ae = new AudioEngine()
 ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// § 4  WEBSOCKET BRIDGE
+// § 4  STATUS (BROWSER-ONLY MODE)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const statusDot = document.getElementById('status-dot')
@@ -1081,26 +1083,7 @@ function setStatus(state, text) {
     if (statusDot) statusDot.className = state
     if (statusText) statusText.textContent = text
 }
-
-function connectWS() {
-    const ws = new WebSocket(`ws://${location.hostname}:8000/ws`)
-    ws.onopen = () => setStatus('open', '')
-    ws.onclose = () => { setStatus('closed', 'Backend offline'); setTimeout(connectWS, 3000) }
-    ws.onerror = () => setStatus('closed', 'WS error')
-    ws.onmessage = () => { }  // future: handle server-pushed rules
-    subscribe(snapshot => {
-        if (ws.readyState === WebSocket.OPEN) {
-            const compileState = ps.getRuleCompileState?.()
-            const requiredInputsByTarget = compileState?.requiredInputsByTarget || _initialCompileState?.requiredInputsByTarget || null
-            const payload = {
-                ...snapshot,
-                audio_analysis_config: _buildBackendAudioAnalysisConfig(snapshot, requiredInputsByTarget),
-            }
-            ws.send(JSON.stringify({ type: 'params_update', payload }))
-        }
-    })
-}
-connectWS()
+setStatus('open', 'Browser mode')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 5  HUD
@@ -1182,6 +1165,47 @@ let _recordingStream = null
 let _recordedChunks = []
 let _recordingAudioCleanup = null
 let _recordingEndedHandler = null
+let _lastPerformanceDropSignalTs = 0
+
+const platformConfig = {
+    tier: 'free',
+    maxExportResolution: Number.POSITIVE_INFINITY,
+    canExportObj: false,
+    canCloudRender: false,
+}
+
+function _emitToPlatform(type, payload = {}) {
+    try {
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                source: 'seesound-engine',
+                type,
+                payload,
+            }, '*')
+        }
+    } catch {
+        // ignore cross-window messaging failures
+    }
+}
+
+function _applyPlatformConfig(raw) {
+    const cfg = (raw && typeof raw === 'object') ? raw : {}
+    platformConfig.tier = String(cfg.tier || platformConfig.tier) === 'pro' ? 'pro' : 'free'
+    const maxRes = Number(cfg.maxExportResolution)
+    platformConfig.maxExportResolution = Number.isFinite(maxRes) && maxRes > 0
+        ? Math.floor(maxRes)
+        : Number.POSITIVE_INFINITY
+    platformConfig.canExportObj = !!cfg.canExportObj
+    platformConfig.canCloudRender = !!cfg.canCloudRender
+}
+
+window.addEventListener('message', (event) => {
+    const data = event?.data
+    if (!data || typeof data !== 'object') return
+    if (data.source !== 'seesound-platform' || data.type !== 'platform:config') return
+    _applyPlatformConfig(data.payload)
+})
+_emitToPlatform('engine:ready')
 
 function _sanitizeFilePart(value, fallback = 'untitled') {
     const text = String(value || '').trim()
@@ -1237,8 +1261,24 @@ async function saveCanvasPng() {
     const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
     const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
     const defaultPngName = `${audioTitle} - ${presetTitle}.png`
-    const requestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
-    const requestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+    const rawRequestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
+    const rawRequestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    const requestedMaxEdge = Math.max(rawRequestedW, rawRequestedH)
+    const entitlementScale = Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && requestedMaxEdge > entitlementMaxRes
+        ? entitlementMaxRes / requestedMaxEdge
+        : 1
+    const requestedW = Math.max(1, Math.floor(rawRequestedW * entitlementScale))
+    const requestedH = Math.max(1, Math.floor(rawRequestedH * entitlementScale))
+
+    if (entitlementScale < 1) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: rawRequestedW,
+            requestedHeight: rawRequestedH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+    }
 
     const exportCanvas = document.createElement('canvas')
     const exportRenderer = new THREE.WebGLRenderer({
@@ -1352,6 +1392,20 @@ async function startVideoRecording(playerEl, audioEl) {
     if (!audioEl?.src) return
     if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
         alert('Video recording is not supported in this browser.')
+        return
+    }
+
+    const currentW = Math.max(1, Math.floor(renderer.domElement.width / Math.max(1, window.devicePixelRatio)))
+    const currentH = Math.max(1, Math.floor(renderer.domElement.height / Math.max(1, window.devicePixelRatio)))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    if (Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && Math.max(currentW, currentH) > entitlementMaxRes) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: currentW,
+            requestedHeight: currentH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+        alert(`Free plan export limit is ${Math.floor(entitlementMaxRes)}p. Reduce canvas size or upgrade to Pro.`)
         return
     }
 
@@ -1625,6 +1679,20 @@ function animate() {
     requestAnimationFrame(animate)
     frameN++
 
+    if ((frameN % 120) === 0) {
+        const fps = Number(ps?.getApproxFps?.() || 0)
+        if (fps > 0 && fps < 24) {
+            const now = performance.now()
+            if ((now - _lastPerformanceDropSignalTs) > 15000) {
+                _lastPerformanceDropSignalTs = now
+                _emitToPlatform('engine:performance-drop', {
+                    fps,
+                    canCloudRender: !!platformConfig.canCloudRender,
+                })
+            }
+        }
+    }
+
     ae.update()
     const isActuallyPlaying = !!(ae.audioEl && !ae.audioEl.paused && !ae.audioEl.ended)
     if (isActuallyPlaying !== isPlaying) isPlaying = isActuallyPlaying
@@ -1755,7 +1823,7 @@ animate()
 // ── 7a  Audio Player (bottom overlay) ────────────────────────────────────────
 {
     const playerEl = document.getElementById('audio-player')
-    const { audioEl } = initAudioPlayer(playerEl)
+    const { audioEl, loadFile } = initAudioPlayer(playerEl)
     ae.audioEl = audioEl   // give AudioEngine ref (used for currentTime/duration)
     let loadedAudioFile = null
 
@@ -1809,12 +1877,81 @@ animate()
         const file = e?.detail?.file
         loadedAudioFile = file instanceof File ? file : null
         _currentAudioFileName = loadedAudioFile?.name || ''
+        if (loadedAudioFile) {
+            void _saveAudioFileToDb(loadedAudioFile)
+        }
+        _scheduleLocalProjectDraftSave()
     })
 
     let projectFileHandle = null
     let projectFileName = ''
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
+    let projectLocalSaveTimer = null
+
+    const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
+    const AUDIO_DB_NAME = 'seesound_local_audio_v1'
+    const AUDIO_DB_STORE = 'files'
+    const AUDIO_DB_KEY = 'last-audio'
+
+    const _openAudioDb = () => new Promise((resolve, reject) => {
+        try {
+            const req = indexedDB.open(AUDIO_DB_NAME, 1)
+            req.onupgradeneeded = () => {
+                const db = req.result
+                if (!db.objectStoreNames.contains(AUDIO_DB_STORE)) db.createObjectStore(AUDIO_DB_STORE)
+            }
+            req.onsuccess = () => resolve(req.result)
+            req.onerror = () => reject(req.error)
+        } catch (err) {
+            reject(err)
+        }
+    })
+
+    const _saveAudioFileToDb = async (file) => {
+        if (!(file instanceof File)) return
+        const db = await _openAudioDb()
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(AUDIO_DB_STORE, 'readwrite')
+            const store = tx.objectStore(AUDIO_DB_STORE)
+            store.put({
+                blob: file,
+                name: file.name,
+                type: file.type || 'audio/*',
+                updatedAt: Date.now(),
+            }, AUDIO_DB_KEY)
+            tx.oncomplete = () => resolve()
+            tx.onerror = () => reject(tx.error)
+        })
+        db.close()
+    }
+
+    const _loadAudioFileFromDb = async () => {
+        const db = await _openAudioDb()
+        const value = await new Promise((resolve, reject) => {
+            const tx = db.transaction(AUDIO_DB_STORE, 'readonly')
+            const store = tx.objectStore(AUDIO_DB_STORE)
+            const req = store.get(AUDIO_DB_KEY)
+            req.onsuccess = () => resolve(req.result || null)
+            req.onerror = () => reject(req.error)
+        })
+        db.close()
+        if (!value || !(value.blob instanceof Blob)) return null
+        return new File([value.blob], String(value.name || 'restored-audio.wav'), {
+            type: String(value.type || 'audio/*'),
+            lastModified: Number(value.updatedAt || Date.now()),
+        })
+    }
+
+    const _buildDefaultProjectPayload = () => {
+        const defaults = getDefaultProjectDefinition()
+        return buildProjectPayload({
+            params: defaults.params,
+            presetName: defaults.presetName,
+            presetLibrary: defaults.presetLibrary,
+            projectName: _nameWithoutExt(defaults.fileName),
+        })
+    }
 
     const emitProjectFileState = () => {
         window.dispatchEvent(new CustomEvent('seesound:project-file-state', {
@@ -1837,6 +1974,11 @@ animate()
         const names = await listPresets()
         const normal = names.filter((name) => !String(name || '').startsWith('rule__'))
         if (normal.length > 0) return
+        const defaults = getDefaultProjectDefinition()
+        if (defaults.presetLibrary.length > 0) {
+            await _restorePresetLibrary(defaults.presetLibrary)
+            return
+        }
         await savePreset('default', getSnapshot())
         window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
     }
@@ -1850,6 +1992,14 @@ animate()
             await savePreset(name, presetParams)
         }
         window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    }
+
+    const _replacePresetLibrary = async (presetLibrary) => {
+        const names = await listPresets()
+        for (const name of names) {
+            await deletePreset(name)
+        }
+        await _restorePresetLibrary(presetLibrary)
     }
 
     const _writeProjectToHandle = async (handle, payload) => {
@@ -1870,6 +2020,61 @@ animate()
         })
     }
 
+    const _saveLocalProjectDraft = async () => {
+        if (projectLoadInProgress) return
+        try {
+            const payload = await _buildCurrentProjectPayload()
+            const draft = {
+                payload,
+                fileName: String(projectFileName || '').trim(),
+                hasBoundFile: !!projectFileHandle,
+                updatedAt: Date.now(),
+                hasAudio: loadedAudioFile instanceof File,
+            }
+            localStorage.setItem(LOCAL_PROJECT_DRAFT_KEY, JSON.stringify(draft))
+        } catch (err) {
+            console.warn('[Project] local draft save failed:', err)
+        }
+    }
+
+    const _scheduleLocalProjectDraftSave = () => {
+        if (projectLoadInProgress) return
+        if (projectLocalSaveTimer) clearTimeout(projectLocalSaveTimer)
+        projectLocalSaveTimer = setTimeout(async () => {
+            projectLocalSaveTimer = null
+            await _saveLocalProjectDraft()
+        }, 500)
+    }
+
+    const _restoreLocalProjectDraftIfAny = async () => {
+        try {
+            const raw = localStorage.getItem(LOCAL_PROJECT_DRAFT_KEY)
+            if (!raw) return false
+            const parsed = JSON.parse(raw)
+            const payload = parsed?.payload
+            if (!payload || typeof payload !== 'object') return false
+
+            projectFileHandle = null
+            projectFileName = String(parsed?.fileName || getDefaultProjectDefinition().fileName || '').trim()
+            emitProjectFileState()
+            await loadProjectFromPayload(payload)
+
+            if (parsed?.hasAudio) {
+                const restoredAudio = await _loadAudioFileFromDb()
+                if (restoredAudio) {
+                    loadFile(restoredAudio, restoredAudio.name)
+                    loadedAudioFile = restoredAudio
+                    _currentAudioFileName = restoredAudio.name || ''
+                }
+            }
+
+            return true
+        } catch (err) {
+            console.warn('[Project] local draft restore failed:', err)
+            return false
+        }
+    }
+
     const saveProject = async ({ forceDownload = false } = {}) => {
         try {
             const payload = await _buildCurrentProjectPayload()
@@ -1879,9 +2084,11 @@ animate()
                     detail: { fileName: projectFileName || _defaultProjectName() },
                 }))
                 emitProjectFileState()
+                _scheduleLocalProjectDraftSave()
                 return
             }
             triggerProjectDownload(payload, _defaultProjectName())
+            _scheduleLocalProjectDraftSave()
         } catch (err) {
             console.warn('[Project] save failed:', err)
         }
@@ -1903,7 +2110,7 @@ animate()
                 setMany(payload.params)
             }
             if (Array.isArray(payload.presetLibrary)) {
-                await _restorePresetLibrary(payload.presetLibrary)
+                await _replacePresetLibrary(payload.presetLibrary)
             }
             await _ensureAtLeastOnePreset()
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
@@ -1916,6 +2123,7 @@ animate()
             console.warn('[Project] load failed:', err)
         } finally {
             projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     }
 
@@ -1945,7 +2153,18 @@ animate()
     }
 
     const createNewProjectWithPicker = async (suggested = '', resetState = true) => {
-        if (typeof window.showSaveFilePicker !== 'function') return false
+        if (typeof window.showSaveFilePicker !== 'function') {
+            if (resetState) {
+                const defaults = getDefaultProjectDefinition()
+                setMany(defaults.params)
+                await _replacePresetLibrary(defaults.presetLibrary)
+            }
+            projectFileHandle = null
+            projectFileName = String(suggested || getDefaultProjectDefinition().fileName || '').trim() || _defaultProjectName()
+            emitProjectFileState()
+            _scheduleLocalProjectDraftSave()
+            return true
+        }
         try {
             const suggestedName = String(suggested || '').trim() || _defaultProjectName()
             const handle = await window.showSaveFilePicker({
@@ -1958,14 +2177,16 @@ animate()
             if (!handle) return false
 
             if (resetState) {
-                resetToDefaults()
-                await _ensureAtLeastOnePreset()
+                const defaults = getDefaultProjectDefinition()
+                setMany(defaults.params)
+                await _replacePresetLibrary(defaults.presetLibrary)
             }
 
             projectFileHandle = handle
             projectFileName = String(handle.name || suggestedName).trim()
             await saveProject({ forceDownload: false })
             emitProjectFileState()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch {
             return false
@@ -2040,18 +2261,30 @@ animate()
         await openProjectWithPicker()
     })
     window.addEventListener('seesound:project-new-request', async () => {
-        await createNewProjectWithPicker()
+        await createNewProjectWithPicker(getDefaultProjectDefinition().fileName, true)
     })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
+        _scheduleLocalProjectDraftSave()
     })
 
     subscribe((_, key) => {
         if (!key || key === '*' || projectLoadInProgress) return
         scheduleProjectAutosave()
+        _scheduleLocalProjectDraftSave()
     })
 
+    const bootstrapDefaultProject = async () => {
+        const restored = await _restoreLocalProjectDraftIfAny()
+        if (restored) return
+        const defaults = getDefaultProjectDefinition()
+        projectFileName = defaults.fileName
+        emitProjectFileState()
+        await loadProjectFromPayload(_buildDefaultProjectPayload())
+    }
+
     emitProjectFileState()
+    void bootstrapDefaultProject()
 
 }
 
