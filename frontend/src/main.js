@@ -1823,7 +1823,7 @@ animate()
 // ── 7a  Audio Player (bottom overlay) ────────────────────────────────────────
 {
     const playerEl = document.getElementById('audio-player')
-    const { audioEl } = initAudioPlayer(playerEl)
+    const { audioEl, loadFile } = initAudioPlayer(playerEl)
     ae.audioEl = audioEl   // give AudioEngine ref (used for currentTime/duration)
     let loadedAudioFile = null
 
@@ -1877,12 +1877,71 @@ animate()
         const file = e?.detail?.file
         loadedAudioFile = file instanceof File ? file : null
         _currentAudioFileName = loadedAudioFile?.name || ''
+        if (loadedAudioFile) {
+            void _saveAudioFileToDb(loadedAudioFile)
+        }
+        _scheduleLocalProjectDraftSave()
     })
 
     let projectFileHandle = null
     let projectFileName = ''
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
+    let projectLocalSaveTimer = null
+
+    const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
+    const AUDIO_DB_NAME = 'seesound_local_audio_v1'
+    const AUDIO_DB_STORE = 'files'
+    const AUDIO_DB_KEY = 'last-audio'
+
+    const _openAudioDb = () => new Promise((resolve, reject) => {
+        try {
+            const req = indexedDB.open(AUDIO_DB_NAME, 1)
+            req.onupgradeneeded = () => {
+                const db = req.result
+                if (!db.objectStoreNames.contains(AUDIO_DB_STORE)) db.createObjectStore(AUDIO_DB_STORE)
+            }
+            req.onsuccess = () => resolve(req.result)
+            req.onerror = () => reject(req.error)
+        } catch (err) {
+            reject(err)
+        }
+    })
+
+    const _saveAudioFileToDb = async (file) => {
+        if (!(file instanceof File)) return
+        const db = await _openAudioDb()
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(AUDIO_DB_STORE, 'readwrite')
+            const store = tx.objectStore(AUDIO_DB_STORE)
+            store.put({
+                blob: file,
+                name: file.name,
+                type: file.type || 'audio/*',
+                updatedAt: Date.now(),
+            }, AUDIO_DB_KEY)
+            tx.oncomplete = () => resolve()
+            tx.onerror = () => reject(tx.error)
+        })
+        db.close()
+    }
+
+    const _loadAudioFileFromDb = async () => {
+        const db = await _openAudioDb()
+        const value = await new Promise((resolve, reject) => {
+            const tx = db.transaction(AUDIO_DB_STORE, 'readonly')
+            const store = tx.objectStore(AUDIO_DB_STORE)
+            const req = store.get(AUDIO_DB_KEY)
+            req.onsuccess = () => resolve(req.result || null)
+            req.onerror = () => reject(req.error)
+        })
+        db.close()
+        if (!value || !(value.blob instanceof Blob)) return null
+        return new File([value.blob], String(value.name || 'restored-audio.wav'), {
+            type: String(value.type || 'audio/*'),
+            lastModified: Number(value.updatedAt || Date.now()),
+        })
+    }
 
     const _buildDefaultProjectPayload = () => {
         const defaults = getDefaultProjectDefinition()
@@ -1961,6 +2020,61 @@ animate()
         })
     }
 
+    const _saveLocalProjectDraft = async () => {
+        if (projectLoadInProgress) return
+        try {
+            const payload = await _buildCurrentProjectPayload()
+            const draft = {
+                payload,
+                fileName: String(projectFileName || '').trim(),
+                hasBoundFile: !!projectFileHandle,
+                updatedAt: Date.now(),
+                hasAudio: loadedAudioFile instanceof File,
+            }
+            localStorage.setItem(LOCAL_PROJECT_DRAFT_KEY, JSON.stringify(draft))
+        } catch (err) {
+            console.warn('[Project] local draft save failed:', err)
+        }
+    }
+
+    const _scheduleLocalProjectDraftSave = () => {
+        if (projectLoadInProgress) return
+        if (projectLocalSaveTimer) clearTimeout(projectLocalSaveTimer)
+        projectLocalSaveTimer = setTimeout(async () => {
+            projectLocalSaveTimer = null
+            await _saveLocalProjectDraft()
+        }, 500)
+    }
+
+    const _restoreLocalProjectDraftIfAny = async () => {
+        try {
+            const raw = localStorage.getItem(LOCAL_PROJECT_DRAFT_KEY)
+            if (!raw) return false
+            const parsed = JSON.parse(raw)
+            const payload = parsed?.payload
+            if (!payload || typeof payload !== 'object') return false
+
+            projectFileHandle = null
+            projectFileName = String(parsed?.fileName || getDefaultProjectDefinition().fileName || '').trim()
+            emitProjectFileState()
+            await loadProjectFromPayload(payload)
+
+            if (parsed?.hasAudio) {
+                const restoredAudio = await _loadAudioFileFromDb()
+                if (restoredAudio) {
+                    loadFile(restoredAudio, restoredAudio.name)
+                    loadedAudioFile = restoredAudio
+                    _currentAudioFileName = restoredAudio.name || ''
+                }
+            }
+
+            return true
+        } catch (err) {
+            console.warn('[Project] local draft restore failed:', err)
+            return false
+        }
+    }
+
     const saveProject = async ({ forceDownload = false } = {}) => {
         try {
             const payload = await _buildCurrentProjectPayload()
@@ -1970,9 +2084,11 @@ animate()
                     detail: { fileName: projectFileName || _defaultProjectName() },
                 }))
                 emitProjectFileState()
+                _scheduleLocalProjectDraftSave()
                 return
             }
             triggerProjectDownload(payload, _defaultProjectName())
+            _scheduleLocalProjectDraftSave()
         } catch (err) {
             console.warn('[Project] save failed:', err)
         }
@@ -2007,6 +2123,7 @@ animate()
             console.warn('[Project] load failed:', err)
         } finally {
             projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     }
 
@@ -2036,7 +2153,18 @@ animate()
     }
 
     const createNewProjectWithPicker = async (suggested = '', resetState = true) => {
-        if (typeof window.showSaveFilePicker !== 'function') return false
+        if (typeof window.showSaveFilePicker !== 'function') {
+            if (resetState) {
+                const defaults = getDefaultProjectDefinition()
+                setMany(defaults.params)
+                await _replacePresetLibrary(defaults.presetLibrary)
+            }
+            projectFileHandle = null
+            projectFileName = String(suggested || getDefaultProjectDefinition().fileName || '').trim() || _defaultProjectName()
+            emitProjectFileState()
+            _scheduleLocalProjectDraftSave()
+            return true
+        }
         try {
             const suggestedName = String(suggested || '').trim() || _defaultProjectName()
             const handle = await window.showSaveFilePicker({
@@ -2058,6 +2186,7 @@ animate()
             projectFileName = String(handle.name || suggestedName).trim()
             await saveProject({ forceDownload: false })
             emitProjectFileState()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch {
             return false
@@ -2132,18 +2261,22 @@ animate()
         await openProjectWithPicker()
     })
     window.addEventListener('seesound:project-new-request', async () => {
-        await createNewProjectWithPicker()
+        await createNewProjectWithPicker(getDefaultProjectDefinition().fileName, true)
     })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
+        _scheduleLocalProjectDraftSave()
     })
 
     subscribe((_, key) => {
         if (!key || key === '*' || projectLoadInProgress) return
         scheduleProjectAutosave()
+        _scheduleLocalProjectDraftSave()
     })
 
     const bootstrapDefaultProject = async () => {
+        const restored = await _restoreLocalProjectDraftIfAny()
+        if (restored) return
         const defaults = getDefaultProjectDefinition()
         projectFileName = defaults.fileName
         emitProjectFileState()
