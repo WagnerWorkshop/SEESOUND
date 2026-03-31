@@ -29,6 +29,7 @@ import {
     listPresets,
     loadPreset,
     savePreset,
+    deletePreset,
     RULE_SCHEMA_VERSION,
     RULE_DEBUG_FLAGS,
 } from './engine/ParamStore.js'
@@ -42,6 +43,7 @@ import {
     PROJECT_FILE_EXTENSION,
     triggerProjectDownload,
 } from './engine/project/ProjectIO.js'
+import { getDefaultProjectDefinition } from './config/DefaultProject.js'
 import {
     computeSpectralCentroid,
     computeSpectralFlux,
@@ -1071,7 +1073,7 @@ const ae = new AudioEngine()
 ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// § 4  WEBSOCKET BRIDGE
+// § 4  STATUS (BROWSER-ONLY MODE)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const statusDot = document.getElementById('status-dot')
@@ -1081,26 +1083,7 @@ function setStatus(state, text) {
     if (statusDot) statusDot.className = state
     if (statusText) statusText.textContent = text
 }
-
-function connectWS() {
-    const ws = new WebSocket(`ws://${location.hostname}:8000/ws`)
-    ws.onopen = () => setStatus('open', '')
-    ws.onclose = () => { setStatus('closed', 'Backend offline'); setTimeout(connectWS, 3000) }
-    ws.onerror = () => setStatus('closed', 'WS error')
-    ws.onmessage = () => { }  // future: handle server-pushed rules
-    subscribe(snapshot => {
-        if (ws.readyState === WebSocket.OPEN) {
-            const compileState = ps.getRuleCompileState?.()
-            const requiredInputsByTarget = compileState?.requiredInputsByTarget || _initialCompileState?.requiredInputsByTarget || null
-            const payload = {
-                ...snapshot,
-                audio_analysis_config: _buildBackendAudioAnalysisConfig(snapshot, requiredInputsByTarget),
-            }
-            ws.send(JSON.stringify({ type: 'params_update', payload }))
-        }
-    })
-}
-connectWS()
+setStatus('open', 'Browser mode')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 5  HUD
@@ -1182,6 +1165,47 @@ let _recordingStream = null
 let _recordedChunks = []
 let _recordingAudioCleanup = null
 let _recordingEndedHandler = null
+let _lastPerformanceDropSignalTs = 0
+
+const platformConfig = {
+    tier: 'free',
+    maxExportResolution: Number.POSITIVE_INFINITY,
+    canExportObj: false,
+    canCloudRender: false,
+}
+
+function _emitToPlatform(type, payload = {}) {
+    try {
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                source: 'seesound-engine',
+                type,
+                payload,
+            }, '*')
+        }
+    } catch {
+        // ignore cross-window messaging failures
+    }
+}
+
+function _applyPlatformConfig(raw) {
+    const cfg = (raw && typeof raw === 'object') ? raw : {}
+    platformConfig.tier = String(cfg.tier || platformConfig.tier) === 'pro' ? 'pro' : 'free'
+    const maxRes = Number(cfg.maxExportResolution)
+    platformConfig.maxExportResolution = Number.isFinite(maxRes) && maxRes > 0
+        ? Math.floor(maxRes)
+        : Number.POSITIVE_INFINITY
+    platformConfig.canExportObj = !!cfg.canExportObj
+    platformConfig.canCloudRender = !!cfg.canCloudRender
+}
+
+window.addEventListener('message', (event) => {
+    const data = event?.data
+    if (!data || typeof data !== 'object') return
+    if (data.source !== 'seesound-platform' || data.type !== 'platform:config') return
+    _applyPlatformConfig(data.payload)
+})
+_emitToPlatform('engine:ready')
 
 function _sanitizeFilePart(value, fallback = 'untitled') {
     const text = String(value || '').trim()
@@ -1237,8 +1261,24 @@ async function saveCanvasPng() {
     const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
     const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
     const defaultPngName = `${audioTitle} - ${presetTitle}.png`
-    const requestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
-    const requestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+    const rawRequestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
+    const rawRequestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    const requestedMaxEdge = Math.max(rawRequestedW, rawRequestedH)
+    const entitlementScale = Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && requestedMaxEdge > entitlementMaxRes
+        ? entitlementMaxRes / requestedMaxEdge
+        : 1
+    const requestedW = Math.max(1, Math.floor(rawRequestedW * entitlementScale))
+    const requestedH = Math.max(1, Math.floor(rawRequestedH * entitlementScale))
+
+    if (entitlementScale < 1) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: rawRequestedW,
+            requestedHeight: rawRequestedH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+    }
 
     const exportCanvas = document.createElement('canvas')
     const exportRenderer = new THREE.WebGLRenderer({
@@ -1352,6 +1392,20 @@ async function startVideoRecording(playerEl, audioEl) {
     if (!audioEl?.src) return
     if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
         alert('Video recording is not supported in this browser.')
+        return
+    }
+
+    const currentW = Math.max(1, Math.floor(renderer.domElement.width / Math.max(1, window.devicePixelRatio)))
+    const currentH = Math.max(1, Math.floor(renderer.domElement.height / Math.max(1, window.devicePixelRatio)))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    if (Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && Math.max(currentW, currentH) > entitlementMaxRes) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: currentW,
+            requestedHeight: currentH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+        alert(`Free plan export limit is ${Math.floor(entitlementMaxRes)}p. Reduce canvas size or upgrade to Pro.`)
         return
     }
 
@@ -1625,6 +1679,20 @@ function animate() {
     requestAnimationFrame(animate)
     frameN++
 
+    if ((frameN % 120) === 0) {
+        const fps = Number(ps?.getApproxFps?.() || 0)
+        if (fps > 0 && fps < 24) {
+            const now = performance.now()
+            if ((now - _lastPerformanceDropSignalTs) > 15000) {
+                _lastPerformanceDropSignalTs = now
+                _emitToPlatform('engine:performance-drop', {
+                    fps,
+                    canCloudRender: !!platformConfig.canCloudRender,
+                })
+            }
+        }
+    }
+
     ae.update()
     const isActuallyPlaying = !!(ae.audioEl && !ae.audioEl.paused && !ae.audioEl.ended)
     if (isActuallyPlaying !== isPlaying) isPlaying = isActuallyPlaying
@@ -1816,6 +1884,16 @@ animate()
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
 
+    const _buildDefaultProjectPayload = () => {
+        const defaults = getDefaultProjectDefinition()
+        return buildProjectPayload({
+            params: defaults.params,
+            presetName: defaults.presetName,
+            presetLibrary: defaults.presetLibrary,
+            projectName: _nameWithoutExt(defaults.fileName),
+        })
+    }
+
     const emitProjectFileState = () => {
         window.dispatchEvent(new CustomEvent('seesound:project-file-state', {
             detail: { fileName: String(projectFileName || '').trim() },
@@ -1837,6 +1915,11 @@ animate()
         const names = await listPresets()
         const normal = names.filter((name) => !String(name || '').startsWith('rule__'))
         if (normal.length > 0) return
+        const defaults = getDefaultProjectDefinition()
+        if (defaults.presetLibrary.length > 0) {
+            await _restorePresetLibrary(defaults.presetLibrary)
+            return
+        }
         await savePreset('default', getSnapshot())
         window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
     }
@@ -1850,6 +1933,14 @@ animate()
             await savePreset(name, presetParams)
         }
         window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    }
+
+    const _replacePresetLibrary = async (presetLibrary) => {
+        const names = await listPresets()
+        for (const name of names) {
+            await deletePreset(name)
+        }
+        await _restorePresetLibrary(presetLibrary)
     }
 
     const _writeProjectToHandle = async (handle, payload) => {
@@ -1903,7 +1994,7 @@ animate()
                 setMany(payload.params)
             }
             if (Array.isArray(payload.presetLibrary)) {
-                await _restorePresetLibrary(payload.presetLibrary)
+                await _replacePresetLibrary(payload.presetLibrary)
             }
             await _ensureAtLeastOnePreset()
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
@@ -1958,8 +2049,9 @@ animate()
             if (!handle) return false
 
             if (resetState) {
-                resetToDefaults()
-                await _ensureAtLeastOnePreset()
+                const defaults = getDefaultProjectDefinition()
+                setMany(defaults.params)
+                await _replacePresetLibrary(defaults.presetLibrary)
             }
 
             projectFileHandle = handle
@@ -2051,7 +2143,15 @@ animate()
         scheduleProjectAutosave()
     })
 
+    const bootstrapDefaultProject = async () => {
+        const defaults = getDefaultProjectDefinition()
+        projectFileName = defaults.fileName
+        emitProjectFileState()
+        await loadProjectFromPayload(_buildDefaultProjectPayload())
+    }
+
     emitProjectFileState()
+    void bootstrapDefaultProject()
 
 }
 
