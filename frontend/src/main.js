@@ -11,10 +11,7 @@
  */
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
-import './styles/main.css'
-import './styles/player.css'
-import './styles/settings.css'
-import './styles/canvas.css'
+import './styles/ui.css'
 
 // ── Modules ───────────────────────────────────────────────────────────────────
 import * as THREE from 'three'
@@ -43,7 +40,6 @@ import {
     PROJECT_FILE_EXTENSION,
     triggerProjectDownload,
 } from './engine/project/ProjectIO.js'
-import { getDefaultProjectDefinition } from './config/DefaultProject.js'
 import {
     computeSpectralCentroid,
     computeSpectralFlux,
@@ -1255,6 +1251,15 @@ async function _audioBlobFromElement(audioEl) {
 function _defaultProjectName() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
+}
+
+function getDefaultProjectDefinition() {
+    return {
+        fileName: 'New Project.ssp.json',
+        presetName: 'default',
+        params: getSnapshot(),
+        presetLibrary: [],
+    }
 }
 
 async function saveCanvasPng() {
