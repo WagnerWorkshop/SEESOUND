@@ -11,13 +11,15 @@
  */
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
-import './styles/main.css'
-import './styles/player.css'
-import './styles/settings.css'
-import './styles/canvas.css'
+import './styles/ui.css'
 
 // ── Modules ───────────────────────────────────────────────────────────────────
 import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js'
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import {
     params,
     setMany,
@@ -56,15 +58,6 @@ import {
     normalizeCentroidHzToUnit,
 } from './engine/audio/AudioFeatures.js'
 
-// Phase checklist workflow anchor:
-// Implement one task cluster at a time and verify before advancing to the next phase item.
-
-/* TODO_RESUME (Phase 4/8):
- * - Replace bootstrap compile status with RuleCompiler state.
- * - Surface compile timing/error mapping into UI status badge.
- * - Trigger deterministic recompile on ruleBlocks change.
- */
-
 // ─────────────────────────────────────────────────────────────────────────────
 // § 1  THREE.JS RENDERER + CAMERA
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,21 +76,66 @@ const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
 let originSignEnabled = true
 originAxes.userData.excludeFromPng = true
+originAxes.userData.excludeFromVideo = true
+originAxes.userData.excludeFromObj = true
 scene.add(originAxes)
+
+const coordinateGuides = new THREE.Group()
+let coordinateGuidesEnabled = true
+
+function _buildGuideGrid() {
+    const grid = new THREE.GridHelper(ORIGIN_SIGN_SIZE * 2, 10, 0x34d399, 0x374151)
+    grid.material.transparent = true
+    grid.material.opacity = 0.16
+    grid.userData.excludeFromPng = true
+    grid.userData.excludeFromVideo = true
+    grid.userData.excludeFromObj = true
+    return grid
+}
+
+const guideGridXZ = _buildGuideGrid()
+const guideGridXY = _buildGuideGrid()
+guideGridXY.rotation.x = Math.PI / 2
+const guideGridYZ = _buildGuideGrid()
+guideGridYZ.rotation.z = Math.PI / 2
+
+coordinateGuides.add(guideGridXZ, guideGridXY, guideGridYZ)
+scene.add(coordinateGuides)
+
 function emitOriginSignState() {
     window.dispatchEvent(new CustomEvent('seesound:origin-sign-state', {
         detail: { enabled: originSignEnabled, size: ORIGIN_SIGN_SIZE },
     }))
 }
 
+function emitCoordinateGuideState() {
+    window.dispatchEvent(new CustomEvent('seesound:coordinate-guide-state', {
+        detail: { enabled: coordinateGuidesEnabled },
+    }))
+}
+
 window.addEventListener('seesound:origin-sign-toggle', (e) => {
     const requested = e?.detail?.enabled
-    if (typeof requested === 'boolean') originSignEnabled = requested
-    else originSignEnabled = !originSignEnabled
-    originAxes.visible = originSignEnabled
-    emitOriginSignState()
+    const enabled = typeof requested === 'boolean' ? requested : !originSignEnabled
+    setMany({ originSignEnabled: enabled ? 1 : 0 })
 })
-emitOriginSignState()
+
+window.addEventListener('seesound:coordinate-guide-toggle', (e) => {
+    const requested = e?.detail?.enabled
+    const enabled = typeof requested === 'boolean' ? requested : !coordinateGuidesEnabled
+    setMany({ coordinateGuidesEnabled: enabled ? 1 : 0 })
+})
+
+function applyGuideVisibilityFromParams() {
+    originSignEnabled = Number(params.originSignEnabled ?? 1) >= 0.5
+    coordinateGuidesEnabled = Number(params.coordinateGuidesEnabled ?? 1) >= 0.5
+    originAxes.visible = originSignEnabled
+    coordinateGuides.visible = coordinateGuidesEnabled
+    emitOriginSignState()
+    emitCoordinateGuideState()
+}
+
+applyGuideVisibilityFromParams()
 const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 5000)
 const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, 5000)
 let camera = cameraOrtho
@@ -109,6 +147,60 @@ for (const c of [cameraOrtho, cameraPerspective]) {
     c.position.copy(DEFAULT_CAMERA_POS)
     c.up.set(0, 1, 0)
     c.lookAt(orbitTarget)
+}
+
+const composer = new EffectComposer(renderer)
+const renderPass = new RenderPass(scene, camera)
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.15, 0.7, 0.18)
+const bokehPass = new BokehPass(scene, camera, {
+    focus: 380,
+    aperture: 0.00012,
+    maxblur: 0.01,
+    width: 1,
+    height: 1,
+})
+
+composer.addPass(renderPass)
+composer.addPass(bloomPass)
+composer.addPass(bokehPass)
+
+function _clampNumber(value, min, max, fallback) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(max, n))
+}
+
+function _isToggleOn(value, fallback = true) {
+    if (value === undefined || value === null) return fallback
+    if (typeof value === 'boolean') return value
+    const n = Number(value)
+    if (Number.isFinite(n)) return n >= 0.5
+    const text = String(value).trim().toLowerCase()
+    if (text === 'on' || text === 'true') return true
+    if (text === 'off' || text === 'false') return false
+    return fallback
+}
+
+function applyPostProcessingFromParams() {
+    const postEnabled = _isToggleOn(params.postProcessEnabled, true)
+    const bloomEnabled = postEnabled && _isToggleOn(params.bloomEnabled, true)
+    const bokehEnabled = postEnabled && _isToggleOn(params.bokehEnabled, true)
+
+    bloomPass.enabled = bloomEnabled
+    bloomPass.strength = _clampNumber(params.bloomStrength, 0, 4, 1.15)
+    bloomPass.radius = _clampNumber(params.bloomRadius, 0, 2, 0.7)
+    bloomPass.threshold = _clampNumber(params.bloomThreshold, 0, 1, 0.18)
+
+    bokehPass.enabled = bokehEnabled
+    const bokehFocus = _clampNumber(params.bokehFocus, 1, 5000, 380)
+    const bokehAperture = _clampNumber(params.bokehAperture, 0, 0.001, 0.00012)
+    const bokehMaxBlur = _clampNumber(params.bokehMaxBlur, 0, 0.1, 0.01)
+    if (bokehPass.materialBokeh?.uniforms) {
+        const uniforms = bokehPass.materialBokeh.uniforms
+        if (uniforms.focus) uniforms.focus.value = bokehFocus
+        if (uniforms.aperture) uniforms.aperture.value = bokehAperture
+        if (uniforms.maxblur) uniforms.maxblur.value = bokehMaxBlur
+    }
 }
 
 function applyProjectionFromParams() {
@@ -124,6 +216,8 @@ function applyProjectionFromParams() {
     nextCamera.updateProjectionMatrix()
 
     camera = nextCamera
+    renderPass.camera = nextCamera
+    bokehPass.camera = nextCamera
     syncOrbitFromCamera()
 }
 
@@ -208,7 +302,6 @@ function resetCameraPose() {
 }
 
 function applyAxoPresetFromParams(forceDefaultRadius = false) {
-    if (params.cameraProjection === 'perspective') return
     const preset = String(params.cameraAxoPreset || 'orthoXY')
     const radius = forceDefaultRadius
         ? DEFAULT_ORBIT_RADIUS
@@ -219,6 +312,37 @@ function applyAxoPresetFromParams(forceDefaultRadius = false) {
     orbitState.azimuth = azimuth
     orbitState.elevation = elevation
     applyOrbitToCamera()
+    syncOrbitFromCamera()
+}
+
+function applyCameraPoseFromParams() {
+    const px = Number(params.cameraPosX)
+    const py = Number(params.cameraPosY)
+    const pz = Number(params.cameraPosZ)
+    const tx = Number(params.cameraTargetX)
+    const ty = Number(params.cameraTargetY)
+    const tz = Number(params.cameraTargetZ)
+    const fov = Number(params.cameraAngleOfView)
+
+    if (Number.isFinite(tx)) orbitTarget.x = tx
+    if (Number.isFinite(ty)) orbitTarget.y = ty
+    if (Number.isFinite(tz)) orbitTarget.z = tz
+
+    const applyPos = (cam) => {
+        if (Number.isFinite(px)) cam.position.x = px
+        if (Number.isFinite(py)) cam.position.y = py
+        if (Number.isFinite(pz)) cam.position.z = pz
+        cam.lookAt(orbitTarget)
+    }
+
+    applyPos(cameraOrtho)
+    applyPos(cameraPerspective)
+
+    if (Number.isFinite(fov)) {
+        cameraPerspective.fov = Math.max(20, Math.min(120, fov))
+        cameraPerspective.updateProjectionMatrix()
+    }
+
     syncOrbitFromCamera()
 }
 
@@ -314,6 +438,7 @@ canvas.addEventListener('wheel', (e) => {
 function applyRuleCameraOutput(output) {
     if (!output) return
     let posChanged = false
+    let targetChanged = false
     if (Number.isFinite(output.x)) {
         camera.position.x = output.x
         posChanged = true
@@ -326,13 +451,29 @@ function applyRuleCameraOutput(output) {
         camera.position.z = output.z
         posChanged = true
     }
-    if (posChanged) {
+    if (Number.isFinite(output.targetX)) {
+        orbitTarget.x = output.targetX
+        targetChanged = true
+    }
+    if (Number.isFinite(output.targetY)) {
+        orbitTarget.y = output.targetY
+        targetChanged = true
+    }
+    if (Number.isFinite(output.targetZ)) {
+        orbitTarget.z = output.targetZ
+        targetChanged = true
+    }
+    if (posChanged || targetChanged) {
         camera.lookAt(orbitTarget)
         syncOrbitFromCamera()
     }
     if (Number.isFinite(output.zoom)) {
         camera.zoom = Math.max(0.05, Math.min(64, output.zoom))
         camera.updateProjectionMatrix()
+    }
+    if (Number.isFinite(output.angleOfView)) {
+        cameraPerspective.fov = Math.max(20, Math.min(120, output.angleOfView))
+        cameraPerspective.updateProjectionMatrix()
     }
 }
 
@@ -425,6 +566,11 @@ function resizeRenderer(w, h) {
     cameraPerspective.aspect = w / Math.max(1, h)
     cameraPerspective.updateProjectionMatrix()
     renderer.setSize(w, h, false)   // false → do NOT set canvas style size
+    composer.setSize(w, h)
+    bloomPass.setSize(w, h)
+    if (bokehPass.materialBokeh?.uniforms?.aspect) {
+        bokehPass.materialBokeh.uniforms.aspect.value = w / Math.max(1, h)
+    }
 }
 
 // Initial size
@@ -433,6 +579,8 @@ const initH = col.clientHeight || window.innerHeight
 resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
+applyCameraPoseFromParams()
+applyPostProcessingFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -446,6 +594,7 @@ function _collectUsedRuleInputs(requiredInputsByTarget = null) {
     return new Set([
         ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.lines) ? requiredInputsByTarget.lines : []),
         ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
         ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
     ])
@@ -466,15 +615,12 @@ function _deriveAudioUsage(requiredInputsByTarget = null) {
         'normFreq',
         'canvasWidthPx',
         'canvasHeightPx',
-        'canvasWidthUnits',
-        'canvasHeightUnits',
         'audioLengthSec',
-        'binEnergy',
     ])
 
-    const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState')
+    const needMagnitude = used.has('binMagnitude') || used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState')
     const needFlux = used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState') || used.has('binAttackTime')
-    const needPhaseDeviation = used.has('binPhaseDeviation') || used.has('binPhasedeviation')
+    const needPhaseDeviation = used.has('binPhaseDeviation')
     const needEnvelope = used.has('binEnvelope') || used.has('binEnvelopeState')
     const needPhase = used.has('binPhase')
     const needAttackTime = used.has('binAttackTime')
@@ -510,7 +656,6 @@ function _deriveAudioUsage(requiredInputsByTarget = null) {
     if (needEnvelope) calculatedInputs.add('binEnvelopeState')
     if (needAttackTime) calculatedInputs.add('binAttackTime')
     if (needRms) calculatedInputs.add('binRMSEnergy')
-    if (used.has('binFreq')) calculatedInputs.add('binFreq')
 
     return {
         used,
@@ -1089,19 +1234,11 @@ ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 // § 4  WEBSOCKET BRIDGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-const statusDot = document.getElementById('status-dot')
-const statusText = document.getElementById('status-text')
-
-function setStatus(state, text) {
-    if (statusDot) statusDot.className = state
-    if (statusText) statusText.textContent = text
-}
-
 function connectWS() {
     const ws = new WebSocket(`ws://${location.hostname}:8000/ws`)
-    ws.onopen = () => setStatus('open', '')
-    ws.onclose = () => { setStatus('closed', 'Backend offline'); setTimeout(connectWS, 3000) }
-    ws.onerror = () => setStatus('closed', 'WS error')
+    ws.onopen = () => { }
+    ws.onclose = () => { setTimeout(connectWS, 3000) }
+    ws.onerror = () => { }
     ws.onmessage = () => { }  // future: handle server-pushed rules
     subscribe(snapshot => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -1117,72 +1254,17 @@ function connectWS() {
 }
 connectWS()
 
-// ─────────────────────────────────────────────────────────────────────────────
-// § 5  HUD
-// ─────────────────────────────────────────────────────────────────────────────
+window.addEventListener('seesound:view-reset-camera', () => {
+    resetCameraPose()
+})
 
-const cameraHud = document.createElement('div')
-cameraHud.id = 'camera-hud'
-cameraHud.style.position = 'fixed'
-cameraHud.style.left = '8px'
-cameraHud.style.bottom = '8px'
-cameraHud.style.zIndex = '220'
-cameraHud.style.display = 'flex'
-cameraHud.style.alignItems = 'center'
-cameraHud.style.gap = '6px'
+window.addEventListener('seesound:view-fit-camera', () => {
+    fitCameraToVisible()
+})
 
-const resetCameraBtn = document.createElement('button')
-resetCameraBtn.type = 'button'
-resetCameraBtn.title = 'Reset camera'
-resetCameraBtn.textContent = '↺'
-resetCameraBtn.style.width = '22px'
-resetCameraBtn.style.height = '22px'
-resetCameraBtn.style.border = '1px solid var(--color-border, #444)'
-resetCameraBtn.style.borderRadius = '6px'
-resetCameraBtn.style.background = 'rgba(0,0,0,0.55)'
-resetCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
-resetCameraBtn.style.cursor = 'pointer'
-resetCameraBtn.addEventListener('click', resetCameraPose)
-
-const fitCameraBtn = document.createElement('button')
-fitCameraBtn.type = 'button'
-fitCameraBtn.title = 'Fit to visible particles'
-fitCameraBtn.textContent = 'Fit'
-fitCameraBtn.style.height = '22px'
-fitCameraBtn.style.padding = '0 8px'
-fitCameraBtn.style.border = '1px solid var(--color-border, #444)'
-fitCameraBtn.style.borderRadius = '6px'
-fitCameraBtn.style.background = 'rgba(0,0,0,0.55)'
-fitCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
-fitCameraBtn.style.cursor = 'pointer'
-fitCameraBtn.addEventListener('click', fitCameraToVisible)
-
-const clearCanvasBtn = document.createElement('button')
-clearCanvasBtn.type = 'button'
-clearCanvasBtn.title = 'Clear canvas'
-clearCanvasBtn.textContent = 'Clean'
-clearCanvasBtn.style.height = '22px'
-clearCanvasBtn.style.padding = '0 8px'
-clearCanvasBtn.style.border = '1px solid var(--color-border, #444)'
-clearCanvasBtn.style.borderRadius = '6px'
-clearCanvasBtn.style.background = 'rgba(0,0,0,0.55)'
-clearCanvasBtn.style.color = 'var(--color-text-muted, #bbb)'
-clearCanvasBtn.style.cursor = 'pointer'
-clearCanvasBtn.addEventListener('click', () => ps.clear())
-
-const cameraReadout = document.createElement('div')
-cameraReadout.id = 'camera-readout'
-cameraReadout.style.fontFamily = 'var(--font-mono, monospace)'
-cameraReadout.style.fontSize = '10px'
-cameraReadout.style.color = 'var(--color-text-muted, #bbb)'
-cameraReadout.style.background = 'rgba(0,0,0,0.35)'
-cameraReadout.style.padding = '4px 6px'
-cameraReadout.style.borderRadius = '4px'
-cameraReadout.style.pointerEvents = 'none'
-cameraReadout.textContent = 'cam p(0.00,0.00,10.00) r(0.00,0.00,0.00) pts 0 fft 0 amp 0.000 sc 0.000 sf 0.000 sfl 0.000 inh 0.000 canv 0 × 0'
-
-cameraHud.append(resetCameraBtn, fitCameraBtn, clearCanvasBtn, cameraReadout)
-document.body.appendChild(cameraHud)
+window.addEventListener('seesound:view-clean-canvas', () => {
+    ps.clear()
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  ANIMATION LOOP
@@ -1197,6 +1279,7 @@ let _recordingStream = null
 let _recordedChunks = []
 let _recordingAudioCleanup = null
 let _recordingEndedHandler = null
+let _recordingHiddenObjects = []
 
 function _sanitizeFilePart(value, fallback = 'untitled') {
     const text = String(value || '').trim()
@@ -1211,6 +1294,13 @@ function _sanitizeFilePart(value, fallback = 'untitled') {
 function _nameWithoutExt(fileName) {
     const name = String(fileName || '').trim()
     return name.replace(/\.[^./\\]+$/g, '')
+}
+
+function _projectDisplayName(fileName) {
+    const name = String(fileName || '').trim()
+    if (!name) return ''
+    if (/\.ssp\.json$/i.test(name)) return name.replace(/\.ssp\.json$/i, '')
+    return _nameWithoutExt(name)
 }
 
 function _currentPresetTitle() {
@@ -1248,10 +1338,13 @@ function _defaultProjectName() {
     return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
 }
 
-async function saveCanvasPng() {
+async function saveCanvasPng(options = {}) {
+    const transparent = options?.transparent === true
     const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
     const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
-    const defaultPngName = `${audioTitle} - ${presetTitle}.png`
+    const defaultPngName = transparent
+        ? `${audioTitle} - ${presetTitle} - no-bg.png`
+        : `${audioTitle} - ${presetTitle}.png`
     const requestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
     const requestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
 
@@ -1293,7 +1386,8 @@ async function saveCanvasPng() {
             }
         })
 
-        exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
+        if (transparent) exportRenderer.setClearColor(0x000000, 0)
+        else exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
         ps.setViewportHeight(exportRenderer.domElement.height)
         exportRenderer.render(scene, exportCamera)
 
@@ -1320,6 +1414,39 @@ async function saveCanvasPng() {
     } finally {
         ps.setViewportHeight(renderer.domElement.height)
         exportRenderer.dispose()
+    }
+}
+
+async function saveCanvasPngTransparent() {
+    await saveCanvasPng({ transparent: true })
+}
+
+function saveSceneObj() {
+    const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+    const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+    const exporter = new OBJExporter()
+    const hidden = []
+
+    scene.traverse((obj) => {
+        if (obj?.userData?.excludeFromObj && obj.visible) {
+            hidden.push(obj)
+            obj.visible = false
+        }
+    })
+
+    try {
+        const objText = exporter.parse(scene)
+        const blob = new Blob([objText], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${audioTitle} - ${presetTitle}.obj`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+    } finally {
+        for (const obj of hidden) obj.visible = true
     }
 }
 
@@ -1369,6 +1496,14 @@ async function startVideoRecording(playerEl, audioEl) {
         alert('Video recording is not supported in this browser.')
         return
     }
+
+    _recordingHiddenObjects = []
+    scene.traverse((obj) => {
+        if (obj?.userData?.excludeFromVideo && obj.visible) {
+            _recordingHiddenObjects.push(obj)
+            obj.visible = false
+        }
+    })
 
     const canvasStream = canvas.captureStream(60)
     const outputStream = new MediaStream()
@@ -1422,6 +1557,8 @@ async function startVideoRecording(playerEl, audioEl) {
             audioEl.removeEventListener('ended', _recordingEndedHandler)
             _recordingEndedHandler = null
         }
+        for (const obj of _recordingHiddenObjects) obj.visible = true
+        _recordingHiddenObjects = []
         _mediaRecorder = null
         emitRecordState(playerEl, false)
     }
@@ -1444,6 +1581,8 @@ function stopVideoRecording(playerEl) {
     try {
         if (_mediaRecorder.state !== 'inactive') _mediaRecorder.stop()
     } catch {
+        for (const obj of _recordingHiddenObjects) obj.visible = true
+        _recordingHiddenObjects = []
         _mediaRecorder = null
         emitRecordState(playerEl, false)
     }
@@ -1554,6 +1693,10 @@ async function runPaintAll(playerEl, audioEl) {
                     y: camera.position.y,
                     z: camera.position.z,
                     zoom: camera.zoom,
+                    targetX: orbitTarget.x,
+                    targetY: orbitTarget.y,
+                    targetZ: orbitTarget.z,
+                    angleOfView: cameraPerspective.fov,
                 },
                 cameraCanvasWidthUnits: cameraUnits.w,
                 cameraCanvasHeightUnits: cameraUnits.h,
@@ -1655,6 +1798,10 @@ function animate() {
                 y: camera.position.y,
                 z: camera.position.z,
                 zoom: camera.zoom,
+                targetX: orbitTarget.x,
+                targetY: orbitTarget.y,
+                targetZ: orbitTarget.z,
+                angleOfView: cameraPerspective.fov,
             },
             cameraCanvasWidthUnits: cameraUnits.w,
             cameraCanvasHeightUnits: cameraUnits.h,
@@ -1702,7 +1849,6 @@ function animate() {
                 inputs: {
                     amplitude: normGlobalRms,
                     globalRmsEnergy: normGlobalRms,
-                    binEnergy: normBinMagnitude,
                     frequencyHz: peakFreqHz,
                     normFreq: Math.max(0, Math.min(1, peakFreqHz / Math.max(1e-6, nyquist))),
                     bass: ae.bass ?? 0,
@@ -1721,7 +1867,6 @@ function animate() {
                     spectralSkewness: ae.spectralSkewness ?? 0,
                     chromagram: ae.chromagram ?? 0,
                     binMagnitude: normBinMagnitude,
-                    binFreq: peakFreqHz,
                     binPhase: normBinPhase,
                     binFlux: normBinFlux,
                     binPhaseDeviation: normBinPhaseDeviation,
@@ -1733,8 +1878,6 @@ function animate() {
                     deltaTime: 1 / 60,
                     canvasWidthPx: w,
                     canvasHeightPx: h,
-                    canvasWidthUnits: cameraUnits.w,
-                    canvasHeightUnits: cameraUnits.h,
                     audioLengthSec: ae.audioEl?.duration ?? 0,
                 },
             },
@@ -1745,20 +1888,18 @@ function animate() {
     renderer.setClearColor(bg, 1)
     ps.setViewportHeight(renderer.domElement.height)
 
-    renderer.render(scene, camera)
+    composer.render()
 
-    // HUD update ~10 fps
+    // Camera state broadcast ~10 fps
     if (frameN % 6 === 0) {
-        const rx = (camera.rotation.x * 180 / Math.PI).toFixed(2)
-        const ry = (camera.rotation.y * 180 / Math.PI).toFixed(2)
-        const rz = (camera.rotation.z * 180 / Math.PI).toFixed(2)
-        const px = camera.position.x.toFixed(2)
-        const py = camera.position.y.toFixed(2)
-        const pz = camera.position.z.toFixed(2)
-        const cameraUnits = getCameraCanvasUnits()
-        const canvW = cameraUnits.w
-        const canvH = cameraUnits.h
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
+        window.dispatchEvent(new CustomEvent('seesound:camera-state', {
+            detail: {
+                position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                target: { x: orbitTarget.x, y: orbitTarget.y, z: orbitTarget.z },
+                fov: cameraPerspective.fov,
+                projection: params.cameraProjection === 'perspective' ? 'perspective' : 'axonometric',
+            },
+        }))
     }
 }
 animate()
@@ -1815,6 +1956,29 @@ animate()
             emitRecordState(playerEl, false)
         }
     })
+
+    window.addEventListener('seesound:export-image', async () => {
+        await saveCanvasPng()
+    })
+    window.addEventListener('seesound:export-image-no-bg', async () => {
+        await saveCanvasPngTransparent()
+    })
+    window.addEventListener('seesound:export-video-toggle', async () => {
+        if (_mediaRecorder) {
+            stopVideoRecording(playerEl)
+            return
+        }
+        try {
+            await startVideoRecording(playerEl, audioEl)
+        } catch (err) {
+            console.warn('[Recorder] start failed:', err)
+            alert('Failed to start recording.')
+            emitRecordState(playerEl, false)
+        }
+    })
+    window.addEventListener('seesound:export-obj', () => {
+        saveSceneObj()
+    })
     playerEl.addEventListener('player:playbackrate', (e) => {
         const next = Number(e?.detail?.rate)
         if (!Number.isFinite(next)) return
@@ -1830,22 +1994,39 @@ animate()
     let projectFileName = ''
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
+    let projectPresetLibrary = []
+
+    const _normalizePresetLibrary = (presetLibrary) => {
+        if (!Array.isArray(presetLibrary)) return []
+        const out = []
+        for (const entry of presetLibrary) {
+            const name = String(entry?.name || '').trim()
+            const presetParams = entry?.params
+            if (!name || !presetParams || typeof presetParams !== 'object') continue
+            out.push({ name, params: presetParams })
+        }
+        return out
+    }
+
+    const _upsertProjectPreset = ({ name, params: presetParams }) => {
+        const trimmed = String(name || '').trim()
+        if (!trimmed || !presetParams || typeof presetParams !== 'object') return false
+        const next = _normalizePresetLibrary(projectPresetLibrary)
+        const index = next.findIndex((entry) => entry.name === trimmed)
+        const payload = { name: trimmed, params: presetParams }
+        if (index >= 0) next[index] = payload
+        else next.push(payload)
+        projectPresetLibrary = next
+        return true
+    }
 
     const emitProjectFileState = () => {
         window.dispatchEvent(new CustomEvent('seesound:project-file-state', {
-            detail: { fileName: String(projectFileName || '').trim() },
+            detail: {
+                fileName: String(projectFileName || '').trim(),
+                projectName: _projectDisplayName(projectFileName),
+            },
         }))
-    }
-
-    const _collectPresetLibrary = async () => {
-        const names = await listPresets()
-        const out = []
-        for (const name of names) {
-            const data = await loadPreset(name)
-            if (!data?.params || typeof data.params !== 'object') continue
-            out.push({ name: String(name || ''), params: data.params })
-        }
-        return out
     }
 
     const _ensureAtLeastOnePreset = async () => {
@@ -1875,12 +2056,11 @@ animate()
 
     const _buildCurrentProjectPayload = async () => {
         const snapshot = getSnapshot()
-        const presetLibrary = await _collectPresetLibrary()
         const title = _currentPresetTitle()
         return buildProjectPayload({
             params: snapshot,
             presetName: title,
-            presetLibrary,
+            presetLibrary: _normalizePresetLibrary(projectPresetLibrary),
             projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
         })
     }
@@ -1917,6 +2097,7 @@ animate()
             if (payload.params && typeof payload.params === 'object') {
                 setMany(payload.params)
             }
+            projectPresetLibrary = _normalizePresetLibrary(payload?.presetLibrary)
             if (Array.isArray(payload.presetLibrary)) {
                 await _restorePresetLibrary(payload.presetLibrary)
             }
@@ -1959,6 +2140,37 @@ animate()
         }
     }
 
+    const openProjectWithFileInput = async () => {
+        return new Promise((resolve) => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = `${PROJECT_FILE_EXTENSION},.json`
+            input.style.display = 'none'
+            input.addEventListener('change', async () => {
+                try {
+                    const file = input.files?.[0]
+                    if (!file) {
+                        resolve(false)
+                        return
+                    }
+                    const text = await file.text()
+                    const payload = parseProjectText(text)
+                    projectFileHandle = null
+                    projectFileName = String(file.name || '').trim()
+                    await loadProjectFromPayload(payload)
+                    emitProjectFileState()
+                    resolve(true)
+                } catch {
+                    resolve(false)
+                } finally {
+                    input.remove()
+                }
+            }, { once: true })
+            document.body.appendChild(input)
+            input.click()
+        })
+    }
+
     const createNewProjectWithPicker = async (suggested = '', resetState = true) => {
         if (typeof window.showSaveFilePicker !== 'function') return false
         try {
@@ -1975,6 +2187,7 @@ animate()
             if (resetState) {
                 resetToDefaults()
                 await _ensureAtLeastOnePreset()
+                projectPresetLibrary = []
             }
 
             projectFileHandle = handle
@@ -2052,7 +2265,10 @@ animate()
         }
     })
     window.addEventListener('seesound:project-open-request', async () => {
-        await openProjectWithPicker()
+        const opened = await openProjectWithPicker()
+        if (!opened) {
+            await openProjectWithFileInput()
+        }
     })
     window.addEventListener('seesound:project-new-request', async () => {
         await createNewProjectWithPicker()
@@ -2061,8 +2277,19 @@ animate()
         scheduleProjectAutosave()
     })
 
+    window.addEventListener('seesound:project-preset-save-request', async (e) => {
+        const name = String(e?.detail?.name || '').trim()
+        const presetParams = e?.detail?.params
+        if (!_upsertProjectPreset({ name, params: presetParams })) return
+        scheduleProjectAutosave()
+        window.dispatchEvent(new CustomEvent('seesound:project-preset-library-changed'))
+    })
+
     subscribe((_, key) => {
         if (!key || key === '*' || projectLoadInProgress) return
+        if (key === 'originSignEnabled' || key === 'coordinateGuidesEnabled') {
+            applyGuideVisibilityFromParams()
+        }
         scheduleProjectAutosave()
     })
 
@@ -2166,6 +2393,31 @@ applyCanvasScaleFromParams()
 subscribe((_, key) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
     if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
+    if (
+        key === 'cameraProjection' ||
+        key === 'cameraPosX' ||
+        key === 'cameraPosY' ||
+        key === 'cameraPosZ' ||
+        key === 'cameraTargetX' ||
+        key === 'cameraTargetY' ||
+        key === 'cameraTargetZ' ||
+        key === 'cameraAngleOfView'
+    ) {
+        applyCameraPoseFromParams()
+    }
+    if (
+        key === 'postProcessEnabled' ||
+        key === 'bloomEnabled' ||
+        key === 'bloomStrength' ||
+        key === 'bloomRadius' ||
+        key === 'bloomThreshold' ||
+        key === 'bokehEnabled' ||
+        key === 'bokehFocus' ||
+        key === 'bokehAperture' ||
+        key === 'bokehMaxBlur'
+    ) {
+        applyPostProcessingFromParams()
+    }
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {

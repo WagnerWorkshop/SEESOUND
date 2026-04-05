@@ -238,12 +238,14 @@ let _cache = {
         requiredInputsByTarget: {
             spawnedParticles: [],
             allParticles: [],
+            lines: [],
             background: [],
             camera: [],
         },
         requiredInputs: [],
         applySpawnRules: _NOOP_SPAWN,
         applyLivingRules: _NOOP_LIVING,
+        applyLineRules: _NOOP_LIVING,
     },
 }
 
@@ -573,6 +575,7 @@ export function compileRules(ruleBlocks, dictionaries) {
     const sortedRules = [...normalizedRules].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     const spawnedRules = sortedRules.filter((rule) => rule.target === 'spawnedParticles')
     const livingRules = sortedRules.filter((rule) => rule.target === 'allParticles')
+    const lineRules = sortedRules.filter((rule) => rule.target === 'lines')
     const backgroundRules = sortedRules.filter((rule) => rule.target === 'background')
     const cameraRules = sortedRules.filter((rule) => rule.target === 'camera')
     const hash = hashRules(sortedRules)
@@ -584,17 +587,20 @@ export function compileRules(ruleBlocks, dictionaries) {
     const requiredInputsByTarget = {
         spawnedParticles: _collectRuleInputs(spawnedRules, inputIdSet),
         allParticles: _collectRuleInputs(livingRules, inputIdSet),
+        lines: _collectRuleInputs(lineRules, inputIdSet),
         background: _collectRuleInputs(backgroundRules, inputIdSet),
         camera: _collectRuleInputs(cameraRules, inputIdSet),
     }
     const requiredInputs = [...new Set([
         ...requiredInputsByTarget.spawnedParticles,
         ...requiredInputsByTarget.allParticles,
+        ...requiredInputsByTarget.lines,
         ...requiredInputsByTarget.background,
         ...requiredInputsByTarget.camera,
     ])]
     const spawnBuild = buildSpawnFunction(spawnedRules, inputIds)
     const livingBuild = buildLivingFunction(livingRules, inputIds)
+    const lineBuild = _buildFunctionSource('applyLineRules', lineRules, inputIds, true)
     const bgBuild = _buildFunctionSource('applyBackgroundRules', backgroundRules, inputIds, true)
     const camBuild = _buildFunctionSource('applyCameraRules', cameraRules, inputIds, true)
 
@@ -603,9 +609,10 @@ export function compileRules(ruleBlocks, dictionaries) {
         'const { clamp, lerp, smoothstep, pow, min, max, abs } = helpers;',
         spawnBuild.source,
         livingBuild.source,
+        lineBuild.source,
         bgBuild.source,
         camBuild.source,
-        'return { applySpawnRules, applyLivingRules, applyBackgroundRules, applyCameraRules };',
+        'return { applySpawnRules, applyLivingRules, applyLineRules, applyBackgroundRules, applyCameraRules };',
     ].join('\n\n')
 
     try {
@@ -618,18 +625,21 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileTimeMs: Math.max(0, performance.now() - t0),
             spawnRuleCount: spawnedRules.length,
             livingRuleCount: livingRules.length,
+            lineRuleCount: lineRules.length,
             backgroundRuleCount: backgroundRules.length,
             cameraRuleCount: cameraRules.length,
             usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesLineHsb: _usesHsbOutput(lineRules),
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             rejected: sanitized.rejected,
             requiredInputsByTarget,
             requiredInputs,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             applySpawnRules: typeof compiled.applySpawnRules === 'function' ? compiled.applySpawnRules : _NOOP_SPAWN,
             applyLivingRules: typeof compiled.applyLivingRules === 'function' ? compiled.applyLivingRules : _NOOP_LIVING,
+            applyLineRules: typeof compiled.applyLineRules === 'function' ? compiled.applyLineRules : _NOOP_LIVING,
             applyBackgroundRules: typeof compiled.applyBackgroundRules === 'function' ? compiled.applyBackgroundRules : _NOOP_LIVING,
             applyCameraRules: typeof compiled.applyCameraRules === 'function' ? compiled.applyCameraRules : _NOOP_LIVING,
         }
@@ -646,14 +656,16 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileTimeMs: Math.max(0, performance.now() - t0),
             spawnRuleCount: spawnedRules.length,
             livingRuleCount: livingRules.length,
+            lineRuleCount: lineRules.length,
             backgroundRuleCount: backgroundRules.length,
             cameraRuleCount: cameraRules.length,
             usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesLineHsb: _usesHsbOutput(lineRules),
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             requiredInputsByTarget,
             requiredInputs,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             rejected: sanitized.rejected,
         }

@@ -1,9 +1,3 @@
-export function shouldConvertAudioFile(file) {
-    // Browser playback + Web Audio analysis decode happens natively at runtime.
-    // Keep API shape for compatibility with existing call sites.
-    return false
-}
-
 function _audioCtxCtor() {
     return window.AudioContext || window.webkitAudioContext
 }
@@ -29,9 +23,4 @@ export async function decodeAudioFileInBrowser(file) {
             // No-op; some browsers throw when closing already-closed contexts.
         }
     }
-}
-
-export async function convertAudioFileToWav(file) {
-    // Compatibility alias kept while migration is in progress.
-    return decodeAudioFileInBrowser(file)
 }

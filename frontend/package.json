@@ -9,6 +9,7 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "nouislider": "^15.8.1",
         "three": "^0.171.0"
     },
     "devDependencies": {

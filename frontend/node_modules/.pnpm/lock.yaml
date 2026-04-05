@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      nouislider:
+        specifier: ^15.8.1
+        version: 15.8.1
       three:
         specifier: ^0.171.0
         version: 0.171.0
@@ -312,6 +315,9 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nouislider@15.8.1:
+    resolution: {integrity: sha512-93TweAi8kqntHJSPiSWQ1o/uZ29VWOmal9YKb6KKGGlCkugaNfAupT7o1qTHqdJvNQ7S0su5rO6qRFCjP8fxtw==}
+
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -540,6 +546,8 @@ snapshots:
     optional: true
 
   nanoid@3.3.11: {}
+
+  nouislider@15.8.1: {}
 
   picocolors@1.1.1: {}
 
