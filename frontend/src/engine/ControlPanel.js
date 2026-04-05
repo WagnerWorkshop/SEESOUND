@@ -27,6 +27,7 @@ import loadIcon from '../icons/load.svg?raw'
 import saveIcon from '../icons/save.svg?raw'
 import savePresetIcon from '../icons/save-preset.svg?raw'
 import saveAsIcon from '../icons/save-as.svg?raw'
+import uploadIcon from '../icons/upload.svg?raw'
 import deleteIcon from '../icons/delete.svg?raw'
 import imageIcon from '../icons/image.svg?raw'
 import imageEmptyIcon from '../icons/image-empty.svg?raw'
@@ -271,6 +272,7 @@ const BUTTON_ICON_MAP = Object.freeze({
     save: saveIcon,
     savePreset: savePresetIcon,
     saveAs: saveAsIcon,
+    upload: uploadIcon,
     remove: deleteIcon,
     exportImage: imageIcon,
     exportImageNoBg: imageEmptyIcon,
@@ -985,6 +987,114 @@ function createRuleConditionInputSelect(selected = NONE_VAR) {
 
 function buildFileMenu(body) {
     const panel = el('div', 'cp-menu-pane-inner')
+    const PRESET_FILE_EXTENSION = '.ssp-preset.json'
+
+    const presetNameFromFile = (rawName = '') => {
+        const fileName = String(rawName || '').trim()
+        if (!fileName) return ''
+        if (/\.ssp-preset\.json$/i.test(fileName)) return fileName.replace(/\.ssp-preset\.json$/i, '')
+        return fileName.replace(/\.[^./\\]+$/g, '')
+    }
+
+    const buildPresetPayload = (name, presetParams) => ({
+        schemaVersion: 1,
+        name: String(name || '').trim(),
+        params: (presetParams && typeof presetParams === 'object') ? presetParams : {},
+        updatedAt: new Date().toISOString(),
+    })
+
+    const parsePresetText = (text, fileName = '') => {
+        const payload = JSON.parse(String(text || '{}'))
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Preset file is invalid.')
+        }
+        const parsedName = String(payload?.name || '').trim() || presetNameFromFile(fileName)
+        if (payload?.params && typeof payload.params === 'object') {
+            return { name: parsedName, params: payload.params }
+        }
+        return { name: parsedName, params: payload }
+    }
+
+    const savePresetToLocalFile = async (name, presetParams) => {
+        const trimmedName = String(name || '').trim()
+        const fallbackName = `${trimmedName || 'seesound-preset'}${PRESET_FILE_EXTENSION}`
+        const payload = buildPresetPayload(trimmedName, presetParams)
+        if (typeof window.showSaveFilePicker === 'function') {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: fallbackName,
+                    excludeAcceptAllOption: false,
+                    types: [{
+                        description: 'SEESOUND Preset',
+                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
+                    }],
+                })
+                if (!handle) return false
+                const writable = await handle.createWritable()
+                await writable.write(JSON.stringify(payload, null, 2))
+                await writable.close()
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = fallbackName
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        URL.revokeObjectURL(url)
+        return true
+    }
+
+    const openPresetFromLocalFile = async () => {
+        if (typeof window.showOpenFilePicker === 'function') {
+            try {
+                const [handle] = await window.showOpenFilePicker({
+                    multiple: false,
+                    excludeAcceptAllOption: false,
+                    types: [{
+                        description: 'SEESOUND Preset',
+                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
+                    }],
+                })
+                if (!handle) return null
+                const file = await handle.getFile()
+                const text = await file.text()
+                return parsePresetText(text, file.name)
+            } catch {
+                return null
+            }
+        }
+
+        return new Promise((resolve) => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = `${PRESET_FILE_EXTENSION},.json`
+            input.style.display = 'none'
+            input.addEventListener('change', async () => {
+                try {
+                    const file = input.files?.[0]
+                    if (!file) {
+                        resolve(null)
+                        return
+                    }
+                    const text = await file.text()
+                    resolve(parsePresetText(text, file.name))
+                } catch {
+                    resolve(null)
+                } finally {
+                    input.remove()
+                }
+            }, { once: true })
+            document.body.appendChild(input)
+            input.click()
+        })
+    }
 
     const projectNameFromFile = (rawName = '') => {
         const fileName = String(rawName || '').trim()
@@ -1038,14 +1148,16 @@ function buildFileMenu(body) {
     const presetSelect = el('select', 'cp-input-select cp-preset-sel')
     const presetName = el('input', 'cp-input-text cp-preset-name', { type: 'text', placeholder: UI_TEXT.file.presetNamePlaceholder })
     const btnLoadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetLoad })
+    const btnUploadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetUpload || 'Upload' })
     const btnSavePresetProject = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave })
     const btnSavePresetLocal = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveLocal || 'Save Local' })
     const btnDeletePreset = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.file.presetRemove })
     applyButtonIcon(btnLoadPreset, BUTTON_ICON_MAP.load, UI_TEXT.file.presetLoad)
+    applyButtonIcon(btnUploadPreset, BUTTON_ICON_MAP.upload, UI_TEXT.file.presetUpload || 'Upload')
     applyButtonIcon(btnSavePresetProject, BUTTON_ICON_MAP.save, UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave)
     applyButtonIcon(btnSavePresetLocal, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.presetSaveLocal || 'Save Local')
     applyButtonIcon(btnDeletePreset, BUTTON_ICON_MAP.remove, UI_TEXT.file.presetRemove)
-    presetRow.append(presetSelect, btnLoadPreset, btnDeletePreset, presetName, btnSavePresetProject, btnSavePresetLocal)
+    presetRow.append(presetSelect, btnLoadPreset, btnUploadPreset, btnDeletePreset, presetName, btnSavePresetProject, btnSavePresetLocal)
     presetsSection.appendChild(presetRow)
 
     async function refreshPresets() {
@@ -1070,18 +1182,37 @@ function buildFileMenu(body) {
         if (data?.params) setMany(data.params)
     })
 
+    btnUploadPreset.addEventListener('click', async () => {
+        const loaded = await openPresetFromLocalFile()
+        if (!loaded?.params || typeof loaded.params !== 'object') return
+        const nextName = String(loaded.name || '').trim()
+        setMany(loaded.params)
+        if (nextName) {
+            await savePreset(nextName, loaded.params)
+            await refreshPresets()
+            presetSelect.value = nextName
+            presetName.value = nextName
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+        }
+    })
+
     btnSavePresetProject.addEventListener('click', async () => {
         const typed = String(presetName.value || '').trim()
         const selected = String(presetSelect.value || '').trim()
         const name = typed || selected
         if (!name) return
+        const snapshot = getSnapshot()
         window.dispatchEvent(new CustomEvent('seesound:project-preset-save-request', {
             detail: {
                 name,
-                params: getSnapshot(),
+                params: snapshot,
             },
         }))
+        await savePreset(name, snapshot)
+        await refreshPresets()
+        presetSelect.value = name
         presetName.value = name
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
     })
 
     btnSavePresetLocal.addEventListener('click', async () => {
@@ -1089,11 +1220,9 @@ function buildFileMenu(body) {
         const selected = String(presetSelect.value || '').trim()
         const name = typed || selected
         if (!name) return
-        await savePreset(name, getSnapshot())
-        await refreshPresets()
-        presetSelect.value = name
+        const didSave = await savePresetToLocalFile(name, getSnapshot())
+        if (!didSave) return
         presetName.value = name
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
     })
 
     btnDeletePreset.addEventListener('click', async () => {
