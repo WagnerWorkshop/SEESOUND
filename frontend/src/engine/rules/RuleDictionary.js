@@ -2,54 +2,54 @@
  * Canonical dictionaries and validation helpers for the low-code rule engine.
  */
 
-const _inputEntries = [
-    // Per-bin inputs (higher complexity / most local)
-    { id: 'binMagnitude', type: 'number', range: [0, 1], category: 'advanced' },
-    // Legacy alias for binMagnitude; hidden from picker.
-    { id: 'binEnergy', type: 'number', range: [0, 1], category: 'advanced', hidden: true },
-    { id: 'binPhase', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binFlux', type: 'number', range: [-1, 1], category: 'advanced' },
-    { id: 'binPhaseDeviation', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binPhasedeviation', type: 'number', range: [0, 1], category: 'advanced', hidden: true },
-    { id: 'binAttackTime', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'binEnvelope', type: 'number', range: [0, 3], category: 'advanced' },
-    { id: 'binEnvelopeState', type: 'number', range: [0, 3], category: 'advanced' },
-    { id: 'binRMSEnergy', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'frequencyHz', type: 'number', range: [0, 22050], category: 'base' },
-    { id: 'notePitchClass', type: 'number', range: [0, 11], category: 'base' },
-    { id: 'octave', type: 'number', range: [-2, 12], category: 'base' },
-    // Legacy alias for frequencyHz; hidden from picker.
-    { id: 'binFreq', type: 'number', range: [0, 22050], category: 'advanced', hidden: true },
-    { id: 'normFreq', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'pan', type: 'number', range: [-1, 1], category: 'base' },
+import { RULE_VARIABLES } from '../ui/UiText.js'
 
-    // Global inputs (frame-level)
-    { id: 'amplitude', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'bass', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'mid', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'high', type: 'number', range: [0, 1], category: 'base' },
-    { id: 'peakFreq', type: 'number', range: [0, 22050], category: 'base' },
-    { id: 'globalRmsEnergy', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'peakAmplitude', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'zeroCrossingRate', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralCentroid', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralFlux', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralFlatness', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralRolloff', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralSpread', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'spectralSkewness', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'chromagram', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'inharmonicity', type: 'number', range: [0, 1], category: 'advanced' },
-    { id: 'time', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'base' },
-    { id: 'deltaTime', type: 'number', range: [0, 1], category: 'base' },
+const _INPUT_RANGES = Object.freeze({
+    binMagnitude: [0, 1],
+    binPhase: [0, 1],
+    binFlux: [-1, 1],
+    binPhaseDeviation: [0, 1],
+    binAttackTime: [0, 1],
+    binEnvelope: [0, 3],
+    binEnvelopeState: [0, 3],
+    binRMSEnergy: [0, 1],
+    frequencyHz: [0, 22050],
+    notePitchClass: [0, 11],
+    octave: [-2, 12],
+    normFreq: [0, 1],
+    pan: [-1, 1],
+    amplitude: [0, 1],
+    bass: [0, 1],
+    mid: [0, 1],
+    high: [0, 1],
+    peakFreq: [0, 22050],
+    globalRmsEnergy: [0, 1],
+    peakAmplitude: [0, 1],
+    zeroCrossingRate: [0, 1],
+    spectralCentroid: [0, 1],
+    spectralFlux: [0, 1],
+    spectralFlatness: [0, 1],
+    spectralRolloff: [0, 1],
+    spectralSpread: [0, 1],
+    spectralSkewness: [0, 1],
+    chromagram: [0, 1],
+    inharmonicity: [0, 1],
+    time: [0, Number.POSITIVE_INFINITY],
+    deltaTime: [0, 1],
+    canvasWidthPx: [0, Number.POSITIVE_INFINITY],
+    canvasHeightPx: [0, Number.POSITIVE_INFINITY],
+    audioLengthSec: [0, Number.POSITIVE_INFINITY],
+})
 
-    // Render/context inputs
-    { id: 'canvasWidthPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasHeightPx', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasWidthUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'canvasHeightUnits', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-    { id: 'audioLengthSec', type: 'number', range: [0, Number.POSITIVE_INFINITY], category: 'context' },
-]
+const _inputEntries = RULE_VARIABLES.map((entry) => ({
+    id: entry.id,
+    type: 'number',
+    range: _INPUT_RANGES[entry.id] || [0, 1],
+    category: entry.group,
+    label: entry.label,
+    legacyName: entry.legacyName,
+    description: entry.description,
+}))
 
 const _outputEntries = [{
     id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'camera']
@@ -72,57 +72,77 @@ const _outputEntries = [{
 
     ,
 {
+    id: 'targetX', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera']
+}
+
+    ,
+{
+    id: 'targetY', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera']
+}
+
+    ,
+{
+    id: 'targetZ', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera']
+}
+
+    ,
+{
+    id: 'angleOfView', type: 'number', range: [20, 120], targets: ['camera']
+}
+
+    ,
+{
     id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles']
 }
 
     ,
 {
-    id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'luma', type: 'number', range: [0, 255], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'luma', type: 'number', range: [0, 255], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'hsv', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'background']
+    id: 'hsv', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background']
 }
 
     ,
 {
-    id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles']
+    id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines']
 }
 
     ,
@@ -136,38 +156,49 @@ const _outputEntries = [{
 }
 
     ,
+{
+    id: 'xStart', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'xEnd', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'yStart', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'yEnd', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'zStart', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'zEnd', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['lines']
+}
+
+    ,
+{
+    id: 'thickness', type: 'number', range: [0, 64], targets: ['lines']
+}
+
+    ,
+{
+    id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines']
+}
+
+    ,
 ]
 
-const _legacyOutputAliases = Object.freeze({
-    r: 'red',
-    g: 'green',
-    b: 'blue',
-    a: 'opacity',
-    backgroundRed: 'red',
-    backgroundGreen: 'green',
-    backgroundBlue: 'blue',
-})
-
-const _legacyBackgroundOutputs = Object.freeze(new Set(['backgroundRed', 'backgroundGreen', 'backgroundBlue']))
-
-const _legacyInputAliases = Object.freeze({
-    binEnergy: 'binMagnitude',
-    binFreq: 'frequencyHz',
-})
-
-export const RULE_BLOCK_FIELDS = Object.freeze([
-    'id',
-    'group',
-    'subgroup',
-    'enabled',
-    'target',
-    'scope',
-    'condition',
-    'actions',
-    'order',
-])
-
-export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'background', 'camera'])
+export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'lines', 'background', 'camera'])
 
 export const RULE_SCOPES = Object.freeze(['spawnedOnly', 'allLivingFrame'])
 
@@ -246,7 +277,7 @@ function _normalizeExpressionSyntax(expr) {
 
 function _validateExpression(expr, inMap) {
     if (typeof expr !== 'string') return null
-    const value = _normalizeExpressionSyntax(_normalizeExpressionInputAliases(expr))
+    const value = _normalizeExpressionSyntax(expr)
     if (!value) return 'Expression cannot be empty.'
     if (!/^[0-9A-Za-z_+\-*/%().,\s<>!=&|?:\[\]'\"]+$/.test(value)) {
         return 'Expression contains unsupported characters.'
@@ -286,32 +317,9 @@ function _validateExpression(expr, inMap) {
     return null
 }
 
-function _normalizeOutputId(id) {
-    if (typeof id !== 'string') return id
-    return _legacyOutputAliases[id] || id
-}
-
-function _normalizeInputId(id) {
-    if (typeof id !== 'string') return id
-    return _legacyInputAliases[id] || id
-}
-
-function _escapeRegex(text) {
-    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function _normalizeExpressionInputAliases(expr) {
-    if (typeof expr !== 'string' || !expr) return expr
-    let out = expr
-    for (const [legacyId, canonicalId] of Object.entries(_legacyInputAliases)) {
-        const re = new RegExp(`\\b${_escapeRegex(legacyId)}\\b`, 'g')
-        out = out.replace(re, canonicalId)
-    }
-    return out
-}
-
 function _normalizeTarget(rule) {
     if (RULE_TARGETS.includes(rule?.target)) return rule.target
+    if (String(rule?.context || '').toLowerCase().includes('line')) return 'lines'
     if (rule?.scope === 'spawnedOnly') return 'spawnedParticles'
     if (rule?.scope === 'allLivingFrame') return 'allParticles'
     return 'spawnedParticles'
@@ -355,7 +363,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
         if (exprErr) errors.push(`Condition expression invalid: ${exprErr}`)
     }
 
-    const conditionInput = _normalizeInputId(rule.condition?.input)
+    const conditionInput = rule.condition?.input
     if (conditionInput && !inMap.has(conditionInput)) {
         errors.push(`Unknown condition input: ${conditionInput}`)
     }
@@ -363,7 +371,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
     const actions = Array.isArray(rule.actions) ? rule.actions : []
     const setTargets = new Map()
     actions.forEach((action, actionIndex) => {
-        const output = _normalizeOutputId(action?.output)
+        const output = action?.output
         if (!output || !outMap.has(output)) {
             errors.push(`Unknown action output at index ${actionIndex}: ${String(output)}`)
             return
@@ -398,7 +406,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
             setTargets.set(output, actionIndex)
         }
 
-        const actionInput = _normalizeInputId(action?.input)
+        const actionInput = action?.input
         if (actionInput && !inMap.has(actionInput)) {
             errors.push(`Unknown action input at index ${actionIndex}: ${actionInput}`)
         }
@@ -473,14 +481,6 @@ export function annotateRuleContradictions(ruleBlocks) {
     }
 }
 
-export function isKnownInputId(id) {
-    return _inputMap.has(id)
-}
-
-export function isKnownOutputId(id) {
-    return _outputMap.has(id)
-}
-
 /**
  * Coerces incoming rule blocks to the canonical shape and rejects invalid items.
  * Returns only valid rules to keep runtime deterministic.
@@ -509,29 +509,21 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
         if (!RULE_CONDITION_OPERATORS.includes(coerced.condition.operator)) {
             coerced.condition.operator = 'always'
         }
-        if (coerced.condition?.input) coerced.condition.input = _normalizeInputId(coerced.condition.input)
-        if (coerced.condition?.valueInput) coerced.condition.valueInput = _normalizeInputId(coerced.condition.valueInput)
-        if (typeof coerced.condition?.expression === 'string') {
-            coerced.condition.expression = _normalizeExpressionInputAliases(coerced.condition.expression)
-        }
+        if (coerced.condition?.input) coerced.condition.input = String(coerced.condition.input)
+        if (coerced.condition?.valueInput) coerced.condition.valueInput = String(coerced.condition.valueInput)
+        if (typeof coerced.condition?.expression === 'string') coerced.condition.expression = coerced.condition.expression
 
-        // Keep legacy scope for compatibility, derive from target for deterministic runtime.
-        coerced.scope = coerced.target === 'spawnedParticles' ? 'spawnedOnly' : 'allLivingFrame'
+        coerced.scope = (coerced.target === 'spawnedParticles' || coerced.target === 'lines') ? 'spawnedOnly' : 'allLivingFrame'
 
         coerced.actions = coerced.actions
             .filter((action) => action && typeof action === 'object')
             .map((action) => {
-                const rawOutput = action.output
-                if (_legacyBackgroundOutputs.has(rawOutput) && !rule?.target) {
-                    coerced.target = 'background'
-                    coerced.scope = 'allLivingFrame'
-                }
                 return {
                     operator: RULE_ACTION_OPERATORS.includes(action.operator) ? action.operator : 'set',
-                    output: _normalizeOutputId(rawOutput),
+                    output: action.output,
                     value: action.value,
-                    input: _normalizeInputId(action.input),
-                    expression: _normalizeExpressionInputAliases(action.expression),
+                    input: action.input,
+                    expression: action.expression,
                 }
             })
 

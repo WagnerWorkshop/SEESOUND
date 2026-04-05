@@ -3,23 +3,18 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * Central parameter state. Defines every slider/toggle/dropdown, exposes a
  * live `params` object the render loop reads every frame, and provides
- * preset save/load via the backend REST API.
+ * preset save/load via root preset files + browser local storage.
  */
 
 import { sanitizeRuleBlocks } from './rules/RuleDictionary.js'
 
-const API = 'http://localhost:8000'
 const STORAGE_KEY = 'seesound_user_defaults_v4'
 const DISABLED_KEY = 'seesound_disabled_v4'
+const USER_PRESET_STORAGE_KEY = 'seesound_user_presets_v1'
+const HIDDEN_ROOT_PRESET_STORAGE_KEY = 'seesound_hidden_root_presets_v1'
+const ROOT_PRESET_MODULES = import.meta.glob('../../../presets/*.json', { eager: true, import: 'default' })
 
-// Phase checklist workflow anchor:
-// 1) implement one cluster at a time, 2) verify immediately, 3) checkpoint in instructions.txt.
 export const RULE_SCHEMA_VERSION = 1
-// Central schema changelog (append-only):
-// v1: initial rule schema scaffold + compiler debug flags.
-export const RULE_SCHEMA_CHANGELOG = [
-    { version: 1, date: '2026-03-17', note: 'Initial rule schema scaffold and debug flags.' },
-]
 export const RULE_DEBUG_FLAGS = {
     logCompilerStatus: false,
     logCompilerTiming: false,
@@ -78,12 +73,6 @@ function _sanitizePalettes(rawPalettes) {
         .filter(Boolean)
 }
 
-/* TODO_RESUME (Phase 2):
- * - Add params/state: ruleBlocks, ruleEngineEnabled, ruleSchemaVersion.
- * - Include rules in getSnapshot() and preset round-trip.
- * - Add migration for legacy presets missing ruleBlocks.
- */
-
 // ─────────────────────────────────────────────────────────────────────────────
 // § 1  PARAMETER GROUP DEFINITIONS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +81,7 @@ export const PARAM_GROUPS = [
     { id: 'inputGain', label: 'Input' },
     { id: 'inputProcessing', label: 'Input Processing' },
     { id: 'geometry', label: 'Geometry' },
-    { id: 'mixing', label: 'Mixing' },
+    { id: 'mixing', label: 'View' },
 ]
 
 function normRangeParam({ key, label, min, max, step, def, unit, desc }) {
@@ -118,36 +107,31 @@ function normRangeParam({ key, label, min, max, step, def, unit, desc }) {
 export const PARAMS = [
     // ── Input ──────────────────────────────────────────────────────────────
     {
-        key: 'inputGain', group: 'inputGain', label: 'Input Gain',
+        key: 'inputGain', group: 'inputGain', label: 'Sensitivity',
         min: 0, max: 3, step: 0.01, default: 1.0, unit: '×',
-        desc: 'Scales every amplitude value before processing. 1× = unchanged.',
+        desc: 'Global input gain scaler applied before analysis and spawning.',
         canDisable: false,
-    },
-    {
-        key: 'amplitudeThreshold', group: 'inputGain', label: 'Amplitude Threshold',
-        min: -96, max: 0, step: 1, default: -48, unit: 'dB',
-        desc: 'Hard noise gate: any bin quieter than this level is hidden.',
-        canDisable: true,
     },
     // ── Input Processing ───────────────────────────────────────────────────
     {
-        key: 'freqNormMin', group: 'inputProcessing', label: 'Freq Norm Min',
+        key: 'freqNormMin', group: 'inputProcessing', label: 'Frequency Range Min',
         min: 16, max: 20000, step: 1, default: 40, unit: 'Hz',
-        desc: 'Lower bound for log2-based frequency normalization into normFreq.',
+        desc: 'Lower bound for frequency normalization.',
         canDisable: false,
     },
     {
-        key: 'freqNormMax', group: 'inputProcessing', label: 'Freq Norm Max',
+        key: 'freqNormMax', group: 'inputProcessing', label: 'Frequency Range Max',
         min: 16, max: 20000, step: 1, default: 12000, unit: 'Hz',
-        desc: 'Upper bound for log2-based frequency normalization into normFreq.',
+        desc: 'Upper bound for frequency normalization.',
         canDisable: false,
     },
     {
-        key: 'fftSize', group: 'inputProcessing', label: 'FFT Size',
+        key: 'fftSize', group: 'inputProcessing', label: 'Audio Resolution',
         default: 2048, unit: '',
-        desc: 'FFT analysis size. Discrete power-of-two choices; larger sizes increase frequency detail and then progressively thin high-frequency buckets.',
+        desc: 'FFT analysis size. Higher values increase frequency detail.',
         isDropdown: true,
         dropdownOptions: [
+            { label: '512', value: 512 },
             { label: '1024', value: 1024 },
             { label: '2048', value: 2048 },
             { label: '4096', value: 4096 },
@@ -156,170 +140,176 @@ export const PARAMS = [
         ],
         canDisable: false,
     },
+    {
+        key: 'fluxWindowFrames', group: 'inputProcessing', label: 'Activity Interval',
+        min: 1, max: 64, step: 1, default: 10, unit: 'frames',
+        desc: 'Rolling frame window used to smooth activity detection.',
+        canDisable: false,
+    },
     normRangeParam({
         key: 'binMagnitudeNormMin',
-        label: 'Per-Bin Magnitude Min',
+        label: 'Volume Min',
         min: -120,
         max: 0,
         step: 1,
         def: -70,
         unit: 'dBFS',
-        desc: 'Normalizes the absolute volume of the individual frequency bin. Sets the noise floor (Min) and the peak ceiling (Max). Measurement: decibels relative to full scale (dBFS).',
+        desc: 'Normalization lower bound for per-bin volume.',
     }),
     normRangeParam({
         key: 'binMagnitudeNormMax',
-        label: 'Per-Bin Magnitude Max',
+        label: 'Volume Max',
         min: -120,
         max: 0,
         step: 1,
         def: 0,
         unit: 'dBFS',
-        desc: 'Normalizes the absolute volume of the individual frequency bin. Sets the noise floor (Min) and the peak ceiling (Max). Measurement: decibels relative to full scale (dBFS).',
+        desc: 'Normalization upper bound for per-bin volume.',
     }),
     normRangeParam({
         key: 'binFluxNormMin',
-        label: 'Per-Bin Spectral Flux Min',
+        label: 'Activity Detail Min',
         min: 0,
         max: 2,
         step: 0.001,
         def: 0,
         unit: 'delta',
-        desc: 'Normalizes the attack sharpness of the specific bin. 0 is a sustained note; high values are sharp percussive hits within this frequency. Measurement: linear amplitude delta per frame.',
+        desc: 'Normalization lower bound for per-frequency activity.',
     }),
     normRangeParam({
         key: 'binFluxNormMax',
-        label: 'Per-Bin Spectral Flux Max',
+        label: 'Activity Detail Max',
         min: 0,
         max: 2,
         step: 0.001,
         def: 0.5,
         unit: 'delta',
-        desc: 'Normalizes the attack sharpness of the specific bin. 0 is a sustained note; high values are sharp percussive hits within this frequency. Measurement: linear amplitude delta per frame.',
+        desc: 'Normalization upper bound for per-frequency activity.',
     }),
     normRangeParam({
         key: 'binPhaseDeviationNormMin',
-        label: 'Per-Bin Phase Deviation Min',
+        label: 'Instability Min',
         min: 0,
         max: 3.14,
         step: 0.001,
         def: 0,
         unit: 'rad',
-        desc: 'Normalizes the noisiness of the bin. 0.0 represents a pure tonal frequency. 3.14 represents chaotic, unpitched noise. Measurement: radians.',
+        desc: 'Normalization lower bound for per-bin instability.',
     }),
     normRangeParam({
         key: 'binPhaseDeviationNormMax',
-        label: 'Per-Bin Phase Deviation Max',
+        label: 'Instability Max',
         min: 0,
         max: 3.14,
         step: 0.001,
         def: 3.14,
         unit: 'rad',
-        desc: 'Normalizes the noisiness of the bin. 0.0 represents a pure tonal frequency. 3.14 represents chaotic, unpitched noise. Measurement: radians.',
+        desc: 'Normalization upper bound for per-bin instability.',
     }),
     normRangeParam({
         key: 'binAttackTimeNormMin',
-        label: 'Per-Bin Attack Time Min',
+        label: 'Attack Sharpness Min',
         min: 0,
         max: 2000,
         step: 1,
         def: 5,
         unit: 'ms',
-        desc: 'Normalizes the time it takes for a frequency bin to reach its peak amplitude. Separates fast strikes from slow atmospheric swells. Measurement: milliseconds (ms).',
+        desc: 'Normalization lower bound for per-bin attack sharpness.',
     }),
     normRangeParam({
         key: 'binAttackTimeNormMax',
-        label: 'Per-Bin Attack Time Max',
+        label: 'Attack Sharpness Max',
         min: 0,
         max: 2000,
         step: 1,
         def: 500,
         unit: 'ms',
-        desc: 'Normalizes the time it takes for a frequency bin to reach its peak amplitude. Separates fast strikes from slow atmospheric swells. Measurement: milliseconds (ms).',
+        desc: 'Normalization upper bound for per-bin attack sharpness.',
     }),
     normRangeParam({
         key: 'globalRmsNormMin',
-        label: 'Global RMS Energy Min',
+        label: 'Energy Min',
         min: -120,
         max: 0,
         step: 1,
         def: -60,
         unit: 'dBFS',
-        desc: 'Normalizes the total average acoustic power of the entire audio frame. Used to drive global lighting or macro-camera movements. Measurement: decibels relative to full scale (dBFS).',
+        desc: 'Normalization lower bound for frame energy.',
     }),
     normRangeParam({
         key: 'globalRmsNormMax',
-        label: 'Global RMS Energy Max',
+        label: 'Energy Max',
         min: -120,
         max: 0,
         step: 1,
         def: 0,
         unit: 'dBFS',
-        desc: 'Normalizes the total average acoustic power of the entire audio frame. Used to drive global lighting or macro-camera movements. Measurement: decibels relative to full scale (dBFS).',
+        desc: 'Normalization upper bound for frame energy.',
     }),
     normRangeParam({
         key: 'spectralCentroidNormMin',
-        label: 'Spectral Centroid Min',
+        label: 'Sharpness Min',
         min: 16,
         max: 22050,
         step: 1,
         def: 150,
         unit: 'Hz',
-        desc: 'Normalizes the center of mass of the sound. Low values mean a bass-heavy, dark frame; high values mean a treble-heavy, bright frame. Measurement: Hertz (Hz).',
+        desc: 'Normalization lower bound for spectral sharpness.',
     }),
     normRangeParam({
         key: 'spectralCentroidNormMax',
-        label: 'Spectral Centroid Max',
+        label: 'Sharpness Max',
         min: 16,
         max: 22050,
         step: 1,
         def: 8000,
         unit: 'Hz',
-        desc: 'Normalizes the center of mass of the sound. Low values mean a bass-heavy, dark frame; high values mean a treble-heavy, bright frame. Measurement: Hertz (Hz).',
+        desc: 'Normalization upper bound for spectral sharpness.',
     }),
     normRangeParam({
         key: 'globalSpectralFluxNormMin',
-        label: 'Global Spectral Flux Min',
+        label: 'Activity Global Min',
         min: 0,
         max: 200,
         step: 0.1,
         def: 0,
         unit: 'AU',
-        desc: 'Normalizes the total energy change across all frequencies. Spikes indicate major rhythmic beats or structural song changes. Measurement: aggregate energy delta (engine arbitrary units).',
+        desc: 'Normalization lower bound for frame-level activity.',
     }),
     normRangeParam({
         key: 'globalSpectralFluxNormMax',
-        label: 'Global Spectral Flux Max',
+        label: 'Activity Global Max',
         min: 0,
         max: 200,
         step: 0.1,
         def: 100,
         unit: 'AU',
-        desc: 'Normalizes the total energy change across all frequencies. Spikes indicate major rhythmic beats or structural song changes. Measurement: aggregate energy delta (engine arbitrary units).',
+        desc: 'Normalization upper bound for frame-level activity.',
     }),
     normRangeParam({
         key: 'spectralFlatnessNormMin',
-        label: 'Spectral Flatness Min',
+        label: 'Noisiness Min',
         min: 0,
         max: 1,
         step: 0.001,
         def: 0,
         unit: 'ratio',
-        desc: 'Normalizes the global ratio of noise to tone. 0.0 indicates a highly pitched, melodic frame; 1.0 indicates broadband white noise or dense drum washes. Measurement: ratio (0.0 to 1.0).',
+        desc: 'Normalization lower bound for spectral noisiness.',
     }),
     normRangeParam({
         key: 'spectralFlatnessNormMax',
-        label: 'Spectral Flatness Max',
+        label: 'Noisiness Max',
         min: 0,
         max: 1,
         step: 0.001,
         def: 1,
         unit: 'ratio',
-        desc: 'Normalizes the global ratio of noise to tone. 0.0 indicates a highly pitched, melodic frame; 1.0 indicates broadband white noise or dense drum washes. Measurement: ratio (0.0 to 1.0).',
+        desc: 'Normalization upper bound for spectral noisiness.',
     }),
 
     // ── Geometry ────────────────────────────────────────────────────────────
     {
-        key: 'defaultParticleSize', group: 'geometry', label: 'Particle Size',
+        key: 'defaultParticleSize', group: 'geometry', label: 'Particle Default Size',
         min: 1, max: 40, step: 0.5, default: 6, unit: 'px',
         desc: 'Base diameter of every particle before per-frequency size scaling.',
         canDisable: false,
@@ -361,19 +351,13 @@ export const PARAMS = [
         canDisable: false,
     },
     {
-        key: 'maxParticles', group: 'geometry', label: 'Max Particle Capacity',
-        min: 4096, max: 8000000, step: 1024, default: 262144, unit: '',
+        key: 'maxParticles', group: 'geometry', label: 'Particle Capacity',
+        min: 100000, max: 5000000, step: 1000, default: 1000000, unit: '',
         desc: 'Maximum total particle slots in GPU buffers. Higher values allow longer painting trails.',
         canDisable: false,
     },
     {
-        key: 'particleRenderPercent', group: 'geometry', label: 'Particle Render %',
-        min: 1, max: 100, step: 1, default: 100, unit: '%',
-        desc: 'Bucket thinning: only this percentage of log-frequency buckets can spawn particles each frame (evenly distributed by bucket index).',
-        canDisable: false,
-    },
-    {
-        key: 'particlesByFrame', group: 'geometry', label: 'Particles By Frame',
+        key: 'particlesByFrame', group: 'geometry', label: 'Spawn Rate',
         min: 100, max: 5000, step: 1, default: 1000, unit: 'N',
         desc: 'Number of log-frequency spawn buckets per frame. Step ratio is k = (freqMax / freqMin)^(1/N).',
         canDisable: false,
@@ -416,10 +400,118 @@ export const PARAMS = [
         ],
     },
     {
+        key: 'cameraPosX', group: 'mixing', label: 'Camera Position X',
+        min: -5000, max: 5000, step: 1, default: 0, unit: 'u',
+        desc: 'Camera position X in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraPosY', group: 'mixing', label: 'Camera Position Y',
+        min: -5000, max: 5000, step: 1, default: 0, unit: 'u',
+        desc: 'Camera position Y in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraPosZ', group: 'mixing', label: 'Camera Position Z',
+        min: -5000, max: 5000, step: 1, default: 420, unit: 'u',
+        desc: 'Camera position Z in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraTargetX', group: 'mixing', label: 'Camera Target X',
+        min: -5000, max: 5000, step: 1, default: 0, unit: 'u',
+        desc: 'Camera target X in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraTargetY', group: 'mixing', label: 'Camera Target Y',
+        min: -5000, max: 5000, step: 1, default: 0, unit: 'u',
+        desc: 'Camera target Y in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraTargetZ', group: 'mixing', label: 'Camera Target Z',
+        min: -5000, max: 5000, step: 1, default: 0, unit: 'u',
+        desc: 'Camera target Z in world units.',
+        canDisable: false,
+    },
+    {
+        key: 'cameraAngleOfView', group: 'mixing', label: 'Angle Of View',
+        min: 20, max: 120, step: 1, default: 55, unit: 'deg',
+        desc: 'Perspective camera field of view in degrees.',
+        canDisable: false,
+    },
+    {
+        key: 'postProcessEnabled', group: 'mixing', label: 'Post-Processing',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Master switch for all post-processing effects.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'bloomEnabled', group: 'mixing', label: 'Bloom Enabled',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Enable Unreal Bloom pass.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'bloomStrength', group: 'mixing', label: 'Bloom Strength',
+        min: 0, max: 4, step: 0.01, default: 1.15, unit: '',
+        desc: 'Bloom intensity multiplier.',
+        canDisable: false,
+    },
+    {
+        key: 'bloomRadius', group: 'mixing', label: 'Bloom Radius',
+        min: 0, max: 2, step: 0.01, default: 0.7, unit: '',
+        desc: 'Bloom spread radius.',
+        canDisable: false,
+    },
+    {
+        key: 'bloomThreshold', group: 'mixing', label: 'Bloom Threshold',
+        min: 0, max: 1, step: 0.01, default: 0.18, unit: '',
+        desc: 'Luminance threshold before bloom is applied.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehEnabled', group: 'mixing', label: 'Bokeh Enabled',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Enable Bokeh depth-of-field pass.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'bokehFocus', group: 'mixing', label: 'Bokeh Focus',
+        min: 1, max: 5000, step: 1, default: 380, unit: 'u',
+        desc: 'Bokeh focus distance.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehAperture', group: 'mixing', label: 'Bokeh Aperture',
+        min: 0, max: 0.001, step: 0.00001, default: 0.00012, unit: '',
+        desc: 'Bokeh aperture value.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehMaxBlur', group: 'mixing', label: 'Bokeh Max Blur',
+        min: 0, max: 0.1, step: 0.0005, default: 0.01, unit: '',
+        desc: 'Maximum blur amount for bokeh pass.',
+        canDisable: false,
+    },
+    {
         key: 'persistMode', group: 'mixing', label: 'Persistence',
         min: 0, max: 1, step: 1, default: 0, unit: '',
         desc: 'Momentary: canvas fades each frame. Painting: marks accumulate.',
         isToggle: true, toggleLabels: ['Momentary', 'Painting'],
+    },
+    {
+        key: 'originSignEnabled', group: 'mixing', label: 'Origin Axes',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Show/hide origin axes guide.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'coordinateGuidesEnabled', group: 'mixing', label: 'Coordinate Guides',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Show/hide coordinate guide grids.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
     },
 ]
 
@@ -450,13 +542,6 @@ export function migrateRuleSchema(snapshot) {
     migrated.palettes = _sanitizePalettes(source.palettes)
     migrated.ruleUiState = _sanitizeRuleUiState(source.ruleUiState)
 
-    // Legacy compatibility: old presets used particlesPerOctave (10..500),
-    // where total buckets were 10 * particlesPerOctave (100..5000).
-    if (!Number.isFinite(Number(source.particlesByFrame)) && Number.isFinite(Number(source.particlesPerOctave))) {
-        const legacy = Math.round(Number(source.particlesPerOctave) * 10)
-        migrated.particlesByFrame = Math.max(100, Math.min(5000, legacy))
-    }
-
     if (sanitization.rejected.length > 0) {
         console.warn('[RuleEngine] Rejected malformed ruleBlocks during migration', sanitization.rejected)
     }
@@ -470,7 +555,6 @@ function _buildInitial() {
     for (const p of PARAMS) {
         out[p.key] = Object.prototype.hasOwnProperty.call(saved, p.key) ? saved[p.key] : p.default
     }
-    out.tonicHz = saved.tonicHz ?? 261.63   // kept for WS bridge compatibility
     out.ruleBlocks = saved.ruleBlocks
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
@@ -595,19 +679,41 @@ export function set(key, value) {
 
 export function setMany(updates) {
     _pushUndoSnapshot()
-    const merged = { ...params, ...(updates && typeof updates === 'object' ? updates : {}) }
-    const normalized = migrateRuleSchema(merged)
-    for (const [k, v] of Object.entries(normalized)) {
-        params[k] = v
+    const patch = (updates && typeof updates === 'object') ? updates : {}
+    const merged = migrateRuleSchema({ ...params, ...patch })
+
+    const changed = Object.create(null)
+    const patchKeys = Object.keys(patch)
+    for (const key of patchKeys) {
+        const nextValue = merged[key]
+        if (Object.is(params[key], nextValue)) continue
+        params[key] = nextValue
+        changed[key] = nextValue
+    }
+
+    const ruleSchemaKeys = ['ruleBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
+    const includesRuleSchemaField = ruleSchemaKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))
+    if (includesRuleSchemaField) {
+        for (const key of ruleSchemaKeys) {
+            const nextValue = merged[key]
+            if (Object.is(params[key], nextValue)) continue
+            params[key] = nextValue
+            changed[key] = nextValue
+        }
+    }
+
+    const changedEntries = Object.entries(changed)
+    if (changedEntries.length === 0) return
+
+    for (const [k, v] of changedEntries) {
         _notify(k, v)
     }
-    _notify('*', normalized)
+    _notify('*', changed)
 }
 
 export function resetToDefaults() {
     _pushUndoSnapshot()
     for (const p of PARAMS) params[p.key] = p.default
-    params.tonicHz = 261.63
     params.ruleBlocks = []
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
@@ -635,6 +741,78 @@ export function toggleDisabled(key) {
 export function getSnapshot() {
     const migrated = migrateRuleSchema(params)
     return { ...params, ...migrated, _disabled: [...disabled] }
+}
+
+function _fileStem(path) {
+    const norm = String(path || '').replace(/\\/g, '/')
+    const leaf = norm.slice(norm.lastIndexOf('/') + 1)
+    return leaf.replace(/\.json$/i, '')
+}
+
+function _readHiddenRootPresetNames() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(HIDDEN_ROOT_PRESET_STORAGE_KEY) || '[]')
+        if (!Array.isArray(raw)) return new Set()
+        return new Set(raw.map((name) => String(name || '').trim()).filter(Boolean))
+    } catch {
+        return new Set()
+    }
+}
+
+function _writeHiddenRootPresetNames(hiddenSet) {
+    try {
+        localStorage.setItem(HIDDEN_ROOT_PRESET_STORAGE_KEY, JSON.stringify([...hiddenSet]))
+    } catch {
+        // no-op
+    }
+}
+
+function _readUserPresetMap() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(USER_PRESET_STORAGE_KEY) || '[]')
+        if (!Array.isArray(raw)) return new Map()
+        const out = new Map()
+        for (const item of raw) {
+            const name = String(item?.name || '').trim()
+            if (!name) continue
+            out.set(name, {
+                name,
+                params: _buildCanonicalPresetParams(item?.params),
+            })
+        }
+        return out
+    } catch {
+        return new Map()
+    }
+}
+
+function _writeUserPresetMap(presetMap) {
+    try {
+        const payload = [...presetMap.values()].map((entry) => ({
+            name: entry.name,
+            params: _buildCanonicalPresetParams(entry.params),
+        }))
+        localStorage.setItem(USER_PRESET_STORAGE_KEY, JSON.stringify(payload))
+    } catch {
+        // no-op
+    }
+}
+
+let _rootPresetCache = null
+function _getRootPresetMap() {
+    if (_rootPresetCache) return _rootPresetCache
+    const map = new Map()
+    for (const [path, mod] of Object.entries(ROOT_PRESET_MODULES)) {
+        const payload = (mod && typeof mod === 'object') ? mod : {}
+        const name = String(payload.name || _fileStem(path)).trim()
+        if (!name) continue
+        map.set(name, {
+            name,
+            params: _buildCanonicalPresetParams(payload.params),
+        })
+    }
+    _rootPresetCache = map
+    return _rootPresetCache
 }
 
 function _dropdownValues(paramDef) {
@@ -683,27 +861,14 @@ function _buildCanonicalPresetParams(source) {
     try {
         const incoming = (source && typeof source === 'object') ? source : {}
         const canonical = { ...incoming }
-        const legacyParticlesPerOctave = Number(incoming.particlesPerOctave)
-        const hasLegacyParticlesPerOctave = Number.isFinite(legacyParticlesPerOctave)
 
         for (const paramDef of PARAMS) {
             const hasSavedValue = Object.prototype.hasOwnProperty.call(incoming, paramDef.key)
-            if (paramDef.key === 'particlesByFrame' && !hasSavedValue && hasLegacyParticlesPerOctave) {
-                const legacy = Math.round(legacyParticlesPerOctave * 10)
-                canonical.particlesByFrame = Math.max(100, Math.min(5000, legacy))
-                continue
-            }
             if (!hasSavedValue || incoming[paramDef.key] === undefined || incoming[paramDef.key] === null) {
                 canonical[paramDef.key] = paramDef.default
                 continue
             }
             canonical[paramDef.key] = _coerceParamValue(paramDef, incoming[paramDef.key])
-        }
-
-        if (!Object.prototype.hasOwnProperty.call(incoming, 'tonicHz') || !Number.isFinite(Number(incoming.tonicHz))) {
-            canonical.tonicHz = 261.63
-        } else {
-            canonical.tonicHz = Number(incoming.tonicHz)
         }
 
         if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
@@ -736,35 +901,70 @@ function _buildCanonicalPresetParams(source) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function listPresets() {
-    try {
-        const r = await fetch(`${API}/api/presets`, { cache: 'no-store' })
-        if (!r.ok) return []
-        return (await r.json()).presets ?? []
-    } catch { return [] }
+    const hiddenRoot = _readHiddenRootPresetNames()
+    const rootNames = [..._getRootPresetMap().keys()].filter((name) => !hiddenRoot.has(name))
+    const userNames = [..._readUserPresetMap().keys()]
+    return [...new Set([...rootNames, ...userNames])].sort((a, b) => a.localeCompare(b))
 }
 
 export async function savePreset(name, paramsObj) {
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return { ok: false, error: 'Preset name is required.' }
     const normalized = _buildCanonicalPresetParams(paramsObj)
-    return fetch(`${API}/api/presets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, params: normalized }),
-    }).then(r => r.json())
+    const userPresets = _readUserPresetMap()
+    userPresets.set(trimmed, { name: trimmed, params: normalized })
+    _writeUserPresetMap(userPresets)
+
+    const hiddenRoot = _readHiddenRootPresetNames()
+    if (hiddenRoot.delete(trimmed)) _writeHiddenRootPresetNames(hiddenRoot)
+
+    return { ok: true, name: trimmed, source: 'localStorage' }
 }
 
 export async function loadPreset(name) {
-    const r = await fetch(`${API}/api/presets/${encodeURIComponent(name)}`, { cache: 'no-store' })
-    if (!r.ok) return null
-    const data = await r.json()
-    if (!data?.params) return data
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return null
+
+    const userPresets = _readUserPresetMap()
+    if (userPresets.has(trimmed)) {
+        const data = userPresets.get(trimmed)
+        return {
+            name: data.name,
+            params: _buildCanonicalPresetParams(data.params),
+        }
+    }
+
+    const hiddenRoot = _readHiddenRootPresetNames()
+    if (hiddenRoot.has(trimmed)) return null
+
+    const rootPresets = _getRootPresetMap()
+    if (!rootPresets.has(trimmed)) return null
+    const data = rootPresets.get(trimmed)
+
     try {
-        return { ...data, params: _buildCanonicalPresetParams(data.params) }
+        return { name: data.name, params: _buildCanonicalPresetParams(data.params) }
     } catch (err) {
         console.warn('[Preset] load normalization failed, applying raw params:', err)
-        return { ...data, params: migrateRuleSchema(data.params) }
+        return { name: data.name, params: migrateRuleSchema(data.params) }
     }
 }
 
 export async function deletePreset(name) {
-    return fetch(`${API}/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(r => r.json())
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return { ok: false, deleted: false }
+
+    const userPresets = _readUserPresetMap()
+    if (userPresets.delete(trimmed)) {
+        _writeUserPresetMap(userPresets)
+        return { ok: true, deleted: true, source: 'localStorage' }
+    }
+
+    if (_getRootPresetMap().has(trimmed)) {
+        const hiddenRoot = _readHiddenRootPresetNames()
+        hiddenRoot.add(trimmed)
+        _writeHiddenRootPresetNames(hiddenRoot)
+        return { ok: true, deleted: true, source: 'hidden-root' }
+    }
+
+    return { ok: false, deleted: false }
 }

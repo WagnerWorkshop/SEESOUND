@@ -1,46 +1,26 @@
-const API = 'http://localhost:8000'
-
-const WAV_MIME = 'audio/wav'
-const NEEDS_CONVERSION_EXT = new Set(['m4a', 'aac', 'flac', 'alac', 'aiff'])
-
-function _extOf(fileName) {
-    const dot = String(fileName || '').lastIndexOf('.')
-    if (dot < 0) return ''
-    return fileName.slice(dot + 1).toLowerCase()
+function _audioCtxCtor() {
+    return window.AudioContext || window.webkitAudioContext
 }
 
-function _swapExt(fileName, nextExt) {
-    const name = String(fileName || 'audio').replace(/[\\/:*?"<>|]+/g, '_')
-    const dot = name.lastIndexOf('.')
-    if (dot < 0) return `${name}.${nextExt}`
-    return `${name.slice(0, dot)}.${nextExt}`
-}
+export async function decodeAudioFileInBrowser(file) {
+    // Validate decode in-browser and return the original file.
+    if (!file) throw new Error('No file provided for decoding.')
+    const Ctx = _audioCtxCtor()
+    if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
 
-export function shouldConvertAudioFile(file) {
-    const ext = _extOf(file?.name)
-    if (!ext) return false
-    return NEEDS_CONVERSION_EXT.has(ext)
-}
-
-export async function convertAudioFileToWav(file) {
-    const form = new FormData()
-    form.append('file', file)
-
-    const res = await fetch(`${API}/api/audio/convert`, {
-        method: 'POST',
-        body: form,
-    })
-
-    if (!res.ok) {
-        const detail = await res.text().catch(() => '')
-        throw new Error(detail || `Audio conversion failed (${res.status}).`)
+    const ctx = new Ctx()
+    try {
+        const srcBuffer = await file.arrayBuffer()
+        const decoded = await ctx.decodeAudioData(srcBuffer.slice(0))
+        if (!decoded || !Number.isFinite(decoded.duration) || decoded.duration <= 0) {
+            throw new Error('Audio decode produced no playable data.')
+        }
+        return file
+    } finally {
+        try {
+            await ctx.close()
+        } catch {
+            // No-op; some browsers throw when closing already-closed contexts.
+        }
     }
-
-    const blob = await res.blob()
-    if (!blob || blob.size === 0) {
-        throw new Error('Converted audio is empty.')
-    }
-
-    const outName = _swapExt(file?.name || 'audio', 'wav')
-    return new File([blob], outName, { type: WAV_MIME })
 }

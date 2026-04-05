@@ -23,9 +23,6 @@
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
 
-// Phase checklist workflow anchor:
-// Keep Three.js Points path intact while rule-engine features are layered in by phase.
-
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
 const FREQ_MAX_HZ = 20000
@@ -33,12 +30,6 @@ const LOG_FREQ_MIN = Math.log2(FREQ_MIN_HZ)
 const LOG_FREQ_MAX = Math.log2(FREQ_MAX_HZ)
 const MIN_PARTICLES_BY_FRAME = 100
 const MAX_PARTICLES_BY_FRAME = 5000
-
-/* TODO_RESUME (Phase 5):
- * - Apply spawnedOnly rules only at writeParticle spawn time.
- * - Add optional allLivingFrame pass over active particles with throttle knobs.
- * - Keep defaultParticleSize spawn-only semantics for historical particles.
- */
 
 /** Normalise any Hz value to [0, 1] on a log₂ axis (16 Hz → 0, 20 kHz → 1) */
 function freqToLogNorm(hz) {
@@ -185,9 +176,12 @@ export class ParticleSystem {
         this._N = Math.max(1, Math.floor(opts.maxParticles ?? 1024))
         this._visibleCount = 0
         this._paintCount = 0
+        this._lineVisibleCount = 0
 
         const geo = new THREE.BufferGeometry()
+        const lineGeo = new THREE.BufferGeometry()
         this._geo = geo
+        this._lineGeo = lineGeo
         this._allocateBuffers(this._N)
 
         const mat = new THREE.ShaderMaterial({
@@ -203,11 +197,31 @@ export class ParticleSystem {
 
         this._mesh = new THREE.Points(geo, mat)
         this._mesh.frustumCulled = false
+        const lineMat = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        })
+        this._lineMesh = new THREE.LineSegments(lineGeo, lineMat)
+        this._lineMesh.frustumCulled = false
         scene.add(this._mesh)
+        scene.add(this._lineMesh)
         this._mat = mat
+        this._lineMat = lineMat
         this._lastBlending = mat.blending
         this._background = new THREE.Color(0, 0, 0)
-        this._cameraOutput = { x: null, y: null, z: null, zoom: null }
+        this._cameraOutput = {
+            x: null,
+            y: null,
+            z: null,
+            zoom: null,
+            targetX: null,
+            targetY: null,
+            targetZ: null,
+            angleOfView: null,
+        }
         this._compiledRules = compileRules([])
         this._ruleCompileState = this._compiledRules
         this._frameCounter = 0
@@ -227,14 +241,20 @@ export class ParticleSystem {
         this._shape = new Float32Array(this._N)
         this._pan = new Float32Array(this._N)
         this._binRms = new Float32Array(this._N)
+        this._linePos = new Float32Array(this._N * 2 * 3)
+        this._lineCol = new Float32Array(this._N * 2 * 3)
+        this._lineThickness = new Float32Array(this._N)
+        this._lineAlpha = new Float32Array(this._N)
 
         this._aPos = new THREE.BufferAttribute(this._pos, 3)
         this._aCol = new THREE.BufferAttribute(this._col, 3)
         this._aSz = new THREE.BufferAttribute(this._sz, 1)
         this._aAlpha = new THREE.BufferAttribute(this._alpha, 1)
         this._aShape = new THREE.BufferAttribute(this._shape, 1)
+        this._aLinePos = new THREE.BufferAttribute(this._linePos, 3)
+        this._aLineCol = new THREE.BufferAttribute(this._lineCol, 3)
 
-        for (const a of [this._aPos, this._aCol, this._aSz, this._aAlpha, this._aShape]) a.setUsage(THREE.DynamicDrawUsage)
+        for (const a of [this._aPos, this._aCol, this._aSz, this._aAlpha, this._aShape, this._aLinePos, this._aLineCol]) a.setUsage(THREE.DynamicDrawUsage)
 
         this._geo.setAttribute('position', this._aPos)
         this._geo.setAttribute('color', this._aCol)
@@ -242,6 +262,8 @@ export class ParticleSystem {
         this._geo.setAttribute('psize', this._aSz)
         this._geo.setAttribute('valpha', this._aAlpha)
         this._geo.setAttribute('shapeType', this._aShape)
+        this._lineGeo.setAttribute('position', this._aLinePos)
+        this._lineGeo.setAttribute('color', this._aLineCol)
         this.clear()
     }
 
@@ -357,11 +379,15 @@ export class ParticleSystem {
         this._paintCount = cursor
         this._visibleCount = cursor
         this._geo.setDrawRange(0, cursor)
+        this._lineVisibleCount = 0
+        this._lineGeo.setDrawRange(0, 0)
         this._aPos.needsUpdate = true
         this._aCol.needsUpdate = true
         this._aSz.needsUpdate = true
         this._aAlpha.needsUpdate = true
         this._aShape.needsUpdate = true
+        this._aLinePos.needsUpdate = true
+        this._aLineCol.needsUpdate = true
 
         return { rehydrated: cursor, mode }
     }
@@ -383,14 +409,18 @@ export class ParticleSystem {
     clear() {
         this._paintCount = 0
         this._visibleCount = 0
+        this._lineVisibleCount = 0
         this._archiveChunks = []
         this._archivePointCount = 0
         this._geo.setDrawRange(0, 0)
+        this._lineGeo.setDrawRange(0, 0)
         this._aPos.needsUpdate = true
         this._aCol.needsUpdate = true
         this._aSz.needsUpdate = true
         this._aAlpha.needsUpdate = true
         this._aShape.needsUpdate = true
+        this._aLinePos.needsUpdate = true
+        this._aLineCol.needsUpdate = true
     }
 
     clearCanvas() {
@@ -468,13 +498,9 @@ export class ParticleSystem {
             spectralSkewness: Number.isFinite(extra.spectralSkewness) ? Number(extra.spectralSkewness) : (ae.spectralSkewness ?? 0),
             chromagram: Number.isFinite(extra.chromagram) ? Number(extra.chromagram) : (ae.chromagram ?? 0),
             binMagnitude: Number.isFinite(extra.binMagnitude) ? clamp01(extra.binMagnitude) : 0,
-            binFreq: Number.isFinite(extra.binFreq) ? Number(extra.binFreq) : (Number(extra.frequencyHz) || 0),
             binPhase: Number.isFinite(extra.binPhase) ? clamp01(extra.binPhase) : 0,
             binFlux: Number.isFinite(extra.binFlux) ? Number(extra.binFlux) : 0,
             binPhaseDeviation: Number.isFinite(extra.binPhaseDeviation) ? clamp01(extra.binPhaseDeviation) : 0,
-            binPhasedeviation: Number.isFinite(extra.binPhasedeviation)
-                ? clamp01(extra.binPhasedeviation)
-                : (Number.isFinite(extra.binPhaseDeviation) ? clamp01(extra.binPhaseDeviation) : 0),
             binAttackTime: Number.isFinite(extra.binAttackTime) ? clamp01(extra.binAttackTime) : 0,
             binEnvelope: Number.isFinite(extra.binEnvelope)
                 ? Number(extra.binEnvelope)
@@ -487,12 +513,7 @@ export class ParticleSystem {
                 : (Number.isFinite(extra.globalRmsEnergy) ? clamp01(extra.globalRmsEnergy) : 0),
             canvasWidthPx: Number(extra.canvasWidthPx) || 0,
             canvasHeightPx: Number(extra.canvasHeightPx) || 0,
-            canvasWidthUnits: Number(extra.canvasWidthUnits) || 0,
-            canvasHeightUnits: Number(extra.canvasHeightUnits) || 0,
             audioLengthSec: Number(extra.audioLengthSec) || 0,
-            binEnergy: Number.isFinite(extra.binEnergy)
-                ? clamp01(Number(extra.binEnergy))
-                : (Number.isFinite(extra.binMagnitude) ? clamp01(Number(extra.binMagnitude)) : 0),
             frequencyHz,
             notePitchClass,
             octave,
@@ -555,11 +576,6 @@ export class ParticleSystem {
                 green: this._col[i * 3 + 1],
                 blue: this._col[i * 3 + 2],
                 opacity: this._alpha[i],
-                // Legacy aliases for older rule payloads.
-                r: this._col[i * 3],
-                g: this._col[i * 3 + 1],
-                b: this._col[i * 3 + 2],
-                a: this._alpha[i],
                 shapeType: this._shape[i] > 0.5 ? 'circle' : 'square',
             }
 
@@ -569,13 +585,9 @@ export class ParticleSystem {
             this._pos[i * 3 + 1] = Number.isFinite(particle.y) ? particle.y : this._pos[i * 3 + 1]
             this._pos[i * 3 + 2] = Number.isFinite(particle.z) ? particle.z : this._pos[i * 3 + 2]
             this._sz[i] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : this._sz[i]
-            const pr = Number.isFinite(particle.red) ? particle.red : particle.r
-            const pg = Number.isFinite(particle.green) ? particle.green : particle.g
-            const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
-            const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
-            let nextR = Number.isFinite(pr) ? clamp01(pr) : this._col[i * 3]
-            let nextG = Number.isFinite(pg) ? clamp01(pg) : this._col[i * 3 + 1]
-            let nextB = Number.isFinite(pb) ? clamp01(pb) : this._col[i * 3 + 2]
+            let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : this._col[i * 3]
+            let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : this._col[i * 3 + 1]
+            let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : this._col[i * 3 + 2]
             if (this._compiledRules.usesParticleHsb) {
                 const baseHsv = rgbToHsv(nextR, nextG, nextB)
                 const hh = normalizeHue(particle.hue)
@@ -589,7 +601,7 @@ export class ParticleSystem {
             this._col[i * 3] = nextR
             this._col[i * 3 + 1] = nextG
             this._col[i * 3 + 2] = nextB
-            this._alpha[i] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : this._alpha[i]
+            this._alpha[i] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : this._alpha[i]
             this._shape[i] = shapeToValue(particle.shapeType)
             this._binRms[i] = Number.isFinite(loopInputs.binRMSEnergy) ? clamp01(loopInputs.binRMSEnergy) : this._binRms[i]
             touched++
@@ -607,9 +619,6 @@ export class ParticleSystem {
             hue: hsv.h,
             saturation: hsv.s,
             brightness: hsv.v,
-            backgroundRed: bg.r,
-            backgroundGreen: bg.g,
-            backgroundBlue: bg.b,
         }
         this._compiledRules.applyBackgroundRules(ctx, state)
 
@@ -629,12 +638,20 @@ export class ParticleSystem {
         bg.setRGB(outR, outG, outB)
     }
 
+    applyLineRules(ctx, lineState) {
+        this._compiledRules.applyLineRules(ctx, lineState)
+    }
+
     applyCameraRules(ctx, currentCamera) {
         const state = {
             x: currentCamera?.x ?? 0,
             y: currentCamera?.y ?? 0,
             z: currentCamera?.z ?? 0,
             zoom: currentCamera?.zoom ?? 1,
+            targetX: currentCamera?.targetX ?? 0,
+            targetY: currentCamera?.targetY ?? 0,
+            targetZ: currentCamera?.targetZ ?? 0,
+            angleOfView: currentCamera?.angleOfView ?? 55,
         }
         this._compiledRules.applyCameraRules(ctx, state)
         this._cameraOutput = {
@@ -642,6 +659,10 @@ export class ParticleSystem {
             y: Number.isFinite(state.y) ? state.y : null,
             z: Number.isFinite(state.z) ? state.z : null,
             zoom: Number.isFinite(state.zoom) ? state.zoom : null,
+            targetX: Number.isFinite(state.targetX) ? state.targetX : null,
+            targetY: Number.isFinite(state.targetY) ? state.targetY : null,
+            targetZ: Number.isFinite(state.targetZ) ? state.targetZ : null,
+            angleOfView: Number.isFinite(state.angleOfView) ? state.angleOfView : null,
         }
     }
 
@@ -670,8 +691,6 @@ export class ParticleSystem {
 
         const persistMode = params.persistMode ?? 0 // 0 = Momentary, 1 = Painting
         const gainMult = params.inputGain ?? 1
-        const thresholdDb = params.amplitudeThreshold ?? -48
-        const thresholdByte = Math.max(0, Math.min(255, Math.round(Math.pow(10, thresholdDb / 20) * 255)))
         const baseSize = params.defaultParticleSize ?? 6
         const freqNormMinHz = Math.max(FREQ_MIN_HZ, Math.min(FREQ_MAX_HZ, Number(params.freqNormMin ?? 40)))
         const freqNormMaxHz = Math.max(freqNormMinHz + 1, Math.min(FREQ_MAX_HZ, Number(params.freqNormMax ?? 12000)))
@@ -693,11 +712,6 @@ export class ParticleSystem {
         const globalSpectralFluxNormMax = Number(params.globalSpectralFluxNormMax ?? 100)
         const spectralFlatnessNormMin = Number(params.spectralFlatnessNormMin ?? 0)
         const spectralFlatnessNormMax = Number(params.spectralFlatnessNormMax ?? 1)
-        const renderPctRaw = Number(params.particleRenderPercent)
-        const renderPct = Number.isFinite(renderPctRaw) ? Math.max(1, Math.min(100, Math.floor(renderPctRaw))) : 100
-        const fftSizeRaw = Number(params.fftSize)
-        const fftSize = Number.isFinite(fftSizeRaw) ? Math.max(1024, Math.min(16384, fftSizeRaw)) : 2048
-        const fftDetailScale = normalizeByRange(fftSize, 1024, 16384)
         const particlesByFrameRaw = Number(params.particlesByFrame)
         const particlesByFrame = Number.isFinite(particlesByFrameRaw)
             ? Math.max(MIN_PARTICLES_BY_FRAME, Math.min(MAX_PARTICLES_BY_FRAME, Math.round(particlesByFrameRaw)))
@@ -716,24 +730,13 @@ export class ParticleSystem {
         const binPhaseArr = ae.getBinPhase?.() || null
         const binEnvArr = ae.getBinEnvelope?.() || null
         const binAttackTimeArr = ae.getBinAttackTime?.() || null
-        const requiredSpawnInputs = new Set(this._compiledRules?.requiredInputsByTarget?.spawnedParticles || [])
         const requiredInputs = new Set(this._compiledRules?.requiredInputs || [])
-        const needBinMagnitude = requiredInputs.has('binMagnitude') || requiredInputs.has('binEnergy')
-        const needBinFreq = requiredInputs.has('binFreq')
+        const needBinMagnitude = requiredInputs.has('binMagnitude')
         const needBinPhase = requiredInputs.has('binPhase')
         const needBinFlux = requiredInputs.has('binFlux')
-        const needBinPhaseDev = requiredInputs.has('binPhaseDeviation') || requiredInputs.has('binPhasedeviation')
+        const needBinPhaseDev = requiredInputs.has('binPhaseDeviation')
         const needBinAttackTime = requiredInputs.has('binAttackTime')
         const needBinEnvelope = requiredInputs.has('binEnvelope') || requiredInputs.has('binEnvelopeState')
-        const shouldRenderBucket = (bucketIndex, bucketCount) => {
-            const baseKeepPct = renderPct
-            if ((((bucketIndex * baseKeepPct) % 100) >= baseKeepPct)) return false
-            // With larger FFT sizes, progressively thin the highest frequencies.
-            const t = bucketCount > 1 ? (bucketIndex / (bucketCount - 1)) : 0
-            const highFreqDrop = fftDetailScale * Math.pow(t, 1.35) * 0.75
-            const keepPct = Math.max(5, Math.min(100, baseKeepPct * (1 - highFreqDrop)))
-            return (((bucketIndex * 97) % 100) < keepPct)
-        }
 
         // Adjust Three.js blending mode
         if (blendStr === 'alpha') {
@@ -778,6 +781,15 @@ export class ParticleSystem {
             }
         }
 
+        if (this._lineMat.blending !== this._mat.blending) {
+            this._lineMat.blending = this._mat.blending
+            this._lineMat.needsUpdate = true
+        }
+        if (this._lineMat.depthWrite) {
+            this._lineMat.depthWrite = false
+            this._lineMat.needsUpdate = true
+        }
+
         const canvasWidthUnitsRaw = Number(params.cameraCanvasWidthUnits)
         const canvasHeightUnitsRaw = Number(params.cameraCanvasHeightUnits)
         const canvasUnitsW = Number.isFinite(canvasWidthUnitsRaw) && canvasWidthUnitsRaw > 0 ? canvasWidthUnitsRaw : canvasW
@@ -794,11 +806,9 @@ export class ParticleSystem {
         const audioLengthSec = ae.audioEl?.duration ?? 0
         const frameBinInputs = {
             binMagnitude: 0,
-            binFreq: 0,
             binPhase: 0,
             binFlux: 0,
             binPhaseDeviation: 0,
-            binPhasedeviation: 0,
             binAttackTime: 0,
             binEnvelope: 0,
             binEnvelopeState: 0,
@@ -829,9 +839,7 @@ export class ParticleSystem {
         if (needBinPhaseDev && binPhaseDevArr && binPhaseDevArr.length > 0) {
             let sum = 0
             for (let i = 0; i < binPhaseDevArr.length; i++) sum += normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
-            const avgPhaseDev = sum / binPhaseDevArr.length
-            frameBinInputs.binPhaseDeviation = avgPhaseDev
-            frameBinInputs.binPhasedeviation = avgPhaseDev
+            frameBinInputs.binPhaseDeviation = sum / binPhaseDevArr.length
         }
         if (needBinAttackTime && binAttackTimeArr && binAttackTimeArr.length > 0) {
             let sum = 0
@@ -844,17 +852,13 @@ export class ParticleSystem {
             frameBinInputs.binEnvelope = sum / binEnvArr.length
             frameBinInputs.binEnvelopeState = frameBinInputs.binEnvelope
         }
-        if (needBinFreq) frameBinInputs.binFreq = ae.peakFreq ?? 0
         if (needBinPhase && binPhaseArr && binPhaseArr.length > 0) {
             let sum = 0
             for (let i = 0; i < binPhaseArr.length; i++) sum += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
             frameBinInputs.binPhase = sum / binPhaseArr.length
         }
-        let peakByte = 0
-        for (let i = 0; i < N; i++) if (freqData[i] > peakByte) peakByte = freqData[i]
-        const adaptiveCap = Math.max(1, Math.round(peakByte * 0.55))
-        const effectiveThresholdByte = Math.min(thresholdByte, adaptiveCap)
         let writeIndex = persistMode === 1 ? this._paintCount : 0
+        let lineWriteIndex = persistMode === 1 ? this._lineVisibleCount : 0
 
         const writeParticle = (bucket, alphaBoost = 1) => {
             if (writeIndex >= this._N && persistMode === 1) {
@@ -870,7 +874,6 @@ export class ParticleSystem {
             const byte = Number.isFinite(bucket.byte) ? bucket.byte : 0
             const energy = Number.isFinite(bucket.energy) ? bucket.energy : 0
             const binMagnitude = Number.isFinite(bucket.binMagnitude) ? bucket.binMagnitude : undefined
-            const binFreq = needBinFreq ? hz : undefined
             const binPhaseMetric = Number.isFinite(bucket.binPhase) ? bucket.binPhase : undefined
             const binFluxMetric = Number.isFinite(bucket.binFlux) ? bucket.binFlux : undefined
             const binPhaseDevMetric = Number.isFinite(bucket.binPhaseDeviation) ? bucket.binPhaseDeviation : undefined
@@ -893,11 +896,6 @@ export class ParticleSystem {
                 green: brightness,
                 blue: brightness,
                 opacity: Math.min(1, (0.08 + energy * 1.9) * alphaBoost),
-                // Legacy aliases for older rule payloads.
-                r: brightness,
-                g: brightness,
-                b: brightness,
-                a: Math.min(1, (0.08 + energy * 1.9) * alphaBoost),
                 particleCount: 1,
                 shapeType: 'square',
             }
@@ -906,7 +904,6 @@ export class ParticleSystem {
                 this.applySpawnRulesToParticle({
                     params,
                     inputs: this._buildRuleInputs(ae, {
-                        binEnergy: energy,
                         frequencyHz: hz,
                         normFreq: freqNorm,
                         pan: binPan,
@@ -923,7 +920,6 @@ export class ParticleSystem {
                         spectralSkewness: frameBinInputs.spectralSkewness,
                         chromagram: frameBinInputs.chromagram,
                         binMagnitude,
-                        binFreq,
                         binPhase: binPhaseMetric,
                         binFlux: binFluxMetric,
                         binPhaseDeviation: binPhaseDevMetric,
@@ -937,8 +933,6 @@ export class ParticleSystem {
                         deltaTime,
                         canvasWidthPx: canvasW,
                         canvasHeightPx: canvasH,
-                        canvasWidthUnits: canvasUnitsW,
-                        canvasHeightUnits: canvasUnitsH,
                         audioLengthSec,
                     }),
                     particle,
@@ -955,13 +949,9 @@ export class ParticleSystem {
             this._pos[writeIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
             this._pos[writeIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
             this._sz[writeIndex] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(2.0, baseSize)
-            const pr = Number.isFinite(particle.red) ? particle.red : particle.r
-            const pg = Number.isFinite(particle.green) ? particle.green : particle.g
-            const pb = Number.isFinite(particle.blue) ? particle.blue : particle.b
-            const pa = Number.isFinite(particle.opacity) ? particle.opacity : particle.a
-            let nextR = Number.isFinite(pr) ? clamp01(pr) : brightness
-            let nextG = Number.isFinite(pg) ? clamp01(pg) : brightness
-            let nextB = Number.isFinite(pb) ? clamp01(pb) : brightness
+            let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
+            let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
+            let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : brightness
             if (this._compiledRules.usesParticleHsb) {
                 const baseHsv = rgbToHsv(nextR, nextG, nextB)
                 const hh = normalizeHue(particle.hue)
@@ -975,11 +965,125 @@ export class ParticleSystem {
             this._col[writeIndex * 3] = nextR
             this._col[writeIndex * 3 + 1] = nextG
             this._col[writeIndex * 3 + 2] = nextB
-            this._alpha[writeIndex] = Number.isFinite(pa) ? Math.max(0, Math.min(1, pa)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
+            this._alpha[writeIndex] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
             this._shape[writeIndex] = shapeToValue(particle.shapeType)
             this._pan[writeIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
             this._binRms[writeIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
             writeIndex++
+        }
+
+        const writeLine = (bucket, alphaBoost = 1) => {
+            if (lineWriteIndex >= this._N) return
+            const hz = bucket.hz
+            const rawNorm = freqToLogNorm(hz)
+            const freqNorm = normalizeByRange(rawNorm, logNormMin, logNormMax)
+            const binPan = Number.isFinite(bucket.binPan) ? bucket.binPan : (ae.pan ?? 0)
+            const energy = Number.isFinite(bucket.energy) ? bucket.energy : 0
+            const binMagnitude = Number.isFinite(bucket.binMagnitude) ? bucket.binMagnitude : undefined
+            const binPhaseMetric = Number.isFinite(bucket.binPhase) ? bucket.binPhase : undefined
+            const binFluxMetric = Number.isFinite(bucket.binFlux) ? bucket.binFlux : undefined
+            const binPhaseDevMetric = Number.isFinite(bucket.binPhaseDeviation) ? bucket.binPhaseDeviation : undefined
+            const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
+            const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
+            const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
+
+            const y = (freqNorm * 2 - 1) * hh
+            const x = 0
+            const z = 0
+            const brightness = clamp01(energy)
+
+            const line = {
+                xStart: x,
+                yStart: y,
+                zStart: z,
+                xEnd: x,
+                yEnd: y + Math.max(1, hh * 0.12 * energy),
+                zEnd: z,
+                thickness: 1,
+                lineCount: 0,
+                red: brightness,
+                green: brightness,
+                blue: brightness,
+                opacity: Math.min(1, (0.08 + energy * 1.4) * alphaBoost),
+            }
+
+            if (params.ruleEngineEnabled !== false && this._compiledRules.lineRuleCount > 0) {
+                this.applyLineRules({
+                    params,
+                    inputs: this._buildRuleInputs(ae, {
+                        frequencyHz: hz,
+                        normFreq: freqNorm,
+                        pan: binPan,
+                        spectralCentroid: frameBinInputs.spectralCentroid,
+                        spectralFlux: frameBinInputs.spectralFlux,
+                        spectralFlatness: frameBinInputs.spectralFlatness,
+                        inharmonicity: frameBinInputs.inharmonicity,
+                        peakAmplitude: frameBinInputs.peakAmplitude,
+                        zeroCrossingRate: frameBinInputs.zeroCrossingRate,
+                        spectralRolloff: frameBinInputs.spectralRolloff,
+                        spectralSpread: frameBinInputs.spectralSpread,
+                        spectralSkewness: frameBinInputs.spectralSkewness,
+                        chromagram: frameBinInputs.chromagram,
+                        binMagnitude,
+                        binPhase: binPhaseMetric,
+                        binFlux: binFluxMetric,
+                        binPhaseDeviation: binPhaseDevMetric,
+                        binAttackTime: binAttackTimeMetric,
+                        binEnvelope: binEnvelopeMetric,
+                        binEnvelopeState: binEnvelopeMetric,
+                        binRMSEnergy: binRmsMetric,
+                        globalRmsEnergy: frameBinInputs.globalRmsEnergy,
+                        amplitude: frameBinInputs.amplitude,
+                        time: currentTime,
+                        deltaTime,
+                        canvasWidthPx: canvasW,
+                        canvasHeightPx: canvasH,
+                        audioLengthSec,
+                    }),
+                }, line)
+            }
+
+            const spawnProb = Number.isFinite(line.lineCount) ? clamp01(line.lineCount) : 0
+            if (spawnProb <= 0) return
+            if (spawnProb < 1 && Math.random() > spawnProb) return
+
+            let nextR = Number.isFinite(line.red) ? clamp01(line.red) : brightness
+            let nextG = Number.isFinite(line.green) ? clamp01(line.green) : brightness
+            let nextB = Number.isFinite(line.blue) ? clamp01(line.blue) : brightness
+            if (this._compiledRules.usesLineHsb) {
+                const baseHsv = rgbToHsv(nextR, nextG, nextB)
+                const hhv = normalizeHue(line.hue)
+                const ss = Number.isFinite(line.saturation) ? clamp01(line.saturation) : baseHsv.s
+                const vv = Number.isFinite(line.brightness) ? clamp01(line.brightness) : baseHsv.v
+                const rgb = hsvToRgb(hhv ?? baseHsv.h, ss, vv)
+                nextR = rgb.r
+                nextG = rgb.g
+                nextB = rgb.b
+            }
+
+            const opacity = Number.isFinite(line.opacity) ? Math.max(0, Math.min(1, line.opacity)) : 0.4
+            const outR = nextR * opacity
+            const outG = nextG * opacity
+            const outB = nextB * opacity
+
+            const base = lineWriteIndex * 6
+            this._linePos[base] = Number.isFinite(line.xStart) ? line.xStart : x
+            this._linePos[base + 1] = Number.isFinite(line.yStart) ? line.yStart : y
+            this._linePos[base + 2] = Number.isFinite(line.zStart) ? line.zStart : z
+            this._linePos[base + 3] = Number.isFinite(line.xEnd) ? line.xEnd : x
+            this._linePos[base + 4] = Number.isFinite(line.yEnd) ? line.yEnd : y
+            this._linePos[base + 5] = Number.isFinite(line.zEnd) ? line.zEnd : z
+
+            this._lineCol[base] = outR
+            this._lineCol[base + 1] = outG
+            this._lineCol[base + 2] = outB
+            this._lineCol[base + 3] = outR
+            this._lineCol[base + 4] = outG
+            this._lineCol[base + 5] = outB
+
+            this._lineThickness[lineWriteIndex] = Number.isFinite(line.thickness) ? Math.max(0, line.thickness) : 1
+            this._lineAlpha[lineWriteIndex] = opacity
+            lineWriteIndex++
         }
 
         const fftBinsPerHz = freqData.length / Math.max(1e-6, nyquist)
@@ -990,19 +1094,11 @@ export class ParticleSystem {
             return Math.max(0, Math.min(N - 1, idx))
         }
 
-        const bucketEnergies = new Float32Array(logBucketCount)
-        const bucketBytes = new Uint8Array(logBucketCount)
-        const bucketCenters = new Float32Array(logBucketCount)
-
         let hzStart = freqNormMinHz
         for (let bucketIndex = 0; bucketIndex < logBucketCount; bucketIndex++) {
             const hzEnd = (bucketIndex === logBucketCount - 1)
                 ? freqNormMaxHz
                 : Math.min(freqNormMaxHz, hzStart * stepRatio)
-            if (!shouldRenderBucket(bucketIndex, logBucketCount)) {
-                hzStart = hzEnd
-                continue
-            }
             const hzCenter = Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
 
             const binStart = _hzToBin(hzStart)
@@ -1054,15 +1150,25 @@ export class ParticleSystem {
                 count++
             }
 
-            if (count <= 0 || peakByteBucket <= effectiveThresholdByte) continue
+            if (count <= 0 || peakByteBucket <= 1) continue
 
             const avgRaw = sumRawEnergy / count
             const bucketEnergy = avgRaw * gainMult
-            bucketEnergies[bucketIndex] = bucketEnergy
-            bucketBytes[bucketIndex] = peakByteBucket
-            bucketCenters[bucketIndex] = hzCenter
 
             writeParticle({
+                hz: hzCenter,
+                byte: peakByteBucket,
+                energy: bucketEnergy,
+                binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
+                binRMSEnergy: clamp01(avgRaw),
+                binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
+                binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
+                binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
+                binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
+                binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
+                binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+            })
+            writeLine({
                 hz: hzCenter,
                 byte: peakByteBucket,
                 energy: bucketEnergy,
@@ -1079,41 +1185,19 @@ export class ParticleSystem {
             if (writeIndex >= this._N) break
         }
 
-        // If gating produced nothing but audio exists, draw strongest bins so output
-        // never appears fully blank while playing.
-        if (writeIndex === 0 && peakByte > 0) {
-            const indices = []
-            for (let bucketIndex = 0; bucketIndex < logBucketCount; bucketIndex++) {
-                if (!shouldRenderBucket(bucketIndex, logBucketCount)) continue
-                if (!(bucketCenters[bucketIndex] >= freqNormMinHz && bucketCenters[bucketIndex] <= freqNormMaxHz)) continue
-                if (bucketBytes[bucketIndex] > 0) indices.push(bucketIndex)
-            }
-            indices.sort((a, b) => bucketBytes[b] - bucketBytes[a])
-            const fallbackCount = Math.min(96, indices.length)
-            for (let k = 0; k < fallbackCount && writeIndex < this._N; k++) {
-                const bucketIndex = indices[k]
-                const byte = bucketBytes[bucketIndex]
-                const raw = bucketEnergies[bucketIndex]
-                const energy = Math.max(0.08, raw)
-                writeParticle({
-                    hz: bucketCenters[bucketIndex],
-                    byte,
-                    energy,
-                    binPan: ae.pan ?? 0,
-                    binRMSEnergy: clamp01(raw),
-                }, 0.85)
-            }
-        }
-
         if (persistMode === 1) {
             this._paintCount = writeIndex
             this._visibleCount = this._paintCount
             this._geo.setDrawRange(0, this._paintCount)
+            this._lineVisibleCount = lineWriteIndex
+            this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
             this._pruneArchive(params, currentTime)
         } else {
             this._paintCount = 0
             this._visibleCount = writeIndex
             this._geo.setDrawRange(0, writeIndex)
+            this._lineVisibleCount = lineWriteIndex
+            this._lineGeo.setDrawRange(0, lineWriteIndex * 2)
         }
 
         if (params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visibleCount > 0) {
@@ -1125,8 +1209,6 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasUnitsW,
-                    canvasHeightUnits: canvasUnitsH,
                     audioLengthSec,
                 }),
             }, 0, this._visibleCount)
@@ -1141,8 +1223,6 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasUnitsW,
-                    canvasHeightUnits: canvasUnitsH,
                     audioLengthSec,
                 }),
             })
@@ -1157,29 +1237,44 @@ export class ParticleSystem {
                     deltaTime,
                     canvasWidthPx: canvasW,
                     canvasHeightPx: canvasH,
-                    canvasWidthUnits: canvasUnitsW,
-                    canvasHeightUnits: canvasUnitsH,
                     audioLengthSec,
                 }),
             }, params.cameraState || null)
         } else {
-            this._cameraOutput = { x: null, y: null, z: null, zoom: null }
+            this._cameraOutput = {
+                x: null,
+                y: null,
+                z: null,
+                zoom: null,
+                targetX: null,
+                targetY: null,
+                targetZ: null,
+                angleOfView: null,
+            }
         }
         this._aPos.needsUpdate = true
         this._aCol.needsUpdate = true
         this._aSz.needsUpdate = true
         this._aAlpha.needsUpdate = true
         this._aShape.needsUpdate = true
+        this._aLinePos.needsUpdate = true
+        this._aLineCol.needsUpdate = true
     }
 
     /** Set the Three.js blending mode on the material. */
     setBlendMode(blending) {
         this._mat.blending = blending
         this._mat.needsUpdate = true
+        this._lineMat.blending = blending
+        this._lineMat.needsUpdate = true
     }
 
     getVisibleCount() {
         return this._visibleCount
+    }
+
+    getLineVisibleCount() {
+        return this._lineVisibleCount
     }
 
     /** Rescale all particle positions proportionally when the canvas is resized. */
@@ -1188,11 +1283,21 @@ export class ParticleSystem {
             this._pos[i * 3] *= scaleX
             this._pos[i * 3 + 1] *= scaleY
         }
+        for (let i = 0; i < this._N; i++) {
+            const base = i * 6
+            this._linePos[base] *= scaleX
+            this._linePos[base + 1] *= scaleY
+            this._linePos[base + 3] *= scaleX
+            this._linePos[base + 4] *= scaleY
+        }
         this._aPos.needsUpdate = true
+        this._aLinePos.needsUpdate = true
     }
 
     dispose() {
         this._mesh.geometry.dispose()
         this._mat.dispose()
+        this._lineMesh.geometry.dispose()
+        this._lineMat.dispose()
     }
 }

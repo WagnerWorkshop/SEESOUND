@@ -1,3704 +1,2449 @@
-/**
- * SEESOUND — ControlPanel.js
- * ════════════════════════════════════════════════════════════════════════════
- * Pure vanilla-JS DOM builder for the Global Parameter Matrix UI.
- *
- * Port of the React ParameterPanel.jsx / Slider / ParamGroup components.
- * No framework dependency — attaches directly to the existing #control-panel
- * element in index.html.
- *
- * Features (matching the old React UI exactly)
- * ─────────────────────────────────────────────
- *  • Collapsible sidebar (« / » button)
- *  • ⓘ info tooltip per parameter (Escape / click-away to close)
- *  • ● / ○ bypass toggle per bypassable parameter
- *  • Continuous sliders with:
- *      – Filled gradient track (accent colour → border)
- *      – Editable live-value number input
- *      – Editable default number input (★ to save)
- *  • Dropdown selects (grouped or flat)
- *  • Segmented toggle buttons
- *  • Preset bar: load from server, save to server, delete, overwrite confirm
- *  • 12-note colour palette swatches (click to open a <input type=color>)
- *
- * All changes call ParamStore.set() immediately — the render loop in main.js
- * picks up the new value on the very next animation frame.
- *
- * Usage
- * ──────
- *   import { initControlPanel } from './engine/ControlPanel.js'
- *   initControlPanel(document.getElementById('control-panel'))
- */
-
 import {
-    PARAMS, PARAM_GROUPS,
-    params, disabled,
-    set, setMany, resetToDefaults, subscribe,
-    saveUserDefault, toggleDisabled, getSnapshot,
-    listPresets, savePreset, loadPreset, deletePreset,
+    params,
+    set,
+    setMany,
+    subscribe,
+    resetToDefaults,
+    getSnapshot,
+    listPresets,
+    loadPreset,
+    savePreset,
+    deletePreset,
 } from './ParamStore.js'
 import {
-    getInputDictionary,
-    getOutputDictionary,
-    RULE_TARGETS,
-    RULE_ACTION_OPERATORS,
-    annotateRuleContradictions,
-} from './rules/RuleDictionary.js'
-import {
-    SEMANTIC_AUDIO_TRIGGERS,
-    SEMANTIC_VISUAL_ELEMENTS,
-    SEMANTIC_ACTIONS,
-    buildSemanticSentenceRuleRow,
-    inferSemanticSentenceFromRuleBlock,
-    generateProCodeFromRuleBlock,
-} from './rules/SemanticMapper.js'
-import { openColorDesignEditor } from './ColorDesignEditor.js'
-import { parseProjectText } from './project/ProjectIO.js'
-
-// Phase checklist workflow anchor:
-// Extend UI incrementally (dictionary -> schema -> compiler status -> builder) and verify each cluster.
-
-/* TODO_RESUME (Phase 8):
- * - Add Rule Builder section with add/remove/reorder rows.
- * - Add row controls for scope, condition, actions, strength, and invert.
- * - Surface compile badge/error mapping from compiler state.
- */
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 1  HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function el(tag, className, attrs = {}) {
-    const e = document.createElement(tag)
-    if (className) e.className = className
-    for (const [k, v] of Object.entries(attrs)) {
-        if (k === 'text') e.textContent = v
-        else if (k === 'html') e.innerHTML = v
-        else if (k === 'title') e.title = v
-        else e.setAttribute(k, v)
-    }
-    return e
-}
-
-function fmt(p, v) {
-    if (p.isDropdown || p.isToggle) return String(v)
-    return Number.isInteger(p.step) ? String(v) : Number(v).toFixed(2)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 2  INFO TOOLTIP
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _activeTooltip = null
-
-function buildInfoBtn(p) {
-    const btn = el('button', 'cp-info-btn', { text: 'ⓘ', 'aria-label': `Info: ${p.label}` })
-
-    // Range / options string
-    let rangeStr
-    if (p.isDropdown) {
-        rangeStr = p.dropdownGroups
-            ? p.dropdownGroups.flatMap(g => g.options.map(o => o.label)).join(', ')
-            : (p.dropdownOptions ?? []).map(o => o.label).join(', ')
-    } else if (p.isToggle) {
-        rangeStr = (p.toggleLabels ?? ['Off', 'On']).join(' / ')
-    } else {
-        rangeStr = `${p.min}–${p.max}${p.unit ? ' ' + p.unit : ''}`
-    }
-
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation()
-        // Close any open tooltip
-        if (_activeTooltip) { _activeTooltip.remove(); _activeTooltip = null }
-        if (btn.classList.contains('active')) { btn.classList.remove('active'); return }
-
-        const popup = el('div', 'cp-info-popup')
-        popup.innerHTML = `
-      <div class="cp-info-title">${p.label}</div>
-      <div class="cp-info-desc">${p.desc}</div>
-      <div class="cp-info-meta">
-        ${p.isToggle ? 'Options' : 'Range'}: ${rangeStr}
-        ${!p.isToggle && p.neutralValue !== undefined ? ` · Neutral: ${p.neutralValue}` : ''}
-        ${!p.isToggle ? ` · Default: ${p.default}${p.unit ? ' ' + p.unit : ''}` : ''}
-      </div>`
-
-        const rect = btn.getBoundingClientRect()
-        popup.style.top = `${rect.bottom + 6}px`
-        popup.style.left = `${Math.min(rect.left, window.innerWidth - 280)}px`
-        document.body.appendChild(popup)
-
-        btn.classList.add('active')
-        _activeTooltip = popup
-
-        popup.addEventListener('click', e => e.stopPropagation())
-
-        requestAnimationFrame(() => {
-            const close = () => {
-                popup.remove()
-                btn.classList.remove('active')
-                _activeTooltip = null
-                document.removeEventListener('click', close)
-                document.removeEventListener('keydown', onKey)
-            }
-            const onKey = (e) => { if (e.key === 'Escape') close() }
-            document.addEventListener('click', close)
-            document.addEventListener('keydown', onKey)
-        })
-    })
-    return btn
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 3  BYPASS BUTTON
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildBypassBtn(p, row) {
-    const btn = el('button', 'cp-bypass-btn')
-    const update = () => {
-        const off = disabled.has(p.key)
-        btn.textContent = off ? '○' : '●'
-        btn.title = off ? `${p.label} is bypassed — click to enable` : `Click to bypass ${p.label}`
-        row.classList.toggle('cp-row-disabled', off)
-    }
-    update()
-    btn.addEventListener('click', () => { toggleDisabled(p.key); update(); syncRow(p, row) })
-    return btn
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 4  SLIDER ROW BUILDERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Map of key → syncRow function so the panel can be refreshed externally. */
-const _rowSyncMap = new Map()
-
-function syncRow(p, row) {
-    _rowSyncMap.get(p.key)?.(params[p.key])
-}
-// ── 4a  Standard slider (range input + value + default fields) ────────────
-
-function buildSliderRow(p) {
-    const row = el('div', 'cp-row')
-    row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-
-    if (p.canDisable) row.appendChild(buildBypassBtn(p, row))
-
-    const lbl = el('label', 'cp-label', { text: p.label, title: p.desc })
-    lbl.setAttribute('for', `cp-${p.key}`)
-    row.appendChild(lbl)
-
-    const wrap = el('div', 'cp-slider-wrap')
-
-    // Range input
-    const slider = el('input', 'cp-slider', {
-        id: `cp-${p.key}`, type: 'range',
-        min: p.min, max: p.max, step: p.step, value: params[p.key],
-    })
-
-    // Value display input (editable, no min/max clamp — allows typed out-of-range)
-    const valInput = el('input', 'cp-val-input', {
-        type: 'number', step: p.step, value: fmt(p, params[p.key]),
-        title: `Current value${p.unit ? ' (' + p.unit + ')' : ''}`,
-    })
-
-    const saveStar = el('button', 'cp-star-btn', { text: '★', title: 'Save current value as default' })
-    let previousValue = Number(params[p.key])
-    slider.addEventListener('input', () => {
-        const v = parseFloat(slider.value)
-        set(p.key, v)
-        valInput.value = fmt(p, v)
-        updateTrack(v)
-    })
-
-    valInput.addEventListener('change', () => {
-        const v = parseFloat(valInput.value)
-        if (!isNaN(v)) {
-            set(p.key, v)
-            slider.value = String(Math.min(p.max, Math.max(p.min, v)))
-            updateTrack(v)
-        }
-    })
-    valInput.addEventListener('keydown', e => { if (e.key === 'Escape') valInput.value = fmt(p, params[p.key]) })
-
-    saveStar.addEventListener('click', () => {
-        saveUserDefault(p.key, params[p.key])
-    })
-
-    let applyAllBtn = null
-    if (p.key === 'defaultParticleSize') {
-        applyAllBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply All', title: 'Scale all current particles by new/old default size' })
-        applyAllBtn.addEventListener('click', () => {
-            const nextValue = Number(params[p.key])
-            const oldValue = Number(previousValue)
-            if (!Number.isFinite(nextValue) || !Number.isFinite(oldValue) || oldValue <= 0 || nextValue <= 0) return
-            window.dispatchEvent(new CustomEvent('seesound:particle-size-apply-all', {
-                detail: {
-                    oldDefaultSize: oldValue,
-                    newDefaultSize: nextValue,
-                },
-            }))
-            previousValue = nextValue
-        })
-    }
-
-    // Expose sync for external preset load
-    _rowSyncMap.set(p.key, (v) => {
-        slider.value = String(Math.min(p.max, Math.max(p.min, v)))
-        valInput.value = fmt(p, v)
-        updateTrack(v)
-        previousValue = Number(v)
-        row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-    })
-
-    wrap.append(slider, valInput, saveStar, ...(applyAllBtn ? [applyAllBtn] : []), buildInfoBtn(p))
-    row.appendChild(wrap)
-    return row
-}
-
-// ── 4b  Dropdown row ──────────────────────────────────────────────────────
-
-function buildDropdownRow(p) {
-    const row = el('div', 'cp-row cp-toggle-row')
-    row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-
-    if (p.canDisable) row.appendChild(buildBypassBtn(p, row))
-
-    const lbl = el('label', 'cp-label', { text: p.label })
-    lbl.setAttribute('for', `cp-${p.key}`)
-    row.appendChild(lbl)
-
-    const sel = el('select', 'cp-dropdown', { id: `cp-${p.key}` })
-
-    if (p.dropdownGroups) {
-        for (const g of p.dropdownGroups) {
-            const grp = el('optgroup', '', { label: g.label })
-            for (const o of g.options) {
-                const opt = el('option', '', { value: o.value, text: o.label })
-                if (String(o.value) === String(params[p.key])) opt.selected = true
-                grp.appendChild(opt)
-            }
-            sel.appendChild(grp)
-        }
-    } else {
-        for (const o of (p.dropdownOptions ?? [])) {
-            const opt = el('option', '', { value: o.value, text: o.label })
-            if (String(o.value) === String(params[p.key])) opt.selected = true
-            sel.appendChild(opt)
-        }
-    }
-
-    sel.addEventListener('change', () => {
-        const raw = sel.value
-        const n = Number(raw)
-        set(p.key, raw !== '' && !isNaN(n) ? n : raw)
-    })
-
-    const star = el('button', 'cp-star-btn', { text: '★', title: 'Save as default' })
-    star.addEventListener('click', () => saveUserDefault(p.key, params[p.key]))
-
-    _rowSyncMap.set(p.key, (v) => {
-        sel.value = String(v)
-        row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-    })
-
-    row.append(sel, star, buildInfoBtn(p))
-    return row
-}
-
-// ── 4c  Toggle (segmented buttons) row ───────────────────────────────────
-
-function buildToggleRow(p) {
-    const row = el('div', 'cp-row cp-toggle-row')
-    row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-
-    if (p.canDisable) row.appendChild(buildBypassBtn(p, row))
-
-    const lbl = el('label', 'cp-label', { text: p.label, title: p.desc })
-    row.appendChild(lbl)
-
-    const labels = p.toggleLabels ?? ['Off', 'On']
-    const segGroup = el('div', 'cp-seg-group')
-
-    const currentValue = Number(params[p.key])
-    const btns = labels.map((txt, idx) => {
-        const b = el('button', 'cp-seg-btn', { text: txt })
-        if (currentValue === idx) b.classList.add('active')
-        b.addEventListener('click', () => {
-            if (disabled.has(p.key)) return
-            set(p.key, idx)
-            btns.forEach((bb, i) => bb.classList.toggle('active', i === idx))
-        })
-        return b
-    })
-    segGroup.append(...btns)
-
-    const star = el('button', 'cp-star-btn', { text: '★', title: 'Save as default' })
-    star.addEventListener('click', () => saveUserDefault(p.key, params[p.key]))
-
-    _rowSyncMap.set(p.key, (v) => {
-        const next = Number(v)
-        btns.forEach((b, i) => b.classList.toggle('active', i === next))
-        row.classList.toggle('cp-row-disabled', disabled.has(p.key))
-    })
-
-    row.append(segGroup, star, buildInfoBtn(p))
-    return row
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 5  PRESET BAR
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildPresetBar() {
-    const bar = el('div', 'cp-preset-bar')
-    const RULE_PRESET_PREFIX = 'rule__'
-
-    function _commitPendingPanelEdits() {
-        const active = document.activeElement
-        if (active instanceof HTMLElement && active.closest('.cp-body')) active.blur()
-    }
-
-    // ── Row 0: project save/load
-    const row0 = el('div', 'cp-preset-row')
-    const projectLabel = el('span', 'cp-preset-label', { text: 'PROJECT' })
-    const btnProjectNew = el('button', 'cp-preset-btn', { text: '＋', title: 'Create new project file (defaults)' })
-    const btnProjectSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save project (current file)' })
-    const btnProjectSaveAs = el('button', 'cp-preset-btn', { text: '🖫+', title: 'Save project as...' })
-    const btnProjectLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load project' })
-    const btnPaletteMgr = el('button', 'cp-preset-btn', { text: '🎨', title: 'Open Palette Manager' })
-    const projectInput = el('input', '', { type: 'file', accept: '.ssp.json,.json' })
-    const presetImportInput = el('input', '', { type: 'file', accept: '.json,application/json' })
-    const btnPresetImport = el('button', 'cp-preset-btn', { text: '⇪', title: 'Import preset JSON from computer' })
-    projectInput.style.display = 'none'
-    presetImportInput.style.display = 'none'
-    row0.append(projectLabel, btnProjectNew, btnProjectSave, btnProjectSaveAs, btnProjectLoad, btnPaletteMgr, btnPresetImport)
-
-    const rowMode = el('div', 'cp-preset-row')
-    const modeLabel = el('span', 'cp-preset-label', { text: 'MODE' })
-    const modeSel = el('select', 'cp-preset-sel')
-    const modeOptions = [
-        { id: 'starter', label: 'Starter' },
-        { id: 'advanced', label: 'Advanced' },
-        { id: 'pro', label: 'Pro' },
-    ]
-    for (const option of modeOptions) {
-        modeSel.appendChild(el('option', '', { value: option.id, text: option.label }))
-    }
-    modeSel.value = 'advanced'
-    const modeHelp = el('span', 'cp-preset-label', { text: 'Starter: simplified macros | Advanced: human names | Pro: engine names + formulas' })
-    rowMode.append(modeLabel, modeSel, modeHelp)
-
-    const rowStarter = el('div', 'cp-preset-row')
-    const starterStyleSel = el('select', 'cp-preset-sel')
-    const starterStyles = ['linear basic', 'linear colors', 'linear timbre colors', 'textured timbre colors']
-    for (const name of starterStyles) starterStyleSel.appendChild(el('option', '', { value: name, text: name }))
-    const btnStarterStyleLoad = el('button', 'cp-preset-btn', { text: 'Apply Style', title: 'Load selected starter style preset' })
-    const starterReactivity = el('input', 'cp-rule-input cp-rule-num', { type: 'number', step: '0.05', min: '0', max: '4', value: '1.20', title: 'Reactivity multiplier (how strongly visuals react to overall volume)' })
-    const starterChaos = el('input', 'cp-rule-input cp-rule-num', { type: 'number', step: '0.05', min: '0', max: '4', value: '1.00', title: 'Chaos multiplier (how much noisy textures randomize visuals)' })
-    const btnStarterApply = el('button', 'cp-preset-btn cp-preset-save', { text: 'Apply Macros', title: 'Apply Starter Reactivity and Chaos to the canonical rule set' })
-    rowStarter.append(starterStyleSel, btnStarterStyleLoad, starterReactivity, starterChaos, btnStarterApply)
-
-    const rowSemantic = el('div', 'cp-preset-row')
-    const triggerSel = el('select', 'cp-preset-sel')
-    const visualSel = el('select', 'cp-preset-sel')
-    const actionSel = el('select', 'cp-preset-sel')
-    for (const trigger of SEMANTIC_AUDIO_TRIGGERS) {
-        triggerSel.appendChild(el('option', '', { value: trigger.id, text: trigger.label, title: trigger.description }))
-    }
-    for (const visual of SEMANTIC_VISUAL_ELEMENTS) {
-        visualSel.appendChild(el('option', '', { value: visual.id, text: visual.label, title: visual.description }))
-    }
-    for (const action of SEMANTIC_ACTIONS) {
-        actionSel.appendChild(el('option', '', { value: action.id, text: action.label, title: action.description }))
-    }
-    triggerSel.title = 'Audio trigger: choose a human-language signal to react to.'
-    visualSel.title = 'Visual element: choose what gets modified.'
-    actionSel.title = 'Action: choose how it should react.'
-    const btnAddSentence = el('button', 'cp-preset-btn cp-preset-save', { text: '＋ Rule', title: 'Add sentence as a rule block' })
-    rowSemantic.append(triggerSel, visualSel, actionSel, btnAddSentence)
-
-    const rowProCode = el('div', 'cp-preset-row')
-    const proCode = el('pre', 'cp-rule-summary')
-    proCode.style.whiteSpace = 'pre-wrap'
-    proCode.style.maxHeight = '120px'
-    proCode.style.overflow = 'auto'
-    proCode.textContent = '// Pro console\n// Creator sentence output will appear here.'
-    rowProCode.append(proCode)
-
-    // select + Load + Delete
-    const row1 = el('div', 'cp-preset-row')
-    const sel = el('select', 'cp-preset-sel')
-    const btnLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset' })
-    const btnDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
-
-    // name input + Save
-    const row2 = el('div', 'cp-preset-row')
-    const nameInput = el('input', 'cp-preset-name', { type: 'text', placeholder: 'preset_title' })
-    const btnSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save current rule preset (Ctrl+P)' })
-    row1.append(sel, btnLoad, btnDel, nameInput, btnSave)
-
-    bar.append(row0, rowMode, rowStarter, rowSemantic, rowProCode, row1, projectInput, presetImportInput)
-
-    let presets = []
-
-    async function saveRulePreset() {
-        _commitPendingPanelEdits()
-        window.dispatchEvent(new CustomEvent('seesound:commit-pending-color-edits'))
-        const typed = nameInput.value.trim()
-        const selected = String(sel.value || '').trim()
-        const name = typed || selected
-        if (!name) {
-            alert('Enter or select a preset name first.')
-            nameInput.focus()
-            return false
-        }
-
-        if (!typed && selected) nameInput.value = selected
-
-        if (presets.includes(name) && !confirm(`Overwrite preset "${name}"?`)) return false
-
-        const latestRules = _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-        const snapshot = getSnapshot()
-        snapshot.ruleBlocks = latestRules
-        await savePreset(name, snapshot)
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-        await refresh()
-        sel.value = name
-        return true
-    }
-
-    async function refresh() {
-        const all = await listPresets()
-        presets = all.filter((name) => !String(name || '').startsWith(RULE_PRESET_PREFIX))
-        const prev = sel.value
-        sel.innerHTML = '<option value="">select preset</option>'
-        for (const n of presets) {
-            const o = el('option', '', { value: n, text: n })
-            sel.appendChild(o)
-        }
-        if (prev && presets.includes(prev)) sel.value = prev
-    }
-
-    const _serializeRuleBlocks = () => {
-        return _ruleBuilderApi?.serialize?.() ?? (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-    }
-
-    const _replaceRuleBlocks = (blocks) => {
-        const safe = Array.isArray(blocks) ? blocks.map((rule, index) => ({ ...rule, order: index })) : []
-        setMany({ ruleBlocks: safe })
-        _ruleBuilderApi?.replaceFromRuleBlocks(safe)
-    }
-
-    const _upsertRuleBlock = (nextRule) => {
-        if (!nextRule || typeof nextRule !== 'object') return
-        const rules = _serializeRuleBlocks()
-        const id = String(nextRule.id || '').trim()
-        if (!id) return
-        const idx = rules.findIndex((rule) => String(rule?.id || '').trim() === id)
-        if (idx >= 0) rules[idx] = { ...rules[idx], ...nextRule }
-        else rules.push(nextRule)
-        _replaceRuleBlocks(rules)
-    }
-
-    const _extractStarterReactivity = (rules) => {
-        const rule = rules.find((entry) => String(entry?.id || '') === 'starter-reactivity')
-        const expr = String(rule?.actions?.[0]?.expression || '')
-        const m = expr.match(/^\(\s*amplitude\s*\)\s*\*\s*(-?\d+(?:\.\d+)?)$/)
-        if (!m) return 1.2
-        const n = Number(m[1])
-        return Number.isFinite(n) ? Math.max(0, n) : 1.2
-    }
-
-    const _extractStarterChaos = (rules) => {
-        const rule = rules.find((entry) => String(entry?.id || '') === 'starter-chaos')
-        const expr = String(rule?.actions?.[0]?.expression || '')
-        const m = expr.match(/\*\s*(-?\d+(?:\.\d+)?)\s*\)\s*$/)
-        if (!m) return 1.0
-        const n = Number(m[1])
-        return Number.isFinite(n) ? Math.max(0, n) : 1.0
-    }
-
-    const _syncTierViewsFromPro = () => {
-        const rules = _serializeRuleBlocks()
-        starterReactivity.value = _extractStarterReactivity(rules).toFixed(2)
-        starterChaos.value = _extractStarterChaos(rules).toFixed(2)
-
-        const semanticRule = rules.find((rule) => {
-            const id = String(rule?.id || '')
-            if (id === 'starter-reactivity' || id === 'starter-chaos') return false
-            return !!inferSemanticSentenceFromRuleBlock(rule)
-        })
-
-        if (semanticRule) {
-            const inferred = inferSemanticSentenceFromRuleBlock(semanticRule)
-            if (inferred) {
-                triggerSel.value = inferred.triggerId
-                visualSel.value = inferred.visualId
-                actionSel.value = inferred.actionId
-                proCode.textContent = `// Pro console\n${inferred.sentence}\n\n${generateProCodeFromRuleBlock(semanticRule)}`
-            }
-        }
-    }
-
-    const loadSelectedPreset = async (name) => {
-        if (!name) return
-        const data = await loadPreset(name)
-        if (!data?.params) return
-        setMany(data.params)
-        for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
-        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-        _syncTierViewsFromPro()
-    }
-
-    sel.addEventListener('change', () => {
-        if (sel.value) nameInput.value = sel.value
-    })
-
-    btnLoad.addEventListener('click', async () => {
-        if (!sel.value) return
-        await loadSelectedPreset(sel.value)
-    })
-
-    btnDel.addEventListener('click', async () => {
-        if (!sel.value) return
-        // eslint-disable-next-line no-restricted-globals
-        if (!confirm(`Delete preset "${sel.value}"?`)) return
-        await deletePreset(sel.value)
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-        await refresh()
-        nameInput.value = ''
-    })
-
-    btnSave.addEventListener('click', async () => {
-        await saveRulePreset()
-    })
-
-    btnProjectNew.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:project-new-request'))
-    })
-
-    btnProjectSave.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:project-save-request'))
-    })
-
-    btnProjectSaveAs.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:project-save-as-request'))
-    })
-
-    btnProjectLoad.addEventListener('click', () => {
-        if (typeof window.showOpenFilePicker === 'function') {
-            window.dispatchEvent(new CustomEvent('seesound:project-open-request'))
-            return
-        }
-        projectInput.click()
-    })
-
-    btnPaletteMgr.addEventListener('click', () => {
-        openColorDesignEditor()
-    })
-
-    btnPresetImport.addEventListener('click', () => {
-        presetImportInput.click()
-    })
-
-    btnStarterStyleLoad.addEventListener('click', async () => {
-        const name = String(starterStyleSel.value || '').trim()
-        if (!name) return
-        await loadSelectedPreset(name)
-    })
-
-    const _applyStarterMacrosToPro = () => {
-        const reactivity = Math.max(0, Number(starterReactivity.value) || 1.2)
-        const chaos = Math.max(0, Number(starterChaos.value) || 1.0)
-
-        _upsertRuleBlock({
-            id: 'starter-reactivity',
-            group: 'Starter',
-            subgroup: 'Reactivity',
-            enabled: true,
-            target: 'spawnedParticles',
-            scope: 'spawnedOnly',
-            condition: { operator: 'always' },
-            actions: [{ operator: 'set', output: 'size', expression: `(amplitude) * ${reactivity.toFixed(2)}` }],
-        })
-
-        _upsertRuleBlock({
-            id: 'starter-chaos',
-            group: 'Starter',
-            subgroup: 'Chaos',
-            enabled: true,
-            target: 'spawnedParticles',
-            scope: 'spawnedOnly',
-            condition: { operator: 'always' },
-            actions: [{ operator: 'set', output: 'hue', expression: `abs(sin(time * 6 + (spectralFlatness + binPhaseDeviation) * ${chaos.toFixed(2)}))` }],
-        })
-
-        proCode.textContent = [
-            '// Pro console',
-            '// Starter macros translated into canonical pro-level rules.',
-            `visual.size = (amplitude) * ${reactivity.toFixed(2)};`,
-            `visual.hue = abs(sin(time * 6 + (spectralFlatness + binPhaseDeviation) * ${chaos.toFixed(2)}));`,
-        ].join('\n')
-    }
-
-    btnStarterApply.addEventListener('click', () => {
-        _applyStarterMacrosToPro()
-        _setExperienceMode('starter')
-    })
-
-    starterReactivity.addEventListener('change', _applyStarterMacrosToPro)
-    starterChaos.addEventListener('change', _applyStarterMacrosToPro)
-
-    const _setExperienceMode = (modeRaw) => {
-        const mode = String(modeRaw || '').toLowerCase()
-        const normalized = mode === 'starter' || mode === 'pro' ? mode : 'advanced'
-        modeSel.value = normalized
-        rowStarter.style.display = normalized === 'starter' ? '' : 'none'
-        rowSemantic.style.display = normalized === 'starter' ? 'none' : ''
-        rowProCode.style.display = normalized === 'pro' ? '' : 'none'
-        window.dispatchEvent(new CustomEvent('seesound:experience-mode-changed', {
-            detail: { mode: normalized },
-        }))
-    }
-
-    modeSel.addEventListener('change', () => {
-        _setExperienceMode(modeSel.value)
-    })
-
-    btnAddSentence.addEventListener('click', () => {
-        if (!_ruleBuilderApi?.addRow) {
-            alert('Rule Builder is not ready yet. Try again in a moment.')
-            return
-        }
-        const built = buildSemanticSentenceRuleRow({
-            triggerId: String(triggerSel.value || ''),
-            visualId: String(visualSel.value || ''),
-            actionId: String(actionSel.value || ''),
-            index: Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0,
-        })
-        _ruleBuilderApi.addRow(built.ruleBlock)
-        _syncTierViewsFromPro()
-        proCode.textContent = `// Pro console\n${built.sentence}\n\n${built.generatedCode}`
-        _setExperienceMode('advanced')
-    })
-
-    presetImportInput.addEventListener('change', async (e) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-        try {
-            const text = await file.text()
-            const payload = JSON.parse(text)
-            const rawName = String(payload?.name || file.name || '').trim()
-            const name = rawName.replace(/\.[^.]+$/, '').trim()
-            if (!name) throw new Error('Preset name missing.')
-            if (!payload?.params || typeof payload.params !== 'object') {
-                throw new Error('Preset JSON must include a params object.')
-            }
-            await savePreset(name, payload.params)
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-            await refresh()
-            sel.value = name
-            nameInput.value = name
-            await loadSelectedPreset(name)
-            alert(`Imported preset: ${name}`)
-        } catch (err) {
-            console.warn('[Preset] import failed:', err)
-            alert('Failed to import preset JSON. Check file format.')
-        } finally {
-            presetImportInput.value = ''
-        }
-    })
-
-    projectInput.addEventListener('change', async (e) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-        try {
-            const text = await file.text()
-            const payload = parseProjectText(text)
-            window.dispatchEvent(new CustomEvent('seesound:project-load-request', {
-                detail: { payload, fileName: file.name },
-            }))
-        } catch (err) {
-            console.warn('[Project] load parse failed:', err)
-            alert('Failed to load project file.')
-        } finally {
-            projectInput.value = ''
-        }
-    })
-
-    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnSave.click() })
-
-    const shortcutAbortPrev = window.__seesoundShortcutAbort
-    if (shortcutAbortPrev && typeof shortcutAbortPrev.abort === 'function') shortcutAbortPrev.abort()
-    const shortcutAbort = new AbortController()
-    window.__seesoundShortcutAbort = shortcutAbort
-
-    document.addEventListener('keydown', async (e) => {
-        if (e.defaultPrevented) return
-        if (e.altKey) return
-        if (!(e.ctrlKey || e.metaKey)) return
-
-        const key = String(e.key || '').toLowerCase()
-        if (key === 's') {
-            e.preventDefault()
-            e.stopPropagation()
-            window.dispatchEvent(new CustomEvent('seesound:project-save-request'))
-            return
-        }
-
-        if (key === 'p' && !e.shiftKey) {
-            e.preventDefault()
-            e.stopPropagation()
-            await saveRulePreset()
-        }
-    }, { signal: shortcutAbort.signal })
-
-    window.addEventListener('seesound:project-loaded', async (e) => {
-        const presetName = String(e?.detail?.presetName || '').trim()
-        await refresh()
-        _syncTierViewsFromPro()
-        if (!presetName) return
-        if (presets.includes(presetName)) {
-            sel.value = presetName
-            nameInput.value = presetName
-            return
-        }
-        nameInput.value = presetName
-    })
-
-    _setExperienceMode('advanced')
-    _syncTierViewsFromPro()
-
-    refresh()
-    return bar
-}
-
-function buildCanvasSizeBar() {
-    const bar = el('div', 'cp-canvas-size')
-    const title = el('div', 'cp-canvas-size-title', { text: 'Canvas Size' })
-    const row = el('div', 'cp-canvas-size-row')
-    const bgRow = el('div', 'cp-canvas-size-row')
-    const originRow = el('div', 'cp-canvas-size-row')
-
-    const wLabel = el('label', 'cp-canvas-size-label', { text: '↔' })
-    const wInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '160', value: String(Math.max(160, Number(params.canvasWidth ?? 0) || 160)) })
-    const hLabel = el('label', 'cp-canvas-size-label', { text: '↕' })
-    const hInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '120', value: String(Math.max(120, Number(params.canvasHeight ?? 0) || 120)) })
-    const sLabel = el('label', 'cp-canvas-size-label', { text: '%' })
-    const sInput = el('input', 'cp-canvas-size-input', { type: 'number', step: '1', min: '5', max: '400', value: String(Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale ?? 100) || 100)))) })
-    const applyBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Apply' })
-
-    const bgLabel = el('div', 'cp-canvas-size-label', { text: 'BG HSL' })
-    const bgHInput = el('input', 'cp-canvas-size-input', {
-        type: 'number', step: '1', min: '0', max: '360',
-        value: String(Math.max(0, Math.min(360, Math.floor(Number(params.defaultBackgroundHue ?? 0) || 0)))),
-    })
-    const bgSInput = el('input', 'cp-canvas-size-input', {
-        type: 'number', step: '1', min: '0', max: '100',
-        value: String(Math.max(0, Math.min(100, Math.floor(Number(params.defaultBackgroundSaturation ?? 0) || 0)))),
-    })
-    const bgLInput = el('input', 'cp-canvas-size-input', {
-        type: 'number', step: '1', min: '0', max: '100',
-        value: String(Math.max(0, Math.min(100, Math.floor(Number(params.defaultBackgroundLightness ?? 0) || 0)))),
-    })
-
-    const originLabel = el('div', 'cp-canvas-size-label', { text: 'Origin' })
-    const originToggleBtn = el('button', 'cp-preset-btn cp-rule-mini', { text: 'On', title: 'Toggle origin sign visibility' })
-    const originMeta = el('div', 'cp-canvas-size-label', { text: 'Size: 250 units' })
-    let originEnabled = true
-
-    const renderOriginToggle = () => {
-        originToggleBtn.textContent = originEnabled ? 'On' : 'Off'
-        originToggleBtn.setAttribute('aria-pressed', originEnabled ? 'true' : 'false')
-    }
-
-    originToggleBtn.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:origin-sign-toggle', {
-            detail: { enabled: !originEnabled },
-        }))
-    })
-    window.addEventListener('seesound:origin-sign-state', (e) => {
-        const enabled = e?.detail?.enabled
-        if (typeof enabled !== 'boolean') return
-        originEnabled = enabled
-        renderOriginToggle()
-    })
-
-    const live = { w: 0, h: 0, s: 100 }
-
-    function clampInt(v, min, max, fallback) {
-        const n = Number(v)
-        if (!Number.isFinite(n)) return fallback
-        return Math.max(min, Math.min(max, Math.floor(n)))
-    }
-
-    function render() {
-        const paramW = Number(params.canvasWidth)
-        const paramH = Number(params.canvasHeight)
-        const paramS = Number(params.canvasScale)
-        const displayW = Number.isFinite(paramW) && paramW > 0 ? paramW : live.w
-        const displayH = Number.isFinite(paramH) && paramH > 0 ? paramH : live.h
-        const displayS = Number.isFinite(paramS) && paramS > 0 ? paramS : live.s
-        if (document.activeElement !== wInput) {
-            wInput.value = String(Math.max(160, Math.floor(displayW || 160)))
-        }
-        if (document.activeElement !== hInput) {
-            hInput.value = String(Math.max(120, Math.floor(displayH || 120)))
-        }
-        if (document.activeElement !== sInput) {
-            sInput.value = String(Math.max(5, Math.min(400, Math.floor(displayS || 100))))
-        }
-        if (document.activeElement !== bgHInput) {
-            bgHInput.value = String(clampInt(params.defaultBackgroundHue, 0, 360, 0))
-        }
-        if (document.activeElement !== bgSInput) {
-            bgSInput.value = String(clampInt(params.defaultBackgroundSaturation, 0, 100, 0))
-        }
-        if (document.activeElement !== bgLInput) {
-            bgLInput.value = String(clampInt(params.defaultBackgroundLightness, 0, 100, 0))
-        }
-    }
-
-    function applySize() {
-        const w = Math.max(160, Math.floor(Number(wInput.value) || 160))
-        const h = Math.max(120, Math.floor(Number(hInput.value) || 120))
-        const s = Math.max(5, Math.min(400, Math.floor(Number(sInput.value) || 100)))
-        set('canvasWidth', w)
-        set('canvasHeight', h)
-        set('canvasScale', s)
-    }
-
-    function applyBackground() {
-        set('defaultBackgroundHue', clampInt(bgHInput.value, 0, 360, 0))
-        set('defaultBackgroundSaturation', clampInt(bgSInput.value, 0, 100, 0))
-        set('defaultBackgroundLightness', clampInt(bgLInput.value, 0, 100, 0))
-    }
-
-    wInput.addEventListener('change', applySize)
-    hInput.addEventListener('change', applySize)
-    wInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applySize()
-            wInput.blur()
-        }
-    })
-    hInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applySize()
-            hInput.blur()
-        }
-    })
-    sInput.addEventListener('change', applySize)
-    sInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applySize()
-            sInput.blur()
-        }
-    })
-    bgHInput.addEventListener('change', applyBackground)
-    bgSInput.addEventListener('change', applyBackground)
-    bgLInput.addEventListener('change', applyBackground)
-    bgHInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applyBackground()
-            bgHInput.blur()
-        }
-    })
-    bgSInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applyBackground()
-            bgSInput.blur()
-        }
-    })
-    bgLInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            applyBackground()
-            bgLInput.blur()
-        }
-    })
-    applyBtn.addEventListener('click', applySize)
-
-    _rowSyncMap.set('canvasWidth', () => render())
-    _rowSyncMap.set('canvasHeight', () => render())
-    _rowSyncMap.set('canvasScale', () => render())
-    _rowSyncMap.set('defaultBackgroundHue', () => render())
-    _rowSyncMap.set('defaultBackgroundSaturation', () => render())
-    _rowSyncMap.set('defaultBackgroundLightness', () => render())
-
-    subscribe((_, key) => {
-        if (
-            key === 'canvasWidth' ||
-            key === 'canvasHeight' ||
-            key === 'canvasScale' ||
-            key === 'defaultBackgroundHue' ||
-            key === 'defaultBackgroundSaturation' ||
-            key === 'defaultBackgroundLightness'
-        ) render()
-    })
-    window.addEventListener('seesound:canvas-size', (e) => {
-        live.w = Number(e?.detail?.w) || live.w
-        live.h = Number(e?.detail?.h) || live.h
-        live.s = Number(e?.detail?.s) || live.s
-        render()
-    })
-
-    row.append(wLabel, wInput, hLabel, hInput, sLabel, sInput, applyBtn)
-    bgRow.append(bgLabel, bgHInput, bgSInput, bgLInput)
-    originRow.append(originLabel, originToggleBtn, originMeta)
-    bar.append(title, row, bgRow, originRow)
-    render()
-    renderOriginToggle()
-    return bar
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 6  COLLAPSIBLE GROUP
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildGroup(groupDef, groupParams, startOpen) {
-    const wrap = el('div', `cp-group${startOpen ? ' cp-open' : ''}`)
-    const hdr = el('button', 'cp-group-header')
-    hdr.innerHTML =
-        `<span class="cp-group-chevron">${startOpen ? '▾' : '▸'}</span>` +
-        `<span>${groupDef.label}</span>` +
-        `<span class="cp-group-count">${groupParams.length}</span>`
-
-    const body = el('div', 'cp-group-body')
-    body.style.display = startOpen ? '' : 'none'
-
-    for (const p of groupParams) {
-        if (p.isDropdown) body.appendChild(buildDropdownRow(p))
-        else if (p.isToggle) body.appendChild(buildToggleRow(p))
-        else body.appendChild(buildSliderRow(p))
-    }
-
-    let open = startOpen
-    hdr.setAttribute('aria-expanded', String(open))
-    hdr.addEventListener('click', () => {
-        open = !open
-        wrap.classList.toggle('cp-open', open)
-        body.style.display = open ? '' : 'none'
-        hdr.setAttribute('aria-expanded', String(open))
-        const chevron = hdr.querySelector('.cp-group-chevron')
-        if (chevron) chevron.textContent = open ? '▾' : '▸'
-    })
-
-    wrap.append(hdr, body)
-    return wrap
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 7  RULE BUILDER
-// ─────────────────────────────────────────────────────────────────────────────
-
-const _allInputEntries = getInputDictionary().entries
-function _inputSortBucket(id) {
-    const binAudio = new Set(['binMagnitude', 'binEnergy', 'binFreq', 'frequencyHz', 'normFreq', 'notePitchClass', 'octave'])
-    const binTimbre = new Set(['binPhase', 'binFlux', 'binPhaseDeviation', 'binPhasedeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'binRMSEnergy'])
-    const globalAudio = new Set(['amplitude', 'bass', 'mid', 'high', 'peakFreq', 'pan', 'time', 'deltaTime'])
-    const globalTimbre = new Set(['globalRmsEnergy', 'spectralCentroid', 'spectralFlux', 'spectralFlatness', 'inharmonicity', 'peakAmplitude', 'zeroCrossingRate', 'spectralRolloff', 'spectralSpread', 'spectralSkewness', 'chromagram'])
-
-    if (binAudio.has(id)) return 0
-    if (binTimbre.has(id)) return 1
-    if (globalAudio.has(id)) return 2
-    if (globalTimbre.has(id)) return 3
-    if (id.startsWith('canvas')) return 4
-    if (id === 'audioLengthSec') return 5
-    return 6
-}
-
-function _sortInputIds(ids) {
-    return [...ids].sort((a, b) => {
-        const bucketDelta = _inputSortBucket(a) - _inputSortBucket(b)
-        if (bucketDelta !== 0) return bucketDelta
-        return String(a).localeCompare(String(b))
-    })
-}
-
-const _allInputIds = _sortInputIds(_allInputEntries.filter((e) => !e.hidden).map((e) => e.id))
-let _inputIds = [..._allInputIds]
-const _outputMeta = getOutputDictionary().entries
-const _outputIds = _outputMeta.map((e) => e.id)
-const _outputMetaById = new Map(_outputMeta.map((e) => [e.id, e]))
-const _conditionOps = ['always', '>', '>=', '<', '<=', '==', '!=']
-const _ruleTargets = [...RULE_TARGETS]
-const _actionOps = [...RULE_ACTION_OPERATORS]
-const GROUP_PATH_SEPARATOR = ' / '
-
-const _targetLabels = {
-    spawnedParticles: 'spawned particles',
-    allParticles: 'all particles',
-    background: 'background',
-    camera: 'camera',
-}
-
-let _ruleBuilderApi = null
-
-function _setCalculatedRuleInputs(calculatedInputs) {
-    const allowed = new Set(_allInputIds)
-    const calculated = Array.isArray(calculatedInputs)
-        ? [...new Set(calculatedInputs)].filter((id) => allowed.has(id))
-        : []
-
-    // Keep all valid inputs selectable to avoid a rule-creation deadlock.
-    // Calculated inputs are listed first to reflect current active usage.
-    _inputIds = _sortInputIds([...new Set([...calculated, ..._allInputIds])])
-}
-
-function _defaultRuleName(index = 0) {
-    return `rule-${Math.max(1, Math.floor(index) + 1)}`
-}
-
-function _newRuleUid() {
-    return `rule-ui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function _defaultRule(index = 0) {
+    UI_TEXT,
+    RULE_VARIABLES,
+    getRuleVariablesByGroup,
+    getRuleVariableById,
+} from './ui/UiText.js'
+import noUiSlider from 'nouislider'
+import 'nouislider/dist/nouislider.css'
+import menuFileIcon from '../icons/menu-file.svg?raw'
+import menuViewIcon from '../icons/menu-view.svg?raw'
+import menuSettingsIcon from '../icons/menu-settings.svg?raw'
+import menuRulesIcon from '../icons/menu-rules.svg?raw'
+import closeIcon from '../icons/close.svg?raw'
+import loadIcon from '../icons/load.svg?raw'
+import saveIcon from '../icons/save.svg?raw'
+import savePresetIcon from '../icons/save-preset.svg?raw'
+import saveAsIcon from '../icons/save-as.svg?raw'
+import uploadIcon from '../icons/upload.svg?raw'
+import deleteIcon from '../icons/delete.svg?raw'
+import imageIcon from '../icons/image.svg?raw'
+import imageEmptyIcon from '../icons/image-empty.svg?raw'
+import videoIcon from '../icons/video.svg?raw'
+import objIcon from '../icons/obj.svg?raw'
+import refreshIcon from '../icons/refresh.svg?raw'
+import addIcon from '../icons/add.svg?raw'
+import clearIcon from '../icons/clear.svg?raw'
+import resetIcon from '../icons/reset.svg?raw'
+import fitIcon from '../icons/fit.svg?raw'
+
+
+const NONE_VAR = '__none__'
+const RULE_OPERATORS = Object.freeze(['always', '>', '>=', '<', '<=', '==', '!='])
+
+const MENU_ITEMS = Object.freeze([
+    { id: 'file', label: UI_TEXT.menu.file },
+    { id: 'view', label: UI_TEXT.menu.view },
+    { id: 'settings', label: UI_TEXT.menu.settings },
+    { id: 'rules', label: UI_TEXT.menu.rules },
+])
+
+const FFT_OPTIONS = Object.freeze([512, 1024, 2048, 4096, 8192, 16384])
+
+const SETTINGS_SLIDERS = Object.freeze([
+    {
+        key: 'inputGain',
+        label: UI_TEXT.settings.sensitivity,
+        min: 0,
+        max: 3,
+        step: 0.01,
+        tooltip: 'Technical term: Input Gain. Scales all amplitude before analysis.',
+    },
+    {
+        key: 'defaultParticleSize',
+        label: UI_TEXT.settings.particleDefaultSize,
+        min: 1,
+        max: 40,
+        step: 0.5,
+        tooltip: 'Technical term: Particle Size. Base sprite diameter in pixels.',
+    },
+    {
+        key: 'maxParticles',
+        label: UI_TEXT.settings.particleCapacity,
+        min: 100000,
+        max: 5000000,
+        step: 50000,
+        tooltip: 'Technical term: Max Particle Capacity. Total GPU particle slots.',
+    },
+    {
+        key: 'particlesByFrame',
+        label: UI_TEXT.settings.spawnRate,
+        min: 100,
+        max: 5000,
+        step: 1,
+        tooltip: 'Technical term: Particles By Frame. Number of log-frequency spawn buckets per frame.',
+    },
+    {
+        key: 'fluxWindowFrames',
+        label: UI_TEXT.settings.activityInterval,
+        min: 1,
+        max: 64,
+        step: 1,
+        tooltip: 'Technical term: Flux Window Frames. Rolling frame window for activity averaging.',
+    },
+])
+
+const SETTINGS_RANGES = Object.freeze([
+    {
+        id: 'frequencyRange',
+        syncKeys: ['freqNormMin', 'freqNormMax'],
+        label: UI_TEXT.settings.frequencyRange,
+        min: 16,
+        max: 20000,
+        step: 1,
+        unit: 'Hz',
+        tooltip: 'Technical terms: Freq Norm Min / Freq Norm Max. Physical frequency normalization range.',
+        get: () => ({ min: Number(params.freqNormMin ?? 40), max: Number(params.freqNormMax ?? 12000) }),
+        set: (minValue, maxValue) => setMany({ freqNormMin: minValue, freqNormMax: maxValue }),
+    },
+    {
+        id: 'volumeRange',
+        syncKeys: ['binMagnitudeNormMin', 'binMagnitudeNormMax'],
+        label: UI_TEXT.settings.volume,
+        min: -120,
+        max: 0,
+        step: 1,
+        unit: 'dBFS',
+        tooltip: 'Technical terms: Per-Bin Magnitude Min / Max. Per-frequency volume normalization.',
+        get: () => ({ min: Number(params.binMagnitudeNormMin ?? -70), max: Number(params.binMagnitudeNormMax ?? 0) }),
+        set: (minValue, maxValue) => setMany({ binMagnitudeNormMin: minValue, binMagnitudeNormMax: maxValue }),
+    },
+    {
+        id: 'instabilityRange',
+        syncKeys: ['binPhaseDeviationNormMin', 'binPhaseDeviationNormMax'],
+        label: UI_TEXT.settings.instability,
+        min: 0,
+        max: Math.PI,
+        step: 0.001,
+        unit: 'rad',
+        tooltip: 'Technical terms: Per-Bin Phase Deviation Min / Max. Phase instability normalization.',
+        get: () => ({ min: Number(params.binPhaseDeviationNormMin ?? 0), max: Number(params.binPhaseDeviationNormMax ?? Math.PI) }),
+        set: (minValue, maxValue) => setMany({ binPhaseDeviationNormMin: minValue, binPhaseDeviationNormMax: maxValue }),
+    },
+    {
+        id: 'attackSharpnessRange',
+        syncKeys: ['binAttackTimeNormMin', 'binAttackTimeNormMax'],
+        label: UI_TEXT.settings.attackSharpness,
+        min: 0,
+        max: 2000,
+        step: 1,
+        unit: 'ms',
+        tooltip: 'Technical terms: Per-Bin Attack Time Min / Max. Attack-time normalization.',
+        get: () => ({ min: Number(params.binAttackTimeNormMin ?? 5), max: Number(params.binAttackTimeNormMax ?? 500) }),
+        set: (minValue, maxValue) => setMany({ binAttackTimeNormMin: minValue, binAttackTimeNormMax: maxValue }),
+    },
+    {
+        id: 'energyRange',
+        syncKeys: ['globalRmsNormMin', 'globalRmsNormMax'],
+        label: UI_TEXT.settings.energy,
+        min: -120,
+        max: 0,
+        step: 1,
+        unit: 'dBFS',
+        tooltip: 'Technical terms: Global RMS Energy Min / Max. Frame-wide RMS normalization.',
+        get: () => ({ min: Number(params.globalRmsNormMin ?? -60), max: Number(params.globalRmsNormMax ?? 0) }),
+        set: (minValue, maxValue) => setMany({ globalRmsNormMin: minValue, globalRmsNormMax: maxValue }),
+    },
+    {
+        id: 'sharpnessRange',
+        syncKeys: ['spectralCentroidNormMin', 'spectralCentroidNormMax'],
+        label: UI_TEXT.settings.sharpness,
+        min: 16,
+        max: 22050,
+        step: 1,
+        unit: 'Hz',
+        tooltip: 'Technical terms: Spectral Centroid Min / Max. Spectral sharpness normalization.',
+        get: () => ({ min: Number(params.spectralCentroidNormMin ?? 150), max: Number(params.spectralCentroidNormMax ?? 8000) }),
+        set: (minValue, maxValue) => setMany({ spectralCentroidNormMin: minValue, spectralCentroidNormMax: maxValue }),
+    },
+    {
+        id: 'activityRange',
+        syncKeys: ['globalSpectralFluxNormMin', 'globalSpectralFluxNormMax', 'binFluxNormMin', 'binFluxNormMax'],
+        label: UI_TEXT.settings.activity,
+        min: 0,
+        max: 200,
+        step: 0.1,
+        unit: 'AU',
+        tooltip: 'Technical terms: Per-Bin Spectral Flux Min / Max and Global Spectral Flux Min / Max. Controls both detail and global activity ranges.',
+        get: () => ({
+            min: Number(params.globalSpectralFluxNormMin ?? 0),
+            max: Number(params.globalSpectralFluxNormMax ?? 100),
+        }),
+        set: (minValue, maxValue) => {
+            setMany({
+                globalSpectralFluxNormMin: minValue,
+                globalSpectralFluxNormMax: maxValue,
+                binFluxNormMin: minValue / 100,
+                binFluxNormMax: maxValue / 100,
+            })
+        },
+    },
+    {
+        id: 'noisinessRange',
+        syncKeys: ['spectralFlatnessNormMin', 'spectralFlatnessNormMax'],
+        label: UI_TEXT.settings.noisiness,
+        min: 0,
+        max: 1,
+        step: 0.001,
+        unit: 'ratio',
+        tooltip: 'Technical terms: Spectral Flatness Min / Max. Noise-vs-tone normalization.',
+        get: () => ({ min: Number(params.spectralFlatnessNormMin ?? 0), max: Number(params.spectralFlatnessNormMax ?? 1) }),
+        set: (minValue, maxValue) => setMany({ spectralFlatnessNormMin: minValue, spectralFlatnessNormMax: maxValue }),
+    },
+])
+
+const FIXED_RULE_ROWS = Object.freeze([
+    // Particles
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'x', label: 'X' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'y', label: 'Y' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'z', label: 'Z' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'shapeType', label: 'Shape', type: 'enum', options: ['circle', 'square'] },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'red', label: 'Red' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'green', label: 'Green' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
+    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
+
+    // Lines
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'xStart', label: 'X Start' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'xEnd', label: 'X End' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'yStart', label: 'Y Start' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'yEnd', label: 'Y End' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'zStart', label: 'Z Start' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'zEnd', label: 'Z End' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'thickness', label: 'Thickness' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'lineCount', label: 'Line Count' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'red', label: 'Red' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'green', label: 'Green' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
+    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
+
+    // Background
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'red', label: 'Red' },
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'green', label: 'Green' },
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
+    { target: 'background', section: 'Background', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
+
+    // Camera
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'x', label: 'Position X' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'y', label: 'Position Y' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'z', label: 'Position Z' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'targetX', label: 'Target X' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'targetY', label: 'Target Y' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'targetZ', label: 'Target Z' },
+    { target: 'camera', section: 'Camera', subgroup: 'Position', output: 'angleOfView', label: 'Angle Of View' },
+])
+
+const RULE_VARIABLE_ID_SET = new Set(RULE_VARIABLES.map((entry) => entry.id))
+const RULE_VARIABLE_REGEX = new RegExp(`\\b(${RULE_VARIABLES.map((entry) => entry.id.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length).join('|')})\\b`, 'g')
+
+const MENU_ICON_MAP = Object.freeze({
+    file: menuFileIcon,
+    view: menuViewIcon,
+    settings: menuSettingsIcon,
+    rules: menuRulesIcon,
+})
+
+const BUTTON_ICON_MAP = Object.freeze({
+    load: loadIcon,
+    save: saveIcon,
+    savePreset: savePresetIcon,
+    saveAs: saveAsIcon,
+    upload: uploadIcon,
+    remove: deleteIcon,
+    exportImage: imageIcon,
+    exportImageNoBg: imageEmptyIcon,
+    exportVideo: videoIcon,
+    exportObj: objIcon,
+    reset: resetIcon,
+    fit: fitIcon,
+    add: addIcon,
+    clear: clearIcon,
+    clean: clearIcon,
+    close: closeIcon,
+})
+
+const MATH_ACTIONS = Object.freeze([
+    { value: 'math:add', label: UI_TEXT.rules.mathAdd },
+    { value: 'math:subtract', label: UI_TEXT.rules.mathSubtract },
+    { value: 'math:multiply', label: UI_TEXT.rules.mathMultiply },
+    { value: 'math:divide', label: UI_TEXT.rules.mathDivide },
+    { value: 'math:parentheses', label: UI_TEXT.rules.mathParentheses },
+    { value: 'math:power', label: 'Power' },
+    { value: 'math:clamp', label: 'Clamp' },
+    { value: 'math:average', label: 'Average' },
+])
+
+function createSyncRegistry() {
     return {
-        id: _defaultRuleName(index),
-        group: '',
-        subgroup: '',
-        enabled: true,
-        target: 'spawnedParticles',
-        condition: { operator: 'always' },
-        actions: [{ operator: 'set', output: 'opacity', value: 1.0 }],
-        order: index,
+        all: [],
+        byKey: new Map(),
     }
 }
 
-function _isShapeOutput(outputId) {
-    return outputId === 'shapeType'
-}
-
-function _normalizeTarget(rule) {
-    const context = String(rule?.context || '').toLowerCase()
-    if (context.includes('background')) return 'background'
-    if (context.includes('camera')) return 'camera'
-    if (context.includes('particle')) return 'spawnedParticles'
-
-    const rawTarget = typeof rule?.target === 'string' ? rule.target : ''
-    if (_ruleTargets.includes(rawTarget)) return rawTarget
-    if (rule?.scope === 'allLivingFrame') return 'allParticles'
-    return 'spawnedParticles'
-}
-
-function _outputIdsForTarget(target) {
-    return _outputMeta
-        .filter((entry) => !Array.isArray(entry.targets) || entry.targets.includes(target))
-        .map((entry) => entry.id)
-}
-
-function _isNormalizedScalarOutput(meta) {
-    if (!meta || meta.type !== 'number') return false
-    const min = Number(meta?.range?.[0])
-    const max = Number(meta?.range?.[1])
-    return Number.isFinite(min) && Number.isFinite(max) && min === 0 && max === 1
-}
-
-function _outputLabel(outputId) {
-    if (outputId === 'rgb' || outputId === 'hsv') return outputId
-    const meta = _outputMetaById.get(outputId)
-    if (_isNormalizedScalarOutput(meta)) return `${outputId} (norm)`
-    return outputId
-}
-
-function _ensureValidOutputForTarget(row) {
-    const allowed = _outputIdsForTarget(row.target)
-    if (allowed.length === 0) {
-        row.actionOutput = 'opacity'
+function registerSync(syncRegistry, callback, keys = null) {
+    if (!syncRegistry || typeof callback !== 'function') return
+    if (!Array.isArray(keys) || keys.length === 0) {
+        syncRegistry.all.push(callback)
         return
     }
-    if (!allowed.includes(row.actionOutput)) row.actionOutput = allowed[0]
+    for (const key of keys) {
+        const normalized = String(key || '').trim()
+        if (!normalized) continue
+        if (!syncRegistry.byKey.has(normalized)) {
+            syncRegistry.byKey.set(normalized, [])
+        }
+        syncRegistry.byKey.get(normalized).push(callback)
+    }
 }
 
-function _parseInputScaleExpression(expr) {
-    const raw = typeof expr === 'string' ? expr.trim() : ''
-    if (!raw) return null
-
-    // Canonical generated form: (inputId) * scalar
-    const scaled = raw.match(/^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\*\s*(-?\d+(?:\.\d+)?)$/)
-    if (scaled) {
-        const input = scaled[1]
-        const scale = Number(scaled[2])
-        if (_inputIds.includes(input) && Number.isFinite(scale)) {
-            return {
-                input,
-                strength: Math.abs(scale),
-                invert: scale < 0,
-            }
+function runSyncCallbacks(callbacks) {
+    for (const callback of callbacks) {
+        try {
+            callback()
+        } catch {
+            // no-op
         }
     }
+}
 
-    // Canonical reciprocal form: strength / max(1e-6, (inputId))
-    const reciprocal = raw.match(/^\(?\s*(-?\d+(?:\.\d+)?)\s*\)?\s*\/\s*max\(\s*1e-6\s*,\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\)$/)
-    if (reciprocal) {
-        const strength = Number(reciprocal[1])
-        const input = reciprocal[2]
-        if (_inputIds.includes(input) && Number.isFinite(strength)) {
-            return {
-                input,
-                strength: Math.abs(strength),
-                invert: true,
-            }
-        }
+function collectSyncCallbacks(syncRegistry, keys = [], includeGlobal = false) {
+    const queue = new Set(includeGlobal ? (syncRegistry?.all || []) : [])
+    for (const key of Array.isArray(keys) ? keys : []) {
+        const normalized = String(key || '').trim()
+        if (!normalized) continue
+        const keyed = syncRegistry?.byKey?.get(normalized)
+        if (!keyed) continue
+        for (const callback of keyed) queue.add(callback)
+    }
+    return [...queue]
+}
+
+function el(tag, className = '', attrs = {}) {
+    const node = document.createElement(tag)
+    if (className) node.className = className
+    for (const [key, value] of Object.entries(attrs)) {
+        if (key === 'text') node.textContent = value
+        else if (key === 'html') node.innerHTML = value
+        else if (value !== undefined && value !== null) node.setAttribute(key, String(value))
+    }
+    return node
+}
+
+function clamp(value, min, max) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return min
+    return Math.max(min, Math.min(max, n))
+}
+
+function rgbToHex(r, g, b) {
+    const rr = clamp(Math.round(r), 0, 255).toString(16).padStart(2, '0')
+    const gg = clamp(Math.round(g), 0, 255).toString(16).padStart(2, '0')
+    const bb = clamp(Math.round(b), 0, 255).toString(16).padStart(2, '0')
+    return `#${rr}${gg}${bb}`
+}
+
+function hslToRgb(h, s, l) {
+    const hh = ((Number(h) % 360) + 360) % 360
+    const ss = clamp(Number(s) / 100, 0, 1)
+    const ll = clamp(Number(l) / 100, 0, 1)
+
+    const c = (1 - Math.abs((2 * ll) - 1)) * ss
+    const x = c * (1 - Math.abs(((hh / 60) % 2) - 1))
+    const m = ll - (c / 2)
+
+    let r1 = 0
+    let g1 = 0
+    let b1 = 0
+
+    if (hh < 60) { r1 = c; g1 = x; b1 = 0 }
+    else if (hh < 120) { r1 = x; g1 = c; b1 = 0 }
+    else if (hh < 180) { r1 = 0; g1 = c; b1 = x }
+    else if (hh < 240) { r1 = 0; g1 = x; b1 = c }
+    else if (hh < 300) { r1 = x; g1 = 0; b1 = c }
+    else { r1 = c; g1 = 0; b1 = x }
+
+    return {
+        r: Math.round((r1 + m) * 255),
+        g: Math.round((g1 + m) * 255),
+        b: Math.round((b1 + m) * 255),
+    }
+}
+
+function hexToHsl(hex) {
+    const normalized = String(hex || '').trim().replace(/^#/, '')
+    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+        return { h: 0, s: 0, l: 0 }
     }
 
-    // Also accept direct input reference: inputId or (inputId)
-    const direct = raw.match(/^\(?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)?$/)
-    if (direct) {
-        const input = direct[1]
-        if (_inputIds.includes(input)) {
-            return {
-                input,
-                strength: 1,
-                invert: false,
-            }
-        }
-    }
+    const r = parseInt(normalized.slice(0, 2), 16) / 255
+    const g = parseInt(normalized.slice(2, 4), 16) / 255
+    const b = parseInt(normalized.slice(4, 6), 16) / 255
 
+    const max = Math.max(r, g, b)
+    const min = Math.min(r, g, b)
+    const delta = max - min
+
+    let h = 0
+    if (delta > 0) {
+        if (max === r) h = 60 * (((g - b) / delta) % 6)
+        else if (max === g) h = 60 * (((b - r) / delta) + 2)
+        else h = 60 * (((r - g) / delta) + 4)
+    }
+    if (h < 0) h += 360
+
+    const l = (max + min) / 2
+    const s = delta === 0 ? 0 : (delta / (1 - Math.abs((2 * l) - 1)))
+
+    return {
+        h,
+        s: s * 100,
+        l: l * 100,
+    }
+}
+
+function applyButtonIcon(button, svgMarkup, label) {
+    if (!button || !svgMarkup) return
+    const caption = String(label || button.textContent || '').trim()
+    button.textContent = ''
+    button.append(
+        el('span', 'cp-btn-icon', { html: svgMarkup }),
+        el('span', 'cp-btn-label', { text: caption }),
+    )
+    button.setAttribute('aria-label', caption)
+}
+
+function createPillToken(variableId) {
+    const id = String(variableId || '')
+    const variable = getRuleVariableById(id)
+    return {
+        type: 'pill',
+        label: variable?.label || id,
+        code: id,
+    }
+}
+
+function createNumberToken(value = 0) {
+    const numeric = Number(value)
+    return {
+        type: 'number',
+        value: Number.isFinite(numeric) ? numeric : 0,
+    }
+}
+
+function createOpToken(code) {
+    return {
+        type: 'op',
+        code: String(code || ''),
+    }
+}
+
+function createSlotToken() {
+    return {
+        type: 'slot',
+    }
+}
+
+function mathTemplateTokens(actionId) {
+    if (actionId === 'math:add') return [createOpToken(' + ')]
+    if (actionId === 'math:subtract') return [createOpToken(' - ')]
+    if (actionId === 'math:multiply') return [createOpToken(' * ')]
+    if (actionId === 'math:divide') return [createOpToken(' / ')]
+    if (actionId === 'math:parentheses') return [createOpToken('('), createSlotToken(), createOpToken(')')]
+    if (actionId === 'math:power') return [createOpToken('pow('), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(')')]
+    if (actionId === 'math:clamp') return [createOpToken('clamp('), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(')')]
+    if (actionId === 'math:average') return [createOpToken('avg('), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(')')]
+    return [createSlotToken()]
+}
+
+function normalizeToken(token) {
+    if (!token || typeof token !== 'object') return null
+    if (token.type === 'pill') return createPillToken(token.code)
+    if (token.type === 'number') return createNumberToken(token.value)
+    if (token.type === 'op') return createOpToken(token.code)
+    if (token.type === 'slot') return createSlotToken()
     return null
 }
 
-function _normalizeExpressionSyntax(expr) {
-    if (typeof expr !== 'string') return ''
-    let out = expr.trim()
-    if (!out) return ''
-    out = out.replace(/×/g, '*').replace(/÷/g, '/')
-    out = out.replace(/\band\b/gi, '&&')
-    out = out.replace(/\bor\b/gi, '||')
-    out = out.replace(/\bnot\b/gi, '!')
-    return out
+function compileTokens(tokens) {
+    const parts = []
+    for (const token of Array.isArray(tokens) ? tokens : []) {
+        if (!token || typeof token !== 'object') continue
+        if (token.type === 'pill') {
+            parts.push(String(token.code || ''))
+            continue
+        }
+        if (token.type === 'number') {
+            const numeric = Number(token.value)
+            parts.push(Number.isFinite(numeric) ? String(numeric) : '0')
+            continue
+        }
+        if (token.type === 'op') {
+            parts.push(String(token.code || ''))
+        }
+    }
+    return parts.join('')
 }
 
-function _safeEvalExpression(expr, inputs) {
-    const text = _normalizeExpressionSyntax(expr)
-    if (!text) return 0
-    if (!/^[0-9A-Za-z_+\-*/%().,\s<>!=&|?:]+$/.test(text)) return 0
+function parseExpressionToTokens(expression) {
+    const source = String(expression || '')
+    if (!source.trim()) return []
 
-    const scope = {
-        clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
-        lerp: (a, b, t) => a + (b - a) * t,
-        smoothstep: (e0, e1, x) => {
-            const t = Math.max(0, Math.min(1, (x - e0) / Math.max(1e-9, e1 - e0)))
-            return t * t * (3 - 2 * t)
+    const variableSet = new Set(RULE_VARIABLES.map((entry) => entry.id))
+    const lexer = /([A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/])/g
+    const tokens = []
+    let cursor = 0
+    for (const match of source.matchAll(lexer)) {
+        const index = Number(match.index)
+        if (index > cursor) {
+            const gap = source.slice(cursor, index)
+            if (gap.trim()) tokens.push(createOpToken(gap))
+        }
+        const lexeme = String(match[0] || '')
+        if (variableSet.has(lexeme)) tokens.push(createPillToken(lexeme))
+        else if (/^\d+(?:\.\d+)?$/.test(lexeme)) tokens.push(createNumberToken(Number(lexeme)))
+        else tokens.push(createOpToken(['+', '-', '*', '/'].includes(lexeme) ? ` ${lexeme} ` : lexeme))
+        cursor = index + lexeme.length
+    }
+    if (cursor < source.length) {
+        const tail = source.slice(cursor)
+        if (tail.trim()) tokens.push(createOpToken(tail))
+    }
+    if (!tokens.length) tokens.push(createSlotToken())
+    return tokens
+}
+
+function createTokenInsertSelect(selected = '') {
+    const select = el('select', 'cp-input-select cp-rule-token-insert-select')
+    select.appendChild(el('option', '', { value: '', text: UI_TEXT.rules.insertToken }))
+
+    const valueGroup = document.createElement('optgroup')
+    valueGroup.label = UI_TEXT.rules.detailVariables
+    for (const entry of getRuleVariablesByGroup('detail')) {
+        valueGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+    }
+
+    const overallGroup = document.createElement('optgroup')
+    overallGroup.label = UI_TEXT.rules.overallVariables
+    for (const entry of getRuleVariablesByGroup('overall')) {
+        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+    }
+
+    const typeGroup = document.createElement('optgroup')
+    typeGroup.label = UI_TEXT.rules.number
+    typeGroup.appendChild(el('option', '', { value: 'number', text: UI_TEXT.rules.number }))
+
+    const mathGroup = document.createElement('optgroup')
+    mathGroup.label = UI_TEXT.rules.mathActions
+    for (const action of MATH_ACTIONS) {
+        mathGroup.appendChild(el('option', '', { value: action.value, text: action.label }))
+    }
+
+    select.append(valueGroup, overallGroup, typeGroup, mathGroup)
+    if (selected) select.value = selected
+    return select
+}
+
+function createRuleTokenValueSelect(selected = '') {
+    const select = el('select', 'cp-input-select cp-rule-token-action-select cp-rule-token-value-select')
+    select.appendChild(el('option', '', { value: '', text: UI_TEXT.rules.insertVariable }))
+
+    const detailGroup = document.createElement('optgroup')
+    detailGroup.label = UI_TEXT.rules.detailVariables
+    for (const entry of getRuleVariablesByGroup('detail')) {
+        detailGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+    }
+
+    const overallGroup = document.createElement('optgroup')
+    overallGroup.label = UI_TEXT.rules.overallVariables
+    for (const entry of getRuleVariablesByGroup('overall')) {
+        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+    }
+
+    const numberGroup = document.createElement('optgroup')
+    numberGroup.label = UI_TEXT.rules.number
+    numberGroup.appendChild(el('option', '', { value: 'number', text: UI_TEXT.rules.number }))
+
+    select.append(detailGroup, overallGroup, numberGroup)
+    if (selected) select.value = selected
+    return select
+}
+
+function createRuleTokenMathSelect(selected = '') {
+    const select = el('select', 'cp-input-select cp-rule-token-action-select cp-rule-token-math-select')
+    select.appendChild(el('option', '', { value: '', text: UI_TEXT.rules.mathActions }))
+    for (const action of MATH_ACTIONS) {
+        select.appendChild(el('option', '', { value: action.value, text: action.label }))
+    }
+    if (selected) select.value = selected
+    return select
+}
+
+function tokensForInsertSelection(selection) {
+    const selected = String(selection || '')
+    if (!selected) return []
+    if (selected.startsWith('var:')) return [createPillToken(selected.slice(4))]
+    if (selected === 'number') return [createNumberToken(0)]
+    if (selected.startsWith('math:')) return mathTemplateTokens(selected)
+    return []
+}
+
+function hasUnresolvedSlots(tokens) {
+    return (Array.isArray(tokens) ? tokens : []).some((token) => token?.type === 'slot')
+}
+
+function renderTokenEditor(rowState) {
+    if (!rowState?.tokenEditor) return
+    const editor = rowState.tokenEditor
+    editor.innerHTML = ''
+
+    const tokens = Array.isArray(rowState.tokens) ? rowState.tokens : []
+    if (!Number.isInteger(rowState.pendingInsertIndex) || rowState.pendingInsertIndex < 0 || rowState.pendingInsertIndex > tokens.length) {
+        rowState.pendingInsertIndex = null
+    }
+
+    const moveTokenToGap = (fromIndex, gapIndex) => {
+        const from = Number(fromIndex)
+        const toGap = Number(gapIndex)
+        if (!Number.isInteger(from) || !Number.isInteger(toGap)) return
+        if (from < 0 || from >= rowState.tokens.length) return
+        if (toGap < 0 || toGap > rowState.tokens.length) return
+
+        const [moved] = rowState.tokens.splice(from, 1)
+        let target = toGap
+        if (from < toGap) target -= 1
+        rowState.tokens.splice(target, 0, moved)
+        rowState.dragTokenIndex = null
+        renderTokenEditor(rowState)
+        rowState.onExpressionChanged?.()
+    }
+
+    const renderGap = (index) => {
+        const gap = el('div', 'cp-rule-token-gap')
+        const add = el('button', 'cp-rule-token-gap-btn', { type: 'button' })
+        applyButtonIcon(add, BUTTON_ICON_MAP.add, UI_TEXT.rules.insertHere)
+        add.classList.toggle('is-armed', rowState.pendingInsertIndex === index)
+        add.addEventListener('click', () => {
+            rowState.pendingInsertIndex = index
+            renderTokenEditor(rowState)
+        })
+
+        gap.addEventListener('dragover', (event) => {
+            if (!Number.isInteger(rowState.dragTokenIndex)) return
+            event.preventDefault()
+        })
+        gap.addEventListener('drop', (event) => {
+            if (!Number.isInteger(rowState.dragTokenIndex)) return
+            event.preventDefault()
+            moveTokenToGap(rowState.dragTokenIndex, index)
+        })
+
+        gap.appendChild(add)
+
+        editor.appendChild(gap)
+    }
+
+    renderGap(0)
+    if (tokens.length === 0) {
+        editor.appendChild(el('span', 'cp-rule-token-placeholder', { text: UI_TEXT.rules.tokenEditorPlaceholder }))
+    }
+
+    for (let i = 0; i < tokens.length; i++) {
+        const token = normalizeToken(tokens[i])
+        if (!token) continue
+        rowState.tokens[i] = token
+
+        if (token.type === 'slot') {
+            const slot = el('button', 'cp-rule-token-slot', { type: 'button', text: UI_TEXT.rules.selectValue })
+            slot.draggable = true
+            slot.addEventListener('dragstart', (event) => {
+                rowState.dragTokenIndex = i
+                event.dataTransfer?.setData('text/plain', String(i))
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+            })
+            slot.addEventListener('dragend', () => {
+                rowState.dragTokenIndex = null
+            })
+            slot.addEventListener('click', () => {
+                rowState.insertContext = { mode: 'replace', index: i }
+                renderTokenEditor(rowState)
+            })
+            editor.appendChild(slot)
+            if (rowState.insertContext?.mode === 'replace' && rowState.insertContext?.index === i) {
+                const picker = createTokenInsertSelect()
+                picker.classList.add('cp-rule-token-picker')
+                picker.addEventListener('change', () => {
+                    const replaceTokens = tokensForInsertSelection(picker.value).map(normalizeToken).filter(Boolean)
+                    if (!replaceTokens.length) return
+                    rowState.tokens.splice(i, 1, ...replaceTokens)
+                    rowState.insertContext = null
+                    renderTokenEditor(rowState)
+                    rowState.onExpressionChanged?.()
+                })
+                editor.appendChild(picker)
+                requestAnimationFrame(() => picker.focus())
+            }
+            renderGap(i + 1)
+            continue
+        }
+
+        if (token.type === 'pill') {
+            const pill = el('button', 'cp-rule-token-pill', { type: 'button', title: token.code })
+            pill.draggable = true
+            pill.addEventListener('dragstart', (event) => {
+                rowState.dragTokenIndex = i
+                event.dataTransfer?.setData('text/plain', String(i))
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+            })
+            pill.addEventListener('dragend', () => {
+                rowState.dragTokenIndex = null
+            })
+            pill.append(
+                el('span', 'cp-rule-token-pill-label', { text: token.label }),
+                el('span', 'cp-rule-token-pill-remove', { html: closeIcon }),
+            )
+            pill.addEventListener('click', () => {
+                rowState.tokens.splice(i, 1)
+                renderTokenEditor(rowState)
+                rowState.onExpressionChanged?.()
+            })
+            editor.appendChild(pill)
+            renderGap(i + 1)
+            continue
+        }
+
+        if (token.type === 'number') {
+            const numberWrap = el('div', 'cp-rule-token-number-wrap')
+            numberWrap.draggable = true
+            numberWrap.addEventListener('dragstart', (event) => {
+                rowState.dragTokenIndex = i
+                event.dataTransfer?.setData('text/plain', String(i))
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+            })
+            numberWrap.addEventListener('dragend', () => {
+                rowState.dragTokenIndex = null
+            })
+            const number = el('input', 'cp-input-number cp-rule-token-number', {
+                type: 'number',
+                step: 0.001,
+                value: String(token.value ?? 0),
+            })
+            number.addEventListener('change', () => {
+                token.value = Number(number.value)
+                rowState.onExpressionChanged?.()
+            })
+            const remove = el('button', 'cp-rule-token-number-remove', { type: 'button', title: 'Remove token' })
+            remove.appendChild(el('span', 'cp-rule-token-pill-remove', { html: closeIcon }))
+            remove.addEventListener('click', (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                rowState.tokens.splice(i, 1)
+                renderTokenEditor(rowState)
+                rowState.onExpressionChanged?.()
+            })
+            numberWrap.append(number, remove)
+            editor.appendChild(numberWrap)
+            renderGap(i + 1)
+            continue
+        }
+
+        const op = el('button', 'cp-rule-token-math', { type: 'button', text: token.code.trim() || token.code })
+        op.draggable = true
+        op.addEventListener('dragstart', (event) => {
+            rowState.dragTokenIndex = i
+            event.dataTransfer?.setData('text/plain', String(i))
+            if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+        })
+        op.addEventListener('dragend', () => {
+            rowState.dragTokenIndex = null
+        })
+        op.addEventListener('click', () => {
+            rowState.tokens.splice(i, 1)
+            renderTokenEditor(rowState)
+            rowState.onExpressionChanged?.()
+        })
+        editor.appendChild(op)
+        renderGap(i + 1)
+    }
+}
+
+function createRuleInsertionSelect(selected = NONE_VAR) {
+    const select = el('select', 'cp-input-select cp-rule-token-select')
+    select.appendChild(el('option', '', { value: NONE_VAR, text: UI_TEXT.rules.insertVariable }))
+
+    const detailGroup = document.createElement('optgroup')
+    detailGroup.label = UI_TEXT.rules.detailVariables
+    for (const entry of getRuleVariablesByGroup('detail')) {
+        const option = el('option', '', { value: entry.id, text: entry.label })
+        option.title = `Previously: ${entry.legacyName}. ${entry.description}`
+        detailGroup.appendChild(option)
+    }
+
+    const overallGroup = document.createElement('optgroup')
+    overallGroup.label = UI_TEXT.rules.overallVariables
+    for (const entry of getRuleVariablesByGroup('overall')) {
+        const option = el('option', '', { value: entry.id, text: entry.label })
+        option.title = `Previously: ${entry.legacyName}. ${entry.description}`
+        overallGroup.appendChild(option)
+    }
+
+    select.append(detailGroup, overallGroup)
+    if (selected && selected !== NONE_VAR) select.value = selected
+    return select
+}
+
+function getMenuIconSvg(menuId) {
+    return MENU_ICON_MAP[menuId] || MENU_ICON_MAP.rules
+}
+
+function createRangePairControl(definition, syncRegistry) {
+    const row = el('div', 'cp-setting-row cp-setting-range')
+    const labelWrap = el('div', 'cp-setting-label-wrap')
+    const label = el('label', 'cp-setting-label', { text: definition.label, title: definition.tooltip })
+    labelWrap.appendChild(label)
+
+    const controls = el('div', 'cp-setting-range-controls')
+    const rangeContainer = el('div', 'cp-range-container cp-range-slider')
+    const minInput = el('input', 'cp-input-number', { type: 'number', step: definition.step })
+    const maxInput = el('input', 'cp-input-number', { type: 'number', step: definition.step })
+
+    noUiSlider.create(rangeContainer, {
+        start: [definition.min, definition.max],
+        connect: true,
+        range: {
+            min: definition.min,
+            max: definition.max,
         },
-        pow: Math.pow,
-        min: Math.min,
-        max: Math.max,
-        abs: Math.abs,
-        PI: Math.PI,
-        E: Math.E,
-    }
-    for (const id of _allInputIds) scope[id] = Number(inputs?.[id]) || 0
+        step: definition.step,
+        behaviour: 'tap-drag',
+    })
 
-    try {
-        const keys = Object.keys(scope)
-        const vals = keys.map((k) => scope[k])
-        const fn = new Function(...keys, `return (${text});`)
-        const out = fn(...vals)
-        if (typeof out === 'boolean') return out ? 1 : 0
-        const n = Number(out)
-        return Number.isFinite(n) ? n : 0
-    } catch {
-        return 0
-    }
-}
+    const sliderApi = rangeContainer.noUiSlider
+    // Keep initial noUiSlider update from writing min/max into ParamStore before we sync defaults.
+    let suppressCommit = true
 
-function _defaultOutputProbeValue(outputId) {
-    const meta = _outputMetaById.get(outputId)
-    if (!meta) return 0
-    if (meta.type === 'enum') {
-        if (outputId === 'shapeType') return 'square'
-        return Array.isArray(meta.values) && meta.values.length > 0 ? meta.values[0] : 0
+    const updateNumberInputs = (minValue, maxValue) => {
+        minInput.value = String(minValue)
+        maxInput.value = String(maxValue)
     }
 
-    const rawMin = Number(meta?.range?.[0])
-    const rawMax = Number(meta?.range?.[1])
-    const minFinite = Number.isFinite(rawMin)
-    const maxFinite = Number.isFinite(rawMax)
-    if (minFinite && maxFinite) return (rawMin + rawMax) * 0.5
-    if (minFinite && !maxFinite) return rawMin === 0 ? 1 : rawMin
-    if (!minFinite && maxFinite) return rawMax === 0 ? -1 : rawMax
-    return 1
-}
+    sliderApi.on('update', (values) => {
+        const minValue = Number(values[0])
+        const maxValue = Number(values[1])
+        updateNumberInputs(minValue, maxValue)
+        if (suppressCommit) return
+        definition.set(minValue, maxValue)
+    })
 
-function _evaluateConditionRow(row, inputs) {
-    if (!row?.conditionEnabled || row?.conditionOp === 'always') return true
-    const lhs = Number(inputs?.[row.conditionInput]) || 0
-    const rhs = row.conditionRhsMode === 'input'
-        ? (Number(inputs?.[row.conditionRhsInput]) || 0)
-        : (Number(row.conditionRhsLiteral) || 0)
-
-    switch (row.conditionOp) {
-        case '>': return lhs > rhs
-        case '>=': return lhs >= rhs
-        case '<': return lhs < rhs
-        case '<=': return lhs <= rhs
-        case '==': return lhs === rhs
-        case '!=': return lhs !== rhs
-        default: return true
-    }
-}
-
-function _evaluateRuleRhs(row, inputs) {
-    const source = String(row?.actionValueText || '').trim()
-    if (!source) return 0
-    if (_inputIds.includes(source)) return Number(inputs?.[source]) || 0
-    if (_isShapeOutput(row?.actionOutput)) return source === 'circle' ? 'circle' : 'square'
-
-    const n = Number(source)
-    if (Number.isFinite(n)) return n
-    return _safeEvalExpression(source, inputs)
-}
-
-function _computeRuleProbeStates(rows, inputs) {
-    const byTarget = new Map()
-    const probes = new Map()
-
-    const ensureTargetState = (target) => {
-        if (!byTarget.has(target)) byTarget.set(target, Object.create(null))
-        return byTarget.get(target)
-    }
-
-    for (const row of rows) {
-        const target = _normalizeTarget(row)
-        const state = ensureTargetState(target)
-        const key = row.actionOutput
-
-        if (!(key in state)) state[key] = _defaultOutputProbeValue(key)
-        const inValue = state[key]
-        let outValue = inValue
-
-        if (row.enabled !== false && _evaluateConditionRow(row, inputs)) {
-            const rhs = _evaluateRuleRhs(row, inputs)
-            if (_isShapeOutput(key)) {
-                outValue = String(rhs) === 'circle' ? 'circle' : 'square'
-            } else {
-                const lhsNum = Number(inValue)
-                const rhsNum = Number(rhs)
-                const base = Number.isFinite(lhsNum) ? lhsNum : 0
-                const arg = Number.isFinite(rhsNum) ? rhsNum : 0
-                switch (row.actionOp) {
-                    case 'set': outValue = arg; break
-                    case 'add': outValue = base + arg; break
-                    case 'subtract': outValue = base - arg; break
-                    case 'multiply': outValue = base * arg; break
-                    case 'divide': outValue = Math.abs(arg) > 1e-6 ? (base / arg) : base; break
-                    case 'clamp': outValue = Math.max(-Math.abs(arg), Math.min(Math.abs(arg), base)); break
-                    default: outValue = base; break
-                }
-            }
-            state[key] = outValue
+    const applyFromNumbers = () => {
+        let minValue = Number(minInput.value)
+        let maxValue = Number(maxInput.value)
+        if (!Number.isFinite(minValue)) minValue = definition.min
+        if (!Number.isFinite(maxValue)) maxValue = definition.max
+        minValue = clamp(minValue, definition.min, definition.max)
+        maxValue = clamp(maxValue, definition.min, definition.max)
+        if (minValue > maxValue) {
+            const temp = minValue
+            minValue = maxValue
+            maxValue = temp
         }
-
-        probes.set(row._uid, {
-            inKey: key,
-            outKey: key,
-            inValue,
-            outValue,
-        })
+        suppressCommit = true
+        sliderApi.set([minValue, maxValue])
+        suppressCommit = false
+        updateNumberInputs(minValue, maxValue)
+        definition.set(minValue, maxValue)
     }
 
-    return probes
+    minInput.addEventListener('input', applyFromNumbers)
+    maxInput.addEventListener('input', applyFromNumbers)
+    minInput.addEventListener('change', applyFromNumbers)
+    maxInput.addEventListener('change', applyFromNumbers)
+
+    const sync = () => {
+        const current = definition.get()
+        suppressCommit = true
+        sliderApi.set([current.min, current.max])
+        suppressCommit = false
+        updateNumberInputs(current.min, current.max)
+    }
+
+    controls.append(rangeContainer, minInput, maxInput)
+    row.append(labelWrap, controls)
+    registerSync(syncRegistry, sync, definition.syncKeys)
+    sync()
+    suppressCommit = false
+    return row
 }
 
-function _refreshSelectOptions(select, options, selectedValue) {
-    select.innerHTML = ''
-    for (const optionDef of options) {
-        const option = el('option', '', { value: optionDef.value, text: optionDef.label })
-        if (String(optionDef.value) === String(selectedValue)) option.selected = true
-        select.appendChild(option)
+function createSliderControl(definition, syncRegistry) {
+    const row = el('div', 'cp-setting-row')
+    const labelWrap = el('div', 'cp-setting-label-wrap')
+    const label = el('label', 'cp-setting-label', { text: definition.label, title: definition.tooltip })
+    labelWrap.appendChild(label)
+
+    const controls = el('div', 'cp-setting-controls')
+    const slider = el('input', 'cp-input-range', {
+        type: 'range',
+        min: definition.min,
+        max: definition.max,
+        step: definition.step,
+    })
+    const number = el('input', 'cp-input-number', {
+        type: 'number',
+        step: definition.step,
+        min: definition.min,
+        max: definition.max,
+    })
+
+    const apply = (raw) => {
+        const value = clamp(raw, definition.min, definition.max)
+        set(definition.key, value)
     }
-    if (typeof select._autoSize === 'function') select._autoSize()
+
+    slider.addEventListener('input', () => apply(Number(slider.value)))
+    number.addEventListener('change', () => apply(Number(number.value)))
+
+    const sync = () => {
+        const value = Number(params[definition.key])
+        slider.value = String(Number.isFinite(value) ? value : definition.min)
+        number.value = String(Number.isFinite(value) ? value : definition.min)
+    }
+
+    controls.append(slider, number)
+    row.append(labelWrap, controls)
+    registerSync(syncRegistry, sync, [definition.key])
+    sync()
+    return row
 }
 
-function _rowToRule(row, order) {
-    const condition = { operator: row.conditionEnabled ? row.conditionOp : 'always' }
-    if (row.conditionEnabled && row.conditionOp !== 'always') {
-        condition.input = row.conditionInput
-        if (row.conditionRhsMode === 'input') condition.valueInput = row.conditionRhsInput
-        else condition.value = Number(row.conditionRhsLiteral)
+function createSelectOptions(entries, selected) {
+    const fragment = document.createDocumentFragment()
+    for (const entry of entries) {
+        const option = el('option', '', { value: entry.value, text: entry.label })
+        if (entry.title) option.title = entry.title
+        if (String(entry.value) === String(selected)) option.selected = true
+        fragment.appendChild(option)
     }
-
-    const action = {
-        operator: row.actionOp,
-        output: row.actionOutput,
-    }
-
-    const rawValueText = String(row.actionValueText ?? '').trim()
-    if (_isShapeOutput(row.actionOutput)) {
-        action.value = rawValueText === 'circle' ? 'circle' : 'square'
-    } else {
-        const numericValue = Number(rawValueText)
-        if (rawValueText && Number.isFinite(numericValue)) action.value = numericValue
-        else if (_inputIds.includes(rawValueText)) action.input = rawValueText
-        else action.expression = rawValueText
-    }
-
-    return {
-        id: row.id,
-        group: _normalizeGroupPath(row.group),
-        subgroup: '',
-        enabled: !!row.enabled,
-        target: row.target,
-        condition,
-        actions: [action],
-        order,
-    }
+    return fragment
 }
 
-function _ruleToRow(rule, index) {
-    const action = Array.isArray(rule.actions) && rule.actions[0] ? rule.actions[0] : { operator: 'set', output: 'opacity', value: 1 }
-    const conditionOp = rule.condition?.operator || 'always'
-    const hasCondition = conditionOp !== 'always'
-    const actionValueText = (() => {
-        if (typeof action.expression === 'string') return action.expression
-        if (typeof action.input === 'string' && action.input.trim()) return action.input.trim()
-        if (action.value === 'circle' || action.value === 'square') return action.value
-        if (Number.isFinite(Number(action.value))) return String(Number(action.value))
-        return '1'
-    })()
-    const legacyGroup = typeof rule.group === 'string' ? rule.group : ''
-    const legacySubgroup = typeof rule.subgroup === 'string' ? rule.subgroup : ''
-    const mergedPath = _normalizeGroupPath(
-        legacySubgroup
-            ? `${legacyGroup || ''}/${legacySubgroup}`
-            : legacyGroup,
+function createRuleVariableSelect(group, selected = NONE_VAR) {
+    const select = el('select', 'cp-input-select')
+    const baseOptions = [{ value: NONE_VAR, label: UI_TEXT.rules.undefined }]
+    const options = baseOptions.concat(
+        getRuleVariablesByGroup(group).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+            title: `Previously: ${entry.legacyName}. ${entry.description}`,
+        }))
     )
-    return {
-        _uid: typeof rule._uid === 'string' && rule._uid ? rule._uid : _newRuleUid(),
-        id: (typeof rule.id === 'string' && rule.id.trim()) ? rule.id.trim() : _defaultRuleName(index),
-        group: mergedPath,
-        subgroup: '',
-        enabled: rule.enabled !== false,
-        target: _normalizeTarget(rule),
-        conditionEnabled: hasCondition,
-        conditionOp,
-        conditionInput: _inputIds.includes(rule.condition?.input) ? rule.condition.input : 'amplitude',
-        conditionRhsMode: rule.condition?.valueInput ? 'input' : 'literal',
-        conditionRhsInput: _inputIds.includes(rule.condition?.valueInput) ? rule.condition.valueInput : 'amplitude',
-        conditionRhsLiteral: Number.isFinite(Number(rule.condition?.value)) ? Number(rule.condition.value) : 0.5,
-        actionOutput: _outputIds.includes(action.output) ? action.output : 'opacity',
-        actionOp: _actionOps.includes(action.operator) ? action.operator : 'set',
-        actionValueText,
-        uiState: rule.uiState || 'normal',
-        order: Number.isFinite(rule.order) ? Number(rule.order) : index,
+    select.appendChild(createSelectOptions(options, selected))
+    return select
+}
+
+function createRuleConditionInputSelect(selected = NONE_VAR) {
+    const select = el('select', 'cp-input-select')
+    select.appendChild(el('option', '', { value: NONE_VAR, text: UI_TEXT.rules.selectValue }))
+
+    const detailGroup = document.createElement('optgroup')
+    detailGroup.label = UI_TEXT.rules.detailVariables
+    for (const entry of getRuleVariablesByGroup('detail')) {
+        detailGroup.appendChild(el('option', '', { value: entry.id, text: entry.label }))
     }
+
+    const overallGroup = document.createElement('optgroup')
+    overallGroup.label = UI_TEXT.rules.overallVariables
+    for (const entry of getRuleVariablesByGroup('overall')) {
+        overallGroup.appendChild(el('option', '', { value: entry.id, text: entry.label }))
+    }
+
+    select.append(detailGroup, overallGroup)
+    if (selected && selected !== NONE_VAR) select.value = selected
+    return select
 }
 
-function _formatProbeNumber(value) {
-    if (typeof value === 'string') return value
-    const n = Number(value)
-    if (!Number.isFinite(n)) return '0.000'
-    return n.toFixed(3)
-}
+function buildFileMenu(body) {
+    const panel = el('div', 'cp-menu-pane-inner')
+    const PRESET_FILE_EXTENSION = '.ssp-preset.json'
 
-function _splitGroupPath(path) {
-    return String(path || '')
-        .split('/')
-        .map((part) => String(part || '').trim())
-        .filter(Boolean)
-}
+    const presetNameFromFile = (rawName = '') => {
+        const fileName = String(rawName || '').trim()
+        if (!fileName) return ''
+        if (/\.ssp-preset\.json$/i.test(fileName)) return fileName.replace(/\.ssp-preset\.json$/i, '')
+        return fileName.replace(/\.[^./\\]+$/g, '')
+    }
 
-function _joinGroupPath(parts) {
-    if (!Array.isArray(parts)) return ''
-    return parts
-        .map((part) => String(part || '').trim())
-        .filter(Boolean)
-        .join(GROUP_PATH_SEPARATOR)
-}
-
-function _normalizeGroupPath(path) {
-    return _joinGroupPath(_splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/')))
-}
-
-function _parentGroupPath(path) {
-    const parts = _splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
-    if (parts.length <= 1) return ''
-    return _joinGroupPath(parts.slice(0, -1))
-}
-
-function _appendGroupPath(parentPath, childName) {
-    const parent = _splitGroupPath(String(parentPath || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
-    const child = String(childName || '').trim()
-    if (!child) return _joinGroupPath(parent)
-    return _joinGroupPath([...parent, child])
-}
-
-function _ruleSummary(row) {
-    const cond = !row.conditionEnabled || row.conditionOp === 'always'
-        ? 'always'
-        : `${row.conditionInput} ${row.conditionOp} ${row.conditionRhsMode === 'input' ? row.conditionRhsInput : Number(row.conditionRhsLiteral).toFixed(2)}`
-    return `When ${cond}, ${row.actionOp} ${row.actionOutput} using ${String(row.actionValueText || '0')}`
-}
-
-function _templateOptionsForOutput(outputId) {
-    const paletteIds = (() => {
-        const raw = Array.isArray(params?.palettes) ? params.palettes : []
-        const out = []
-        for (const palette of raw) {
-            const id = String(palette?.id || '').trim()
-            if (!id || out.includes(id)) continue
-            out.push(id)
-        }
-        return out
-    })()
-
-    const paletteTemplates = paletteIds.flatMap((id) => {
-        const escapedId = id.replace(/'/g, "\\'")
-        return [
-            { value: `expr:palette('${escapedId}', notePitchClass)`, label: `Discrete palette by notePitchClass (${id})` },
-            { value: `expr:gradient('${escapedId}', normFreq)`, label: `Gradient palette by normFreq (${id})` },
-        ]
+    const buildPresetPayload = (name, presetParams) => ({
+        schemaVersion: 1,
+        name: String(name || '').trim(),
+        params: (presetParams && typeof presetParams === 'object') ? presetParams : {},
+        updatedAt: new Date().toISOString(),
     })
 
-    if (outputId === 'rgb') {
-        return [
-            { value: '', label: 'rgb templates...' },
-            { value: 'expr:rgb(amplitude*255, bass*255, high*255)', label: 'RGB from amp/bass/high' },
-            ...paletteTemplates,
-            { value: 'expr:matchLuma(220,60,40, amplitude*255)', label: 'Luma-matched tone' },
-            ...(paletteTemplates.length === 0 ? [{ value: '', label: 'save a palette to unlock palette templates' }] : []),
-        ]
-    }
-
-    if (outputId === 'hsv') {
-        return [
-            { value: '', label: 'hsv templates...' },
-            { value: 'expr:hsv(normFreq*360, 85, 60 + amplitude*40)', label: 'HSV musical ramp' },
-            { value: 'expr:hsv((notePitchClass/12)*360, 90, 65)', label: 'HSV by pitch class' },
-            { value: 'expr:hsv((octave+1)*30, 80, 70)', label: 'HSV by octave' },
-            ...paletteTemplates,
-            ...(paletteTemplates.length === 0 ? [{ value: '', label: 'save a palette to unlock palette templates' }] : []),
-        ]
-    }
-
-    return [{ value: '', label: 'template...' }]
-}
-
-function _createSelect(opts, value, className = 'cp-rule-input') {
-    const s = el('select', className)
-    for (const o of opts) {
-        const option = el('option', '', { value: o.value, text: o.label })
-        if (String(o.value) === String(value)) option.selected = true
-        s.appendChild(option)
-    }
-    const autoSize = () => {
-        const selected = s.options[s.selectedIndex]
-        const label = selected ? String(selected.textContent || selected.value || '') : ''
-        const font = getComputedStyle(s).font || '10px sans-serif'
-        if (!_createSelect._canvas) {
-            _createSelect._canvas = document.createElement('canvas')
-            _createSelect._ctx = _createSelect._canvas.getContext('2d')
+    const parsePresetText = (text, fileName = '') => {
+        const payload = JSON.parse(String(text || '{}'))
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Preset file is invalid.')
         }
-        const ctx = _createSelect._ctx
-        if (!ctx) return
-        ctx.font = font
-        const measured = Math.ceil(ctx.measureText(label).width)
-        const width = Math.max(50, Math.min(280, measured + 30))
-        s.style.width = `${width}px`
-    }
-    s._autoSize = autoSize
-    s.addEventListener('change', autoSize)
-    s.addEventListener('focus', autoSize)
-    requestAnimationFrame(autoSize)
-    return s
-}
-
-function _wireSelectAllOnFirstClick(node) {
-    if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return
-    let shouldSelectOnFocus = false
-    let selectedByHelper = false
-
-    node.addEventListener('pointerdown', () => {
-        if (!selectedByHelper) {
-            shouldSelectOnFocus = true
-            return
+        const parsedName = String(payload?.name || '').trim() || presetNameFromFile(fileName)
+        if (payload?.params && typeof payload.params === 'object') {
+            return { name: parsedName, params: payload.params }
         }
-        shouldSelectOnFocus = false
-        selectedByHelper = false
-    })
+        return { name: parsedName, params: payload }
+    }
 
-    node.addEventListener('focus', () => {
-        if (!shouldSelectOnFocus) return
-        shouldSelectOnFocus = false
-        requestAnimationFrame(() => {
+    const savePresetToLocalFile = async (name, presetParams) => {
+        const trimmedName = String(name || '').trim()
+        const fallbackName = `${trimmedName || 'seesound-preset'}${PRESET_FILE_EXTENSION}`
+        const payload = buildPresetPayload(trimmedName, presetParams)
+        if (typeof window.showSaveFilePicker === 'function') {
             try {
-                node.select()
-                selectedByHelper = true
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: fallbackName,
+                    excludeAcceptAllOption: false,
+                    types: [{
+                        description: 'SEESOUND Preset',
+                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
+                    }],
+                })
+                if (!handle) return false
+                const writable = await handle.createWritable()
+                await writable.write(JSON.stringify(payload, null, 2))
+                await writable.close()
+                return true
             } catch {
-                selectedByHelper = false
-            }
-        })
-    })
-
-    node.addEventListener('blur', () => {
-        shouldSelectOnFocus = false
-        selectedByHelper = false
-    })
-}
-
-function _createInputNumber(value, step = '0.01', className = 'cp-rule-input cp-rule-num') {
-    const input = el('input', className, { type: 'number', value: String(value), step })
-    _wireSelectAllOnFirstClick(input)
-    return input
-}
-
-export function renderCompileStatus(state) {
-    _ruleBuilderApi?.renderCompileStatus(state)
-}
-
-export function serializeRuleRows() {
-    return _ruleBuilderApi ? _ruleBuilderApi.serialize() : []
-}
-
-export function addRuleRow(initialRule) {
-    _ruleBuilderApi?.addRow(initialRule)
-}
-
-export function initRuleBuilder(container) {
-    if (!container) return null
-    const section = el('div', 'cp-rule-section')
-    const header = el('div', 'cp-rule-header')
-    const title = el('span', 'cp-rule-title', { text: 'Rule Builder' })
-    header.append(title)
-
-    const error = el('div', 'cp-rule-error')
-
-    const rowsWrap = el('div', 'cp-rule-rows')
-    const rulePresetBar = el('div', 'cp-rule-preset')
-    const rulePresetSel = el('select', 'cp-preset-sel')
-    const rulePresetName = el('input', 'cp-preset-name', { type: 'text', placeholder: 'single_rule_preset' })
-    const rulePresetSave = el('button', 'cp-preset-btn cp-preset-save', { text: '🖫', title: 'Save selected rule as preset' })
-    const rulePresetLoad = el('button', 'cp-preset-btn', { text: '🗁', title: 'Load selected rule preset (append)' })
-    const rulePresetDel = el('button', 'cp-preset-btn cp-preset-del', { text: '🗙', title: 'Delete selected rule preset' })
-    rulePresetBar.append(rulePresetSel, rulePresetLoad, rulePresetDel, rulePresetName, rulePresetSave)
-
-    section.append(header, error, rulePresetBar, rowsWrap)
-    container.appendChild(section)
-
-    let rows = (Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []).map(_ruleToRow)
-    let _syncingFromBuilder = false
-    let _dragRowIndex = -1
-    let _dragSelectionUids = []
-    let _lastSelectedIndex = -1
-    const _manualGroups = new Map()
-    const _groupOrder = []
-    const _collapsedGroups = new Set()
-    const _collapsedContextGroups = new Set()
-    const _collapsedRuleUids = new Set()
-    const _selectedRuleUids = new Set()
-    let _selectedGroupPath = ''
-    let _selectedContextGroup = 'spawnedParticles'
-    const RULE_PRESET_PREFIX = 'rule__'
-    let _rulePresetNames = []
-    let _lastProbeInputs = Object.create(null)
-    let _ruleUiStateTimer = null
-    let _autoScrollTimer = null
-    let _autoScrollDirection = 0
-
-    function _applyRuleUiStateFromParams() {
-        const ui = (params.ruleUiState && typeof params.ruleUiState === 'object') ? params.ruleUiState : {}
-        _collapsedGroups.clear()
-        _collapsedContextGroups.clear()
-        _collapsedRuleUids.clear()
-        _manualGroups.clear()
-
-        for (const key of (Array.isArray(ui.collapsedGroups) ? ui.collapsedGroups : [])) {
-            const k = String(key || '').trim()
-            if (!k) continue
-            if (k.startsWith('context::')) _collapsedContextGroups.add(k)
-            else _collapsedGroups.add(k)
-        }
-        const collapsedRuleIds = new Set((Array.isArray(ui.collapsedRules) ? ui.collapsedRules : []).map((id) => String(id || '').trim()).filter(Boolean))
-        for (const row of rows) {
-            if (collapsedRuleIds.has(String(row.id || '').trim())) _collapsedRuleUids.add(row._uid)
-        }
-
-        const standaloneGroups = Array.isArray(ui.standaloneGroups) ? ui.standaloneGroups : []
-        for (const raw of standaloneGroups) {
-            const token = String(raw || '').trim()
-            if (!token) continue
-            const sep = token.indexOf('::')
-            if (sep <= 0) continue
-            const contextKey = token.slice(0, sep)
-            const path = _normalizeGroupPath(token.slice(sep + 2))
-            if (!path) continue
-            _ensureManualGroup(path, contextKey)
-        }
-
-        _selectedContextGroup = String(ui.selectedContextGroup || _selectedContextGroup || 'spawnedParticles')
-        _selectedGroupPath = _normalizeGroupPath(ui.selectedGroupPath || ui.selectedGroupName || '')
-    }
-
-    function _persistRuleUiState() {
-        const collapsedRules = rows
-            .filter((row) => _collapsedRuleUids.has(row._uid))
-            .map((row) => String(row.id || '').trim())
-            .filter(Boolean)
-
-        const standaloneGroups = []
-        for (const [groupPath, contexts] of _manualGroups.entries()) {
-            const path = _normalizeGroupPath(groupPath)
-            if (!path || !(contexts instanceof Set)) continue
-            for (const ctx of contexts) {
-                if (!RULE_TARGETS.includes(ctx)) continue
-                standaloneGroups.push(`${ctx}::${path}`)
+                return false
             }
         }
 
-        set('ruleUiState', {
-            collapsedGroups: [..._collapsedGroups, ..._collapsedContextGroups],
-            collapsedSubgroups: [],
-            collapsedRules,
-            standaloneGroups,
-            selectedContextGroup: _selectedContextGroup,
-            selectedGroupPath: _selectedGroupPath,
-            selectedGroupName: _selectedGroupPath,
-            selectedSubgroup: '',
-        })
-    }
-
-    function _schedulePersistRuleUiState() {
-        if (_ruleUiStateTimer) clearTimeout(_ruleUiStateTimer)
-        _ruleUiStateTimer = setTimeout(() => {
-            _ruleUiStateTimer = null
-            _persistRuleUiState()
-        }, 120)
-    }
-
-    _applyRuleUiStateFromParams()
-
-    function _commitPendingRuleEdits() {
-        const active = document.activeElement
-        if (active instanceof HTMLElement && active.closest('.cp-rule-section')) active.blur()
-    }
-
-    function _rulesScrollContainer() {
-        return rowsWrap.closest('.cp-pane-body') || rowsWrap
-    }
-
-    function _stopAutoScroll() {
-        _autoScrollDirection = 0
-        if (_autoScrollTimer) {
-            clearInterval(_autoScrollTimer)
-            _autoScrollTimer = null
-        }
-    }
-
-    function _startAutoScroll(direction) {
-        const nextDir = direction < 0 ? -1 : 1
-        if (_autoScrollTimer && _autoScrollDirection === nextDir) return
-        _stopAutoScroll()
-        _autoScrollDirection = nextDir
-        _autoScrollTimer = setInterval(() => {
-            const scroller = _rulesScrollContainer()
-            scroller.scrollTop += _autoScrollDirection * 14
-        }, 16)
-    }
-
-    function _updateAutoScrollByClientY(clientY) {
-        const scroller = _rulesScrollContainer()
-        const rect = scroller.getBoundingClientRect()
-        const edge = 36
-        if (clientY <= rect.top + edge) {
-            _startAutoScroll(-1)
-            return
-        }
-        if (clientY >= rect.bottom - edge) {
-            _startAutoScroll(1)
-            return
-        }
-        _stopAutoScroll()
-    }
-
-    function _nextUniqueRuleId(seed) {
-        const used = new Set(rows.map((r) => String(r.id || '').trim()).filter(Boolean))
-        const base = String(seed || '').trim() || _defaultRuleName(rows.length)
-        if (!used.has(base)) return base
-        let n = 2
-        while (used.has(`${base}-${n}`)) n++
-        return `${base}-${n}`
-    }
-
-    function _duplicateRowAt(index) {
-        if (index < 0 || index >= rows.length) return
-        const source = rows[index]
-        const copy = {
-            ...source,
-            _uid: _newRuleUid(),
-            id: _nextUniqueRuleId(source.id || _defaultRuleName(rows.length)),
-            uiState: 'normal',
-        }
-        rows.splice(index + 1, 0, copy)
-        pushRules()
-    }
-
-    function renderCompile(state) {
-        const status = state?.compileStatus || 'stale'
-        error.textContent = state?.compileError
-            ? `Compile error: ${state.compileError}${state.compileLine ? ` (line ${state.compileLine})` : ''}`
-            : (Array.isArray(state?.rejected) && state.rejected.length > 0
-                ? `Rejected rules: ${state.rejected.map(r => r.id).join(', ')}`
-                : '')
-    }
-
-    function pushRules() {
-        const uidSet = new Set(rows.map((r) => r._uid))
-        for (const uid of [..._selectedRuleUids]) if (!uidSet.has(uid)) _selectedRuleUids.delete(uid)
-        for (const uid of [..._collapsedRuleUids]) if (!uidSet.has(uid)) _collapsedRuleUids.delete(uid)
-
-        for (const row of rows) _ensureValidOutputForTarget(row)
-        const serialized = rows.map((r, i) => _rowToRule(r, i))
-        const annotated = annotateRuleContradictions(serialized)
-        const red = new Set(annotated.redRuleIds)
-        rows = rows.map((r) => ({ ...r, uiState: red.has(r.id) ? 'red' : 'normal' }))
-        _syncingFromBuilder = true
-        set('ruleBlocks', annotated.rules)
-        _syncingFromBuilder = false
-        renderCompile({ compileStatus: 'stale', compileError: null })
-        drawRows()
-    }
-
-    function wireChange(handler) {
-        return (evt) => {
-            const changed = handler(evt)
-            if (changed === false) return
-            pushRules()
-        }
-    }
-
-    function _norm(value) {
-        return String(value || '').trim()
-    }
-
-    function _ensureManualGroup(groupName, contextKey = null) {
-        const g = _norm(groupName)
-        if (!g) return
-        if (!_manualGroups.has(g)) _manualGroups.set(g, new Set())
-        if (contextKey && RULE_TARGETS.includes(contextKey)) _manualGroups.get(g).add(contextKey)
-    }
-
-    function _syncManualGroupsFromRows() {
-        for (const row of rows) {
-            const g = _norm(row.group)
-            if (!g) continue
-            _ensureManualGroup(g, _normalizeTarget(row))
-            if (!_groupOrder.includes(g)) _groupOrder.push(g)
-        }
-    }
-
-    function _isInteractiveTarget(target) {
-        const node = target instanceof Element ? target : null
-        if (!node) return false
-        return !!node.closest('input,select,button,textarea,label,.cp-rule-slot-add')
-    }
-
-    function _setSingleSelection(index) {
-        if (index < 0 || index >= rows.length) return
-        _selectedRuleUids.clear()
-        _selectedRuleUids.add(rows[index]._uid)
-        _lastSelectedIndex = index
-        _selectedGroupPath = ''
-    }
-
-    function _selectRangeTo(index) {
-        if (index < 0 || index >= rows.length) return
-        if (_lastSelectedIndex < 0 || _lastSelectedIndex >= rows.length) {
-            _setSingleSelection(index)
-            return
-        }
-        const lo = Math.min(_lastSelectedIndex, index)
-        const hi = Math.max(_lastSelectedIndex, index)
-        _selectedRuleUids.clear()
-        for (let i = lo; i <= hi; i++) _selectedRuleUids.add(rows[i]._uid)
-        _selectedGroupPath = ''
-    }
-
-    function _toggleSelection(index) {
-        if (index < 0 || index >= rows.length) return
-        const uid = rows[index]._uid
-        if (_selectedRuleUids.has(uid)) _selectedRuleUids.delete(uid)
-        else _selectedRuleUids.add(uid)
-        _lastSelectedIndex = index
-        _selectedGroupPath = ''
-    }
-
-    function _handleRuleSelect(index, evt) {
-        if (index < 0 || index >= rows.length) return
-        const withCtrl = !!(evt.ctrlKey || evt.metaKey)
-        if (evt.shiftKey) _selectRangeTo(index)
-        else if (withCtrl) _toggleSelection(index)
-        else _setSingleSelection(index)
-        drawRows()
-    }
-
-    function _selectIndices(indices, evt) {
-        const unique = [...new Set((indices || []).filter((idx) => idx >= 0 && idx < rows.length))].sort((a, b) => a - b)
-        if (unique.length === 0) return
-        const withCtrl = !!(evt?.ctrlKey || evt?.metaKey)
-        _selectedGroupPath = ''
-
-        if (evt?.shiftKey && _lastSelectedIndex >= 0 && _lastSelectedIndex < rows.length) {
-            const target = unique[unique.length - 1]
-            const lo = Math.min(_lastSelectedIndex, target)
-            const hi = Math.max(_lastSelectedIndex, target)
-            _selectedRuleUids.clear()
-            for (let i = lo; i <= hi; i++) _selectedRuleUids.add(rows[i]._uid)
-            drawRows()
-            return
-        }
-
-        if (withCtrl) {
-            for (const idx of unique) {
-                const uid = rows[idx]._uid
-                if (_selectedRuleUids.has(uid)) _selectedRuleUids.delete(uid)
-                else _selectedRuleUids.add(uid)
-            }
-        } else {
-            _selectedRuleUids.clear()
-            for (const idx of unique) _selectedRuleUids.add(rows[idx]._uid)
-        }
-
-        _lastSelectedIndex = unique[unique.length - 1]
-        drawRows()
-    }
-
-    function _isTypingTarget(node) {
-        const elNode = node instanceof Element ? node : null
-        if (!elNode) return false
-        return !!elNode.closest('input,textarea,select,[contenteditable="true"]')
-    }
-
-    function _removeRowsByIndices(indices) {
-        const unique = [...new Set((indices || []).filter((idx) => idx >= 0 && idx < rows.length))].sort((a, b) => a - b)
-        if (unique.length === 0) return false
-        for (let k = unique.length - 1; k >= 0; k--) rows.splice(unique[k], 1)
-        _selectedRuleUids.clear()
-        _selectedGroupPath = ''
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = fallbackName
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        URL.revokeObjectURL(url)
         return true
     }
 
-    function _deleteSelected() {
-        const selected = _selectedIndices()
-        if (selected.length === 0) return false
-        const removed = _removeRowsByIndices(selected)
-        if (removed) pushRules()
-        return removed
-    }
-
-    function _selectedIndices() {
-        const out = []
-        for (let i = 0; i < rows.length; i++) {
-            if (_selectedRuleUids.has(rows[i]._uid)) out.push(i)
-        }
-        return out
-    }
-
-    function _rulePresetShortName(fullName) {
-        return fullName.startsWith(RULE_PRESET_PREFIX) ? fullName.slice(RULE_PRESET_PREFIX.length) : fullName
-    }
-
-    async function _refreshRulePresets() {
-        const all = await listPresets()
-        _rulePresetNames = all.filter((name) => String(name || '').startsWith(RULE_PRESET_PREFIX))
-        const prev = String(rulePresetSel.value || '')
-        rulePresetSel.innerHTML = '<option value="">rule presets</option>'
-        for (const full of _rulePresetNames) {
-            const opt = el('option', '', { value: full, text: _rulePresetShortName(full) })
-            rulePresetSel.appendChild(opt)
-        }
-        if (prev && _rulePresetNames.includes(prev)) rulePresetSel.value = prev
-    }
-
-    async function _saveSelectedRulePreset() {
-        _commitPendingRuleEdits()
-        const selected = _selectedIndices()
-        if (selected.length < 1) {
-            alert('Select one or more rules to save as a rule preset.')
-            return
-        }
-        const baseName = String(rulePresetName.value || _rulePresetShortName(String(rulePresetSel.value || ''))).trim()
-        if (!baseName) {
-            alert('Enter a single-rule preset name first.')
-            rulePresetName.focus()
-            return
-        }
-        const fullName = `${RULE_PRESET_PREFIX}${baseName}`
-        if (_rulePresetNames.includes(fullName) && !confirm(`Overwrite single-rule preset "${baseName}"?`)) return
-
-        const selectedRules = selected.map((idx, order) => _rowToRule(rows[idx], order))
-        const snapshot = getSnapshot()
-        snapshot.ruleBlocks = selectedRules
-        await savePreset(fullName, snapshot)
-        await _refreshRulePresets()
-        rulePresetSel.value = fullName
-        rulePresetName.value = baseName
-    }
-
-    async function _loadSingleRulePreset(fullName) {
-        if (!fullName) return
-        const data = await loadPreset(fullName)
-        const incoming = Array.isArray(data?.params?.ruleBlocks) ? data.params.ruleBlocks : []
-        if (incoming.length === 0) {
-            alert('Selected rule preset has no rule block.')
-            return
-        }
-        for (const rule of incoming) rows.push(_ruleToRow(rule, rows.length))
-        pushRules()
-    }
-
-    function _moveSelectionTo(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
-        let indices = _dragSelectionUids
-            .map((uid) => rows.findIndex((r) => r._uid === uid))
-            .filter((idx) => idx >= 0)
-            .sort((a, b) => a - b)
-
-        if (indices.length === 0) {
-            indices = _selectedIndices()
-        }
-        if (indices.length === 0 && _dragRowIndex >= 0 && _dragRowIndex < rows.length) {
-            indices = [_dragRowIndex]
-        }
-        if (indices.length === 0) return
-
-        const selected = new Set(indices)
-        if (targetIndex >= 0 && targetIndex <= rows.length) {
-            const prev = targetIndex - 1
-            if (selected.has(targetIndex) || (prev >= 0 && selected.has(prev))) {
-                _dragRowIndex = -1
-                _dragSelectionUids = []
-                return
-            }
-        }
-
-        const moved = indices.map((idx) => rows[idx])
-        for (let k = indices.length - 1; k >= 0; k--) rows.splice(indices[k], 1)
-
-        let to = Math.max(0, Math.min(rows.length, targetIndex))
-        for (const idx of indices) if (idx < to) to--
-
-        const g = _normalizeGroupPath(nextGroupPath)
-        const targetForGroup = _ruleTargets.includes(contextTarget) ? contextTarget : _selectedContextGroup
-        for (const row of moved) {
-            if (_ruleTargets.includes(g)) {
-                row.target = g
-                row.group = ''
-                row.subgroup = ''
-            } else {
-                row.target = targetForGroup
-                row.group = g
-                row.subgroup = ''
-            }
-        }
-
-        rows.splice(to, 0, ...moved)
-        _ensureManualGroup(g)
-        _selectedRuleUids.clear()
-        for (const row of moved) _selectedRuleUids.add(row._uid)
-        _lastSelectedIndex = rows.findIndex((r) => r._uid === moved[moved.length - 1]._uid)
-        _selectedGroupPath = g
-        _dragRowIndex = -1
-        _dragSelectionUids = []
-        pushRules()
-    }
-
-    function _syncGroupOrder(grouping) {
-        const names = [...grouping.keys()]
-        for (const name of names) {
-            if (!_groupOrder.includes(name)) _groupOrder.push(name)
-        }
-        for (let i = _groupOrder.length - 1; i >= 0; i--) {
-            if (!names.includes(_groupOrder[i])) _groupOrder.splice(i, 1)
-        }
-    }
-
-    function _applyGroupOrderToRows() {
-        const rank = new Map(_groupOrder.map((name, idx) => [name, idx + 1]))
-        rows = rows
-            .map((row, idx) => ({ row, idx }))
-            .sort((a, b) => {
-                const ra = rank.get(_norm(a.row.group)) ?? 0
-                const rb = rank.get(_norm(b.row.group)) ?? 0
-                if (ra !== rb) return ra - rb
-                return a.idx - b.idx
-            })
-            .map((entry) => entry.row)
-    }
-
-    function _moveGroupBefore(fromGroup, toGroup) {
-        const from = _norm(fromGroup)
-        const to = _norm(toGroup)
-        if (!from || !to || from === to) return
-        const fromIdx = _groupOrder.indexOf(from)
-        const toIdx = _groupOrder.indexOf(to)
-        if (fromIdx < 0 || toIdx < 0) return
-        _groupOrder.splice(fromIdx, 1)
-        const nextTo = _groupOrder.indexOf(to)
-        _groupOrder.splice(nextTo < 0 ? _groupOrder.length : nextTo, 0, from)
-        _applyGroupOrderToRows()
-        pushRules()
-    }
-
-    function _moveDraggedTo(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
-        _moveSelectionTo(targetIndex, nextGroupPath, contextTarget)
-    }
-
-    function _insertNewRuleAt(targetIndex, nextGroupPath = '', contextTarget = _selectedContextGroup) {
-        const row = _ruleToRow(_defaultRule(rows.length), rows.length)
-        const g = _normalizeGroupPath(nextGroupPath)
-        const targetForGroup = _ruleTargets.includes(contextTarget) ? contextTarget : _selectedContextGroup
-        if (_ruleTargets.includes(g)) {
-            row.target = g
-            row.group = ''
-            row.subgroup = ''
-        } else {
-            row.target = targetForGroup
-            row.group = g
-            row.subgroup = ''
-        }
-        const to = Math.max(0, Math.min(rows.length, targetIndex))
-        rows.splice(to, 0, row)
-        _ensureManualGroup(row.group)
-        _selectedGroupPath = g
-        pushRules()
-    }
-
-    function _moveWithinGroup(index, direction) {
-        if (index < 0 || index >= rows.length) return
-        const baseGroup = _norm(rows[index].group)
-        const sameGroup = []
-        for (let i = 0; i < rows.length; i++) {
-            if (_norm(rows[i].group) === baseGroup) sameGroup.push(i)
-        }
-        const localIdx = sameGroup.indexOf(index)
-        if (localIdx < 0) return
-        const swapLocalIdx = localIdx + direction
-        if (swapLocalIdx < 0 || swapLocalIdx >= sameGroup.length) return
-        const swapWith = sameGroup[swapLocalIdx]
-            ;[rows[index], rows[swapWith]] = [rows[swapWith], rows[index]]
-        pushRules()
-    }
-
-    function _buildRuleCard(row, i, probeStates) {
-        const selected = _selectedRuleUids.has(row._uid)
-        const card = el('div', `cp-rule-row${row.uiState === 'red' ? ' cp-rule-row-red' : ''}${selected ? ' cp-rule-row-selected' : ''}`)
-        card.draggable = true
-        card.dataset.ruleIndex = String(i)
-        card.dataset.ruleUid = row._uid
-        card.addEventListener('click', (evt) => {
-            if (_isInteractiveTarget(evt.target)) return
-            const node = evt.target instanceof Element ? evt.target : null
-            if (!node) return
-            const onSurface =
-                node === card ||
-                node.classList.contains('cp-rule-row-top') ||
-                node.classList.contains('cp-rule-body') ||
-                node.classList.contains('cp-rule-line')
-            if (!onSurface) return
-            _handleRuleSelect(i, evt)
-        })
-        card.addEventListener('dragstart', (evt) => {
-            if (_isInteractiveTarget(evt.target)) {
-                evt.preventDefault()
-                return
-            }
-            if (!_selectedRuleUids.has(row._uid)) _setSingleSelection(i)
-            _dragSelectionUids = _selectedIndices().map((idx) => rows[idx]._uid)
-            _dragRowIndex = i
-            if (evt.dataTransfer) {
-                evt.dataTransfer.effectAllowed = 'move'
-                evt.dataTransfer.setData('text/plain', row._uid)
-            }
-            card.classList.add('cp-rule-row-dragging')
-        })
-        card.addEventListener('dragover', (evt) => {
-            evt.preventDefault()
-            _updateAutoScrollByClientY(evt.clientY)
-        })
-        card.addEventListener('drop', (evt) => {
-            evt.preventDefault()
-            evt.stopPropagation()
-            _stopAutoScroll()
-            _moveDraggedTo(i + 1, _normalizeGroupPath(row.group), _normalizeTarget(row))
-        })
-        card.addEventListener('dragend', () => {
-            _stopAutoScroll()
-            _dragRowIndex = -1
-            _dragSelectionUids = []
-            card.classList.remove('cp-rule-row-dragging')
-        })
-
-        const top = el('div', 'cp-rule-row-top')
-        const collapsed = _collapsedRuleUids.has(row._uid)
-        const fold = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold-btn', { type: 'button', text: collapsed ? '▸' : '▾', title: collapsed ? 'Expand rule' : 'Collapse rule' })
-        fold.addEventListener('click', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            if (_collapsedRuleUids.has(row._uid)) _collapsedRuleUids.delete(row._uid)
-            else _collapsedRuleUids.add(row._uid)
-            _schedulePersistRuleUiState()
-            drawRows()
-        })
-        const idx = el('span', 'cp-rule-index', { text: `#${i + 1}` })
-        const name = el('input', 'cp-rule-input cp-rule-name', { type: 'text', value: row.id, placeholder: 'rule name' })
-        _wireSelectAllOnFirstClick(name)
-        const enable = el('input', 'cp-rule-toggle', { type: 'checkbox' })
-        enable.checked = !!row.enabled
-        enable.addEventListener('change', wireChange(() => {
-            row.enabled = enable.checked
-            return true
-        }))
-        name.addEventListener('keydown', wireChange((e) => {
-            if (e.key !== 'Enter') return false
-            e.preventDefault()
-            const next = String(name.value || '').trim()
-            row.id = next || _defaultRuleName(i)
-            name.value = row.id
-            name.blur()
-            return true
-        }))
-        const up = el('button', 'cp-preset-btn cp-rule-mini', { text: 'Move Up' })
-        const down = el('button', 'cp-preset-btn cp-rule-mini', { text: '↓' })
-        const dup = el('button', 'cp-preset-btn cp-rule-mini', { text: '❐' })
-        dup.title = 'Duplicate rule'
-        const del = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { text: '🗙' })
-        up.textContent = '↑'
-        up.addEventListener('click', () => _moveWithinGroup(i, -1))
-        down.addEventListener('click', () => _moveWithinGroup(i, +1))
-        dup.addEventListener('click', () => _duplicateRowAt(i))
-        del.addEventListener('click', () => {
-            const indices = _selectedIndices()
-            if (indices.length > 1 && _selectedRuleUids.has(row._uid)) {
-                for (let k = indices.length - 1; k >= 0; k--) rows.splice(indices[k], 1)
-                _selectedRuleUids.clear()
-                pushRules()
-                return
-            }
-            rows.splice(i, 1)
-            _selectedRuleUids.delete(row._uid)
-            _collapsedRuleUids.delete(row._uid)
-            pushRules()
-        })
-        top.append(fold, idx, name, enable, up, down, dup, del)
-
-        const cond = el('div', 'cp-rule-line')
-        cond.appendChild(el('span', 'cp-rule-k', { text: 'IF' }))
-        const addConditionBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '+' })
-        const removeConditionBtn = el('button', 'cp-preset-btn cp-rule-mini cp-preset-del', { type: 'button', text: '🗙' })
-        const condOp = _createSelect(_conditionOps.map(v => ({ value: v, label: v })), row.conditionOp)
-        const condInput = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionInput)
-        const condMode = _createSelect([{ value: 'literal', label: 'literal' }, { value: 'input', label: 'input' }], row.conditionRhsMode)
-        const condLit = _createInputNumber(row.conditionRhsLiteral)
-        const condInp = _createSelect(_inputIds.map(v => ({ value: v, label: v })), row.conditionRhsInput)
-        const refreshCond = () => {
-            const enabled = !!row.conditionEnabled
-            addConditionBtn.style.display = enabled ? 'none' : ''
-            removeConditionBtn.style.display = enabled ? '' : 'none'
-            condOp.style.display = enabled ? '' : 'none'
-            const always = condOp.value === 'always'
-            condInput.style.display = (enabled && !always) ? '' : 'none'
-            condMode.style.display = (enabled && !always) ? '' : 'none'
-            condLit.style.display = (enabled && !always && condMode.value === 'literal') ? '' : 'none'
-            condInp.style.display = (enabled && !always && condMode.value === 'input') ? '' : 'none'
-            if (!enabled) row.conditionOp = 'always'
-        }
-        addConditionBtn.addEventListener('click', wireChange(() => {
-            row.conditionEnabled = true
-            if (!row.conditionOp || row.conditionOp === 'always') row.conditionOp = '>'
-            condOp.value = row.conditionOp
-            refreshCond()
-            return true
-        }))
-        removeConditionBtn.addEventListener('click', wireChange(() => {
-            row.conditionEnabled = false
-            row.conditionOp = 'always'
-            condOp.value = 'always'
-            refreshCond()
-            return true
-        }))
-        condOp.addEventListener('change', wireChange(() => {
-            row.conditionOp = condOp.value
-            refreshCond()
-            return true
-        }))
-        condInput.addEventListener('change', wireChange(() => {
-            row.conditionInput = condInput.value
-            return true
-        }))
-        condMode.addEventListener('change', wireChange(() => {
-            row.conditionRhsMode = condMode.value
-            refreshCond()
-            return true
-        }))
-        condLit.addEventListener('keydown', wireChange((e) => {
-            if (e.key !== 'Enter') return false
-            e.preventDefault()
-            row.conditionRhsLiteral = Number(condLit.value)
-            condLit.blur()
-            return true
-        }))
-        condInp.addEventListener('change', wireChange(() => {
-            row.conditionRhsInput = condInp.value
-            return true
-        }))
-        cond.append(addConditionBtn, removeConditionBtn, condOp, condInput, condMode, condLit, condInp)
-        refreshCond()
-
-        const act = el('div', 'cp-rule-line')
-        act.appendChild(el('span', 'cp-rule-k', { text: 'Action' }))
-        _ensureValidOutputForTarget(row)
-        const out = _createSelect(_outputIdsForTarget(row.target).map((v) => ({ value: v, label: _outputLabel(v) })), row.actionOutput)
-        const op = _createSelect(_actionOps.map(v => ({ value: v, label: v })), row.actionOp)
-        const valExprWrap = el('div', 'cp-rule-expr-wrap')
-        const valExpr = el('textarea', 'cp-rule-input cp-rule-expr', { placeholder: 'value / formula / input id (e.g. bass*0.5 + 0.2)' })
-        _wireSelectAllOnFirstClick(valExpr)
-        valExpr.value = row.actionValueText || ''
-        const exprControls = el('div', 'cp-rule-expr-controls')
-        const templatePicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
-        const inputPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
-        const mathPicker = _createSelect([], '', 'cp-rule-input cp-rule-tag')
-        const clearExprBtn = el('button', 'cp-preset-btn cp-rule-mini', { type: 'button', text: '🗑', title: 'Clear expression' })
-        const valExprSuggest = el('div', 'cp-rule-expr-suggest')
-        exprControls.append(templatePicker, inputPicker, mathPicker, clearExprBtn)
-        valExprWrap.append(valExpr, exprControls, valExprSuggest)
-
-        const _mathTokens = ['+', '-', '*', '/', '(', ')', 'clamp(', 'min(', 'max(', 'abs(', 'pow(', 'PI', 'E', 'and', 'or', 'not']
-        const _shapeTokens = ['square', 'circle']
-
-        const refreshAct = () => {
-            _ensureValidOutputForTarget(row)
-            const allowedOutputs = _outputIdsForTarget(row.target).map((v) => ({ value: v, label: _outputLabel(v) }))
-            _refreshSelectOptions(out, allowedOutputs, row.actionOutput)
-            const showTemplatePicker = (out.value === 'rgb' || out.value === 'hsv')
-            if (showTemplatePicker) {
-                _refreshSelectOptions(templatePicker, _templateOptionsForOutput(out.value), '')
-            }
-            templatePicker.style.display = showTemplatePicker ? '' : 'none'
-            const shape = out.value === 'shapeType'
-            _refreshSelectOptions(
-                inputPicker,
-                shape
-                    ? [{ value: '', label: '+ shape...' }, ..._shapeTokens.map((v) => ({ value: v, label: v }))]
-                    : [{ value: '', label: '+ input...' }, ..._inputIds.map((v) => ({ value: v, label: v }))],
-                '',
-            )
-            _refreshSelectOptions(mathPicker, [{ value: '', label: '+ math...' }, ..._mathTokens.map((v) => ({ value: v, label: v }))], '')
-            mathPicker.style.display = shape ? 'none' : ''
-            if (!shape) {
-                if (valExpr.placeholder !== 'value / formula / input id (e.g. bass*0.5 + 0.2)') {
-                    valExpr.placeholder = 'value / formula / input id (e.g. bass*0.5 + 0.2)'
-                }
-            } else if (valExpr.placeholder !== 'shape: square or circle') {
-                valExpr.placeholder = 'shape: square or circle'
-            }
-            if (shape) {
-                valExprSuggest.style.display = 'none'
-                valExprSuggest.innerHTML = ''
-            }
-        }
-
-        const _exprInputSymbols = () => [...new Set(_inputIds)]
-        let _exprCaretStart = 0
-        let _exprCaretEnd = 0
-        let _exprSuggestMatches = []
-        let _exprSuggestIndex = -1
-
-        function _rememberExprCaret() {
-            const text = String(valExpr.value || '')
-            const start = Number.isFinite(valExpr.selectionStart) ? valExpr.selectionStart : text.length
-            const end = Number.isFinite(valExpr.selectionEnd) ? valExpr.selectionEnd : start
-            _exprCaretStart = Math.max(0, Math.min(text.length, start))
-            _exprCaretEnd = Math.max(_exprCaretStart, Math.min(text.length, end))
-        }
-
-        function _highlightExprSuggestion(index) {
-            const buttons = Array.from(valExprSuggest.querySelectorAll('.cp-rule-expr-suggest-btn'))
-            if (buttons.length === 0) {
-                _exprSuggestIndex = -1
-                return
-            }
-            const clamped = Math.max(0, Math.min(buttons.length - 1, index))
-            _exprSuggestIndex = clamped
-            for (let i = 0; i < buttons.length; i++) {
-                buttons[i].classList.toggle('is-active', i === clamped)
-            }
-        }
-
-        function _exprActiveToken() {
-            const text = String(valExpr.value || '')
-            const caret = Number.isFinite(valExpr.selectionStart) ? valExpr.selectionStart : text.length
-            const left = text.slice(0, caret)
-            const m = left.match(/([A-Za-z_][A-Za-z0-9_]*)$/)
-            return {
-                token: m ? m[1] : '',
-                start: m ? caret - m[1].length : caret,
-                end: caret,
-            }
-        }
-
-        function _insertExprSuggestion(symbol) {
-            _rememberExprCaret()
-            const text = String(valExpr.value || '')
-            const tok = _exprActiveToken()
-            const next = `${text.slice(0, tok.start)}${symbol}${text.slice(tok.end)}`
-            valExpr.value = next
-            row.actionValueText = next
-            const caret = tok.start + symbol.length
-            valExpr.focus()
-            valExpr.setSelectionRange(caret, caret)
-            _rememberExprCaret()
-            _autoSizeExprField()
-            _renderExprSuggestions(true)
-        }
-
-        function _insertTokenAtCursor(symbol) {
-            const text = String(valExpr.value || '')
-            const hasLiveCaret = document.activeElement === valExpr && Number.isFinite(valExpr.selectionStart)
-            const start = hasLiveCaret ? valExpr.selectionStart : _exprCaretStart
-            const end = hasLiveCaret ? valExpr.selectionEnd : _exprCaretEnd
-            const next = `${text.slice(0, start)}${symbol}${text.slice(end)}`
-            valExpr.value = next
-            row.actionValueText = next
-            const caret = start + symbol.length
-            valExpr.focus()
-            valExpr.setSelectionRange(caret, caret)
-            _rememberExprCaret()
-            _autoSizeExprField()
-            _renderExprSuggestions(true)
-        }
-
-        function _renderExprSuggestions(showAllWhenEmpty = false) {
-            if (out.value === 'shapeType') {
-                valExprSuggest.style.display = 'none'
-                valExprSuggest.innerHTML = ''
-                return
-            }
-
-            const tok = _exprActiveToken()
-            const needle = String(tok.token || '').toLowerCase()
-            if (!needle && !showAllWhenEmpty) {
-                valExprSuggest.style.display = 'none'
-                valExprSuggest.innerHTML = ''
-                return
-            }
-
-            const allInputs = _exprInputSymbols()
-            const matches = needle
-                ? allInputs.filter((s) => s.toLowerCase().includes(needle) && s.toLowerCase() !== needle).slice(0, 12)
-                : allInputs.slice(0, 12)
-            _exprSuggestMatches = matches
-
-            if (matches.length === 0) {
-                _exprSuggestIndex = -1
-                valExprSuggest.style.display = 'none'
-                valExprSuggest.innerHTML = ''
-                return
-            }
-
-            valExprSuggest.innerHTML = ''
-            for (const sym of matches) {
-                const b = el('button', 'cp-rule-expr-suggest-btn', { type: 'button', text: sym })
-                b.addEventListener('mousedown', (e) => {
-                    e.preventDefault()
+    const openPresetFromLocalFile = async () => {
+        if (typeof window.showOpenFilePicker === 'function') {
+            try {
+                const [handle] = await window.showOpenFilePicker({
+                    multiple: false,
+                    excludeAcceptAllOption: false,
+                    types: [{
+                        description: 'SEESOUND Preset',
+                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
+                    }],
                 })
-                b.addEventListener('click', (e) => {
-                    e.preventDefault()
-                    _insertExprSuggestion(sym)
-                })
-                valExprSuggest.appendChild(b)
-            }
-            valExprSuggest.style.display = 'flex'
-            _highlightExprSuggestion(0)
-        }
-
-        function _autoSizeExprField() {
-            // Keep height tightly fitted to content for better scanability.
-            valExpr.style.height = 'auto'
-            valExpr.style.height = `${Math.max(24, valExpr.scrollHeight)}px`
-        }
-
-        // Allow text selection/editing in expression without triggering row drag.
-        valExpr.addEventListener('pointerdown', () => {
-            card.draggable = false
-        })
-        valExpr.addEventListener('pointerup', () => {
-            card.draggable = true
-        })
-        valExpr.addEventListener('dragstart', (e) => {
-            e.preventDefault()
-        })
-
-        out.addEventListener('change', wireChange(() => {
-            row.actionOutput = out.value
-            refreshAct()
-            return true
-        }))
-        op.addEventListener('change', wireChange(() => {
-            row.actionOp = op.value
-            return true
-        }))
-        valExpr.addEventListener('input', () => {
-            _rememberExprCaret()
-            row.actionValueText = valExpr.value
-            _autoSizeExprField()
-            _renderExprSuggestions(true)
-        })
-        inputPicker.addEventListener('change', wireChange(() => {
-            const token = inputPicker.value
-            if (!token) return false
-            _insertTokenAtCursor(token)
-            inputPicker.value = ''
-            return true
-        }))
-        templatePicker.addEventListener('change', wireChange(() => {
-            const choice = String(templatePicker.value || '')
-            if (!choice) return false
-
-            const parts = choice.split(':')
-            const payload = String(parts.length > 1 ? parts.slice(1).join(':') : parts[0]).trim()
-            if (!payload) {
-                templatePicker.value = ''
-                return false
-            }
-
-            valExpr.value = payload
-            row.actionValueText = payload
-            _autoSizeExprField()
-            _renderExprSuggestions(true)
-            valExpr.focus()
-            const caret = payload.length
-            valExpr.setSelectionRange(caret, caret)
-            _rememberExprCaret()
-            templatePicker.value = ''
-            return true
-        }))
-        mathPicker.addEventListener('change', wireChange(() => {
-            const token = mathPicker.value
-            if (!token) return false
-            _insertTokenAtCursor(token)
-            mathPicker.value = ''
-            return true
-        }))
-        clearExprBtn.addEventListener('click', wireChange(() => {
-            if (!valExpr.value) return false
-            valExpr.value = ''
-            row.actionValueText = ''
-            _autoSizeExprField()
-            _renderExprSuggestions()
-            valExpr.focus()
-            return true
-        }))
-        valExpr.addEventListener('click', () => _renderExprSuggestions(true))
-        valExpr.addEventListener('focus', () => {
-            _rememberExprCaret()
-            _autoSizeExprField()
-            _renderExprSuggestions(true)
-        })
-        valExpr.addEventListener('keyup', () => {
-            _rememberExprCaret()
-            _renderExprSuggestions(true)
-        })
-        valExpr.addEventListener('select', _rememberExprCaret)
-        valExpr.addEventListener('keydown', wireChange((e) => {
-            const hasSuggestions = valExprSuggest.style.display !== 'none' && _exprSuggestMatches.length > 0
-            if (hasSuggestions && e.key === 'ArrowDown') {
-                e.preventDefault()
-                _highlightExprSuggestion((_exprSuggestIndex + 1) % _exprSuggestMatches.length)
-                return false
-            }
-            if (hasSuggestions && e.key === 'ArrowUp') {
-                e.preventDefault()
-                const prev = _exprSuggestIndex <= 0 ? (_exprSuggestMatches.length - 1) : (_exprSuggestIndex - 1)
-                _highlightExprSuggestion(prev)
-                return false
-            }
-            if (hasSuggestions && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-                e.preventDefault()
-                const idx = _exprSuggestIndex >= 0 ? _exprSuggestIndex : 0
-                const picked = _exprSuggestMatches[idx]
-                if (!picked) return false
-                _insertExprSuggestion(picked)
-                return true
-            }
-            if (!(e.key === 'Enter' && (e.ctrlKey || e.metaKey))) return false
-            e.preventDefault()
-            row.actionValueText = valExpr.value
-            valExpr.blur()
-            return true
-        }))
-        valExpr.addEventListener('blur', () => {
-            row.actionValueText = valExpr.value
-            _rememberExprCaret()
-            card.draggable = true
-            _exprSuggestMatches = []
-            _exprSuggestIndex = -1
-            setTimeout(() => {
-                valExprSuggest.style.display = 'none'
-            }, 120)
-            pushRules()
-        })
-
-        act.append(out, op, valExprWrap)
-        refreshAct()
-        _autoSizeExprField()
-
-        const summary = el('div', 'cp-rule-summary', { text: _ruleSummary(row) })
-        const live = el('div', 'cp-rule-live')
-        const inChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-in')
-        const inKey = el('span', 'cp-rule-live-key')
-        inKey.dataset.ruleUid = row._uid
-        inKey.dataset.probeKind = 'in'
-        inKey.dataset.probeField = 'key'
-        const inVal = el('span', 'cp-rule-live-value')
-        inVal.dataset.ruleUid = row._uid
-        inVal.dataset.probeKind = 'in'
-        inVal.dataset.probeField = 'value'
-        inChip.append(inKey, inVal)
-
-        const outChip = el('span', 'cp-rule-live-chip cp-rule-live-chip-out')
-        const outKey = el('span', 'cp-rule-live-key')
-        outKey.dataset.ruleUid = row._uid
-        outKey.dataset.probeKind = 'out'
-        outKey.dataset.probeField = 'key'
-        const outVal = el('span', 'cp-rule-live-value')
-        outVal.dataset.ruleUid = row._uid
-        outVal.dataset.probeKind = 'out'
-        outVal.dataset.probeField = 'value'
-        outChip.append(outKey, outVal)
-
-        live.append(inChip, outChip)
-        const probeVals = probeStates?.get(row._uid)
-        const inProbeKey = probeVals?.inKey || row.actionOutput
-        const outProbeKey = probeVals?.outKey || row.actionOutput
-        inKey.textContent = `${inProbeKey} in`
-        outKey.textContent = `${outProbeKey} out`
-        inVal.textContent = _formatProbeNumber(probeVals?.inValue)
-        outVal.textContent = _formatProbeNumber(probeVals?.outValue)
-
-        const body = el('div', 'cp-rule-body')
-        body.append(cond, act, live, summary)
-        if (collapsed) body.style.display = 'none'
-        card.append(top, body)
-        return card
-    }
-
-    function _buildDropSlot(targetIndex, groupPath = '', contextTarget = _selectedContextGroup) {
-        const slot = el('div', 'cp-rule-slot')
-        const addBtn = el('button', 'cp-rule-slot-add', { type: 'button', text: '+', title: 'Insert rule here' })
-        addBtn.addEventListener('click', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            _insertNewRuleAt(targetIndex, groupPath, contextTarget)
-        })
-        slot.appendChild(addBtn)
-        let expandTimer = null
-
-        const clearExpandTimer = () => {
-            if (expandTimer) {
-                clearTimeout(expandTimer)
-                expandTimer = null
+                if (!handle) return null
+                const file = await handle.getFile()
+                const text = await file.text()
+                return parsePresetText(text, file.name)
+            } catch {
+                return null
             }
         }
 
-        slot.addEventListener('mouseenter', () => {
-            clearExpandTimer()
-            expandTimer = setTimeout(() => {
-                slot.classList.add('cp-rule-slot-expanded')
-            }, 450)
-        })
-        slot.addEventListener('mouseleave', () => {
-            clearExpandTimer()
-            slot.classList.remove('cp-rule-slot-expanded')
-        })
-
-        slot.addEventListener('dragover', (e) => {
-            e.preventDefault()
-            _updateAutoScrollByClientY(e.clientY)
-            slot.classList.add('cp-rule-slot-expanded')
-            slot.classList.add('cp-rule-slot-active')
-        })
-        slot.addEventListener('dragleave', () => {
-            _stopAutoScroll()
-            slot.classList.remove('cp-rule-slot-active')
-        })
-        slot.addEventListener('drop', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            _stopAutoScroll()
-            slot.classList.remove('cp-rule-slot-active')
-            _moveDraggedTo(targetIndex, groupPath, contextTarget)
-        })
-        return slot
-    }
-
-    function _buildLane(indices, groupPath = '', contextTarget = _selectedContextGroup) {
-        const lane = el('div', 'cp-rule-lane')
-        const probeStates = _computeRuleProbeStates(rows, _lastProbeInputs)
-        if (indices.length === 0) {
-            lane.appendChild(_buildDropSlot(rows.length, groupPath, contextTarget))
-            return lane
-        }
-
-        lane.appendChild(_buildDropSlot(indices[0], groupPath, contextTarget))
-        for (const idx of indices) {
-            const card = _buildRuleCard(rows[idx], idx, probeStates)
-            const after = _buildDropSlot(idx + 1, groupPath, contextTarget)
-            lane.appendChild(card)
-            lane.appendChild(after)
-        }
-        return lane
-    }
-
-    function _wireAreaDrop(node, groupPath = '', contextTarget = _selectedContextGroup) {
-        node.addEventListener('dragover', (e) => {
-            e.preventDefault()
-            _updateAutoScrollByClientY(e.clientY)
-            node.classList.add('cp-rule-dropzone-active')
-        })
-        node.addEventListener('dragleave', () => {
-            _stopAutoScroll()
-            node.classList.remove('cp-rule-dropzone-active')
-        })
-        node.addEventListener('drop', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            _stopAutoScroll()
-            node.classList.remove('cp-rule-dropzone-active')
-            _moveDraggedTo(rows.length, groupPath, contextTarget)
-        })
-    }
-
-    function _contextIncludes(contextGroup, row) {
-        const t = _normalizeTarget(row)
-        return contextGroup.includes ? contextGroup.includes.has(t) : t === contextGroup.key
-    }
-
-    function _groupParts(path) {
-        return _splitGroupPath(String(path || '').replaceAll(GROUP_PATH_SEPARATOR, '/'))
-    }
-
-    function _countTreeRules(node) {
-        let count = node.ruleIndices.length
-        for (const child of node.children.values()) count += _countTreeRules(child)
-        return count
-    }
-
-    function _buildGroupTree(indices, contextKey) {
-        const root = { name: '', path: '', children: new Map(), ruleIndices: [] }
-        for (const idx of indices) {
-            const row = rows[idx]
-            const path = _normalizeGroupPath(row.group)
-            if (!path) {
-                root.ruleIndices.push(idx)
-                continue
-            }
-            const parts = _groupParts(path)
-            let cursor = root
-            let currentPath = ''
-            for (const part of parts) {
-                currentPath = _appendGroupPath(currentPath, part)
-                if (!cursor.children.has(part)) {
-                    cursor.children.set(part, { name: part, path: currentPath, children: new Map(), ruleIndices: [] })
-                }
-                cursor = cursor.children.get(part)
-            }
-            cursor.ruleIndices.push(idx)
-        }
-
-        const ensurePath = (path) => {
-            if (!path) return
-            const parts = _groupParts(path)
-            let cursor = root
-            let currentPath = ''
-            for (const part of parts) {
-                currentPath = _appendGroupPath(currentPath, part)
-                if (!cursor.children.has(part)) {
-                    cursor.children.set(part, { name: part, path: currentPath, children: new Map(), ruleIndices: [] })
-                }
-                cursor = cursor.children.get(part)
-            }
-        }
-
-        for (const [groupPath, contexts] of _manualGroups.entries()) {
-            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
-            ensurePath(_normalizeGroupPath(groupPath))
-        }
-
-        return root
-    }
-
-    function _findInsertIndexAfterGroup(contextGroup, groupPath) {
-        const base = _normalizeGroupPath(groupPath)
-        const prefix = `${base}${GROUP_PATH_SEPARATOR}`
-        let last = -1
-        for (let i = 0; i < rows.length; i++) {
-            if (!_contextIncludes(contextGroup, rows[i])) continue
-            const path = _normalizeGroupPath(rows[i].group)
-            if (path === base || path.startsWith(prefix)) last = i
-        }
-        if (last >= 0) return last + 1
-        for (let i = rows.length - 1; i >= 0; i--) {
-            if (_contextIncludes(contextGroup, rows[i])) return i + 1
-        }
-        return rows.length
-    }
-
-    function _insertRuleFromSelection() {
-        const selected = _selectedIndices()
-        if (selected.length > 0) {
-            const anchor = selected[selected.length - 1]
-            const row = rows[anchor]
-            _insertNewRuleAt(anchor + 1, _normalizeGroupPath(row.group), _normalizeTarget(row))
-            return
-        }
-        const contextGroup = {
-            key: _selectedContextGroup,
-            includes: _selectedContextGroup === 'spawnedParticles' ? new Set(['spawnedParticles', 'allParticles']) : undefined,
-        }
-        if (_selectedGroupPath) {
-            const at = _findInsertIndexAfterGroup(contextGroup, _selectedGroupPath)
-            _insertNewRuleAt(at, _selectedGroupPath, _selectedContextGroup)
-            return
-        }
-        _insertNewRuleAt(rows.length, '', _selectedContextGroup)
-    }
-
-    function _nextAutoGroupName(parentPath) {
-        const base = _normalizeGroupPath(parentPath)
-        const prefix = base ? `${base}${GROUP_PATH_SEPARATOR}` : ''
-        const directNames = new Set()
-        for (const row of rows) {
-            const path = _normalizeGroupPath(row.group)
-            if (!path) continue
-            if (base && !(path === base || path.startsWith(prefix))) continue
-            if (!base && path.includes(GROUP_PATH_SEPARATOR)) {
-                directNames.add(path.split(GROUP_PATH_SEPARATOR)[0])
-                continue
-            }
-            if (base) {
-                const rest = path === base ? '' : path.slice(prefix.length)
-                const next = rest.split(GROUP_PATH_SEPARATOR)[0]
-                if (next) directNames.add(next)
-            } else {
-                directNames.add(path.split(GROUP_PATH_SEPARATOR)[0])
-            }
-        }
-
-        let i = 1
-        while (directNames.has(`group-${i}`)) i++
-        return `group-${i}`
-    }
-
-    function _contextIncludesByKey(contextKey, row) {
-        const target = _normalizeTarget(row)
-        if (contextKey === 'spawnedParticles') return target === 'spawnedParticles' || target === 'allParticles'
-        return target === contextKey
-    }
-
-    function _renameGroupPath(contextKey, oldPath, nextNameRaw) {
-        const oldNorm = _normalizeGroupPath(oldPath)
-        const parentPath = _parentGroupPath(oldNorm)
-        const cleanName = _splitGroupPath(nextNameRaw).join('-').trim()
-        if (!oldNorm || !cleanName) return
-
-        const nextPath = _appendGroupPath(parentPath, cleanName)
-        if (nextPath === oldNorm) return
-
-        const oldPrefix = `${oldNorm}${GROUP_PATH_SEPARATOR}`
-
-        for (const [groupPath, contexts] of [..._manualGroups.entries()]) {
-            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
-            const path = _normalizeGroupPath(groupPath)
-            if (path === oldNorm) {
-                _manualGroups.delete(groupPath)
-                _ensureManualGroup(nextPath, contextKey)
-                continue
-            }
-            if (path.startsWith(oldPrefix)) {
-                _manualGroups.delete(groupPath)
-                const remapped = `${nextPath}${GROUP_PATH_SEPARATOR}${path.slice(oldPrefix.length)}`
-                _ensureManualGroup(remapped, contextKey)
-            }
-        }
-
-        for (const row of rows) {
-            if (!_contextIncludesByKey(contextKey, row)) continue
-            const path = _normalizeGroupPath(row.group)
-            if (path === oldNorm) {
-                row.group = nextPath
-                continue
-            }
-            if (path.startsWith(oldPrefix)) {
-                row.group = `${nextPath}${GROUP_PATH_SEPARATOR}${path.slice(oldPrefix.length)}`
-            }
-        }
-
-        if (_selectedContextGroup === contextKey) {
-            if (_selectedGroupPath === oldNorm) _selectedGroupPath = nextPath
-            else if (String(_selectedGroupPath || '').startsWith(oldPrefix)) {
-                _selectedGroupPath = `${nextPath}${GROUP_PATH_SEPARATOR}${_selectedGroupPath.slice(oldPrefix.length)}`
-            }
-        }
-
-        const remapped = new Set()
-        const keyPrefix = `${contextKey}::`
-        const oldCollapsedKey = `${keyPrefix}${oldNorm}`
-        const oldCollapsedPrefix = `${oldCollapsedKey}${GROUP_PATH_SEPARATOR}`
-        for (const key of _collapsedGroups) {
-            if (key === oldCollapsedKey) {
-                remapped.add(`${keyPrefix}${nextPath}`)
-                continue
-            }
-            if (key.startsWith(oldCollapsedPrefix)) {
-                remapped.add(`${keyPrefix}${nextPath}${GROUP_PATH_SEPARATOR}${key.slice(oldCollapsedPrefix.length)}`)
-                continue
-            }
-            remapped.add(key)
-        }
-        _collapsedGroups.clear()
-        for (const key of remapped) _collapsedGroups.add(key)
-
-        _schedulePersistRuleUiState()
-        pushRules()
-    }
-
-    function _dropManualGroupPathForContext(contextKey, groupPath) {
-        const targetPath = _normalizeGroupPath(groupPath)
-        if (!targetPath) return
-        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
-        for (const [groupKey, contexts] of [..._manualGroups.entries()]) {
-            if (!(contexts instanceof Set) || !contexts.has(contextKey)) continue
-            const path = _normalizeGroupPath(groupKey)
-            if (path === targetPath || path.startsWith(prefix)) {
-                contexts.delete(contextKey)
-                if (contexts.size === 0) _manualGroups.delete(groupKey)
-            }
-        }
-    }
-
-    function _removeCollapsedGroupBranch(contextKey, groupPath) {
-        const targetPath = _normalizeGroupPath(groupPath)
-        if (!targetPath) return
-        const base = `${contextKey}::${targetPath}`
-        const prefix = `${base}${GROUP_PATH_SEPARATOR}`
-        for (const key of [..._collapsedGroups]) {
-            if (key === base || key.startsWith(prefix)) _collapsedGroups.delete(key)
-        }
-    }
-
-    function _deleteGroupBranch(contextKey, groupPath) {
-        const targetPath = _normalizeGroupPath(groupPath)
-        if (!targetPath) return
-        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
-
-        rows = rows.filter((row) => {
-            if (!_contextIncludesByKey(contextKey, row)) return true
-            const rowPath = _normalizeGroupPath(row.group)
-            return !(rowPath === targetPath || rowPath.startsWith(prefix))
-        })
-
-        _dropManualGroupPathForContext(contextKey, targetPath)
-        _removeCollapsedGroupBranch(contextKey, targetPath)
-
-        if (_selectedContextGroup === contextKey) {
-            if (_selectedGroupPath === targetPath || _selectedGroupPath.startsWith(prefix)) {
-                _selectedGroupPath = _parentGroupPath(targetPath)
-            }
-        }
-
-        _selectedRuleUids.clear()
-        _lastSelectedIndex = -1
-        pushRules()
-    }
-
-    function _ungroupGroupBranch(contextKey, groupPath) {
-        const targetPath = _normalizeGroupPath(groupPath)
-        if (!targetPath) return
-        const parentPath = _parentGroupPath(targetPath)
-        const prefix = `${targetPath}${GROUP_PATH_SEPARATOR}`
-
-        let touched = 0
-        for (const row of rows) {
-            if (!_contextIncludesByKey(contextKey, row)) continue
-            const rowPath = _normalizeGroupPath(row.group)
-            if (rowPath === targetPath) {
-                row.group = parentPath
-                touched++
-                continue
-            }
-            if (rowPath.startsWith(prefix)) {
-                const suffix = rowPath.slice(prefix.length)
-                row.group = _appendGroupPath(parentPath, suffix)
-                touched++
-            }
-        }
-        if (touched === 0) return
-
-        _dropManualGroupPathForContext(contextKey, targetPath)
-        _removeCollapsedGroupBranch(contextKey, targetPath)
-
-        if (_selectedContextGroup === contextKey) {
-            if (_selectedGroupPath === targetPath || _selectedGroupPath.startsWith(prefix)) {
-                _selectedGroupPath = parentPath
-            }
-        }
-
-        pushRules()
-    }
-
-    function _createGroupFromSelection() {
-        const selectedRuleIndices = _selectedIndices()
-        const selectedGroupPath = _normalizeGroupPath(_selectedGroupPath)
-        const selectedGroupIndices = []
-        if (selectedGroupPath) {
-            const prefix = `${selectedGroupPath}${GROUP_PATH_SEPARATOR}`
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i]
-                if (!_contextIncludesByKey(_selectedContextGroup, row)) continue
-                const path = _normalizeGroupPath(row.group)
-                if (path === selectedGroupPath || path.startsWith(prefix)) selectedGroupIndices.push(i)
-            }
-        }
-
-        const merged = [...new Set([...selectedRuleIndices, ...selectedGroupIndices])].sort((a, b) => a - b)
-        let parentPath = _parentGroupPath(selectedGroupPath)
-        let context = _selectedContextGroup
-
-        if (!parentPath && merged.length > 0) {
-            const firstRow = rows[merged[0]]
-            parentPath = _parentGroupPath(_normalizeGroupPath(firstRow.group))
-            context = _normalizeTarget(firstRow)
-        }
-
-        const name = _nextAutoGroupName(parentPath)
-        const newPath = _appendGroupPath(parentPath, name)
-        _selectedGroupPath = newPath
-        _selectedContextGroup = context
-        _ensureManualGroup(newPath, context)
-
-        if (merged.length === 0) {
-            _schedulePersistRuleUiState()
-            drawRows()
-            return
-        }
-
-        for (const idx of merged) {
-            const row = rows[idx]
-            row.group = newPath
-            row.target = context
-            row.subgroup = ''
-        }
-        _selectedRuleUids.clear()
-        for (const idx of merged) _selectedRuleUids.add(rows[idx]._uid)
-        _lastSelectedIndex = merged[merged.length - 1] ?? -1
-        pushRules()
-    }
-
-    function drawRows() {
-        rowsWrap.innerHTML = ''
-        const board = el('div', 'cp-rule-context-groups')
-        const contextGroups = [
-            { key: 'spawnedParticles', label: 'Particles', includes: new Set(['spawnedParticles', 'allParticles']) },
-            { key: 'background', label: 'Background' },
-            { key: 'camera', label: 'Camera' },
-        ]
-
-        if (!contextGroups.some((g) => g.key === _selectedContextGroup)) _selectedContextGroup = 'spawnedParticles'
-
-        const renderGroupNode = (node, contextGroup) => {
-            const ctxGroupKey = `${contextGroup.key}::${node.path}`
-            const isSelected = _selectedContextGroup === contextGroup.key && _selectedGroupPath === node.path
-            const groupCollapsed = _collapsedGroups.has(ctxGroupKey)
-            const groupCard = el('div', 'cp-rule-group')
-            const groupHeader = el('div', `cp-rule-group-header${isSelected ? ' cp-rule-group-header-selected' : ''}`)
-            const groupFoldBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold', { type: 'button', text: groupCollapsed ? '▸' : '▾' })
-            const groupTitle = el('span', 'cp-rule-group-title', { text: node.name, title: 'Double-click to rename group' })
-            const groupRenameBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-rename-btn', { type: 'button', text: '🖋', title: 'Rename group' })
-            const groupActions = el('div', 'cp-rule-group-actions')
-            const groupDeleteBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-delete-btn', { type: 'button', text: '⊠', title: 'Delete group and all rules/subgroups inside it' })
-            const totalRules = _countTreeRules(node)
-            const groupUngroupBtn = totalRules > 0
-                ? el('button', 'cp-preset-btn cp-rule-mini cp-rule-group-ungroup-btn', { type: 'button', text: '⮺', title: 'Ungroup rules (keep rules, remove this group level)' })
-                : null
-
-            const startRename = () => {
-                const currentName = node.name
-                const input = el('input', 'cp-rule-group-rename', { type: 'text', value: currentName })
-                const finish = (commit) => {
-                    if (commit) _renameGroupPath(contextGroup.key, node.path, input.value)
-                    drawRows()
-                }
-                input.addEventListener('keydown', (evt) => {
-                    if (evt.key === 'Enter') {
-                        evt.preventDefault()
-                        finish(true)
+        return new Promise((resolve) => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = `${PRESET_FILE_EXTENSION},.json`
+            input.style.display = 'none'
+            input.addEventListener('change', async () => {
+                try {
+                    const file = input.files?.[0]
+                    if (!file) {
+                        resolve(null)
+                        return
                     }
-                    if (evt.key === 'Escape') {
-                        evt.preventDefault()
-                        finish(false)
-                    }
-                })
-                input.addEventListener('blur', () => finish(true), { once: true })
-                groupTitle.replaceWith(input)
-                input.focus()
-                input.select()
-            }
-
-            groupFoldBtn.addEventListener('click', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (_collapsedGroups.has(ctxGroupKey)) _collapsedGroups.delete(ctxGroupKey)
-                else _collapsedGroups.add(ctxGroupKey)
-                _schedulePersistRuleUiState()
-                drawRows()
-            })
-            groupRenameBtn.addEventListener('click', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                startRename()
-            })
-            groupDeleteBtn.addEventListener('click', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                const message = `Delete group "${node.path}" and all nested rules/subgroups?`
-                if (!confirm(message)) return
-                _deleteGroupBranch(contextGroup.key, node.path)
-            })
-            if (groupUngroupBtn) {
-                groupUngroupBtn.addEventListener('click', (e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    const message = `Ungroup rules in "${node.path}" (rules are kept)?`
-                    if (!confirm(message)) return
-                    _ungroupGroupBranch(contextGroup.key, node.path)
-                })
-            }
-            groupTitle.addEventListener('dblclick', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                startRename()
-            })
-            groupHeader.addEventListener('click', () => {
-                _selectedContextGroup = contextGroup.key
-                _selectedGroupPath = node.path
-                _selectedRuleUids.clear()
-                _schedulePersistRuleUiState()
-                drawRows()
-            })
-            groupHeader.addEventListener('dragover', (e) => {
-                e.preventDefault()
-                _updateAutoScrollByClientY(e.clientY)
-                groupHeader.classList.add('cp-rule-dropzone-active')
-            })
-            groupHeader.addEventListener('dragleave', () => {
-                _stopAutoScroll()
-                groupHeader.classList.remove('cp-rule-dropzone-active')
-            })
-            groupHeader.addEventListener('drop', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                _stopAutoScroll()
-                groupHeader.classList.remove('cp-rule-dropzone-active')
-                const targetIndex = _findInsertIndexAfterGroup(contextGroup, node.path)
-                _moveDraggedTo(targetIndex, node.path, contextGroup.key)
-            })
-            groupHeader.append(
-                groupFoldBtn,
-                groupTitle,
-                groupRenameBtn,
-                el('span', 'cp-group-count', { text: String(totalRules) }),
-            )
-            if (groupUngroupBtn) groupActions.appendChild(groupUngroupBtn)
-            groupActions.appendChild(groupDeleteBtn)
-            groupHeader.appendChild(groupActions)
-            groupCard.appendChild(groupHeader)
-
-            if (!groupCollapsed) {
-                const groupBody = el('div', 'cp-rule-group-body')
-                groupBody.appendChild(_buildLane(node.ruleIndices, node.path, contextGroup.key))
-                const childWrap = el('div', 'cp-rule-groups')
-                const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name))
-                for (const child of children) childWrap.appendChild(renderGroupNode(child, contextGroup))
-                if (children.length > 0) groupBody.appendChild(childWrap)
-                _wireAreaDrop(groupBody, node.path, contextGroup.key)
-                groupCard.appendChild(groupBody)
-            }
-
-            return groupCard
-        }
-
-        for (const contextGroup of contextGroups) {
-            const indices = []
-            for (let i = 0; i < rows.length; i++) if (_contextIncludes(contextGroup, rows[i])) indices.push(i)
-
-            const gWrap = el('div', `cp-group cp-open cp-rule-context-group${_selectedContextGroup === contextGroup.key ? ' cp-rule-group-selected' : ''}`)
-            const contextCollapseKey = `context::${contextGroup.key}`
-            const contextCollapsed = _collapsedContextGroups.has(contextCollapseKey)
-            const gHeader = el('div', 'cp-group-header')
-            const contextFoldBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-fold', {
-                type: 'button',
-                text: contextCollapsed ? '▸' : '▾',
-                title: contextCollapsed ? 'Expand section' : 'Collapse section',
-            })
-            contextFoldBtn.addEventListener('click', (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (_collapsedContextGroups.has(contextCollapseKey)) _collapsedContextGroups.delete(contextCollapseKey)
-                else _collapsedContextGroups.add(contextCollapseKey)
-                _schedulePersistRuleUiState()
-                drawRows()
-            })
-            gHeader.addEventListener('click', () => {
-                _selectedContextGroup = contextGroup.key
-                _selectedGroupPath = ''
-                _schedulePersistRuleUiState()
-                drawRows()
-            })
-            gHeader.append(
-                contextFoldBtn,
-                el('span', '', { text: contextGroup.label }),
-                el('span', 'cp-group-count', { text: String(indices.length) }),
-            )
-
-            const gBody = el('div', 'cp-group-body cp-rule-group-body')
-            if (!contextCollapsed) {
-                const tree = _buildGroupTree(indices, contextGroup.key)
-                gBody.appendChild(_buildLane(tree.ruleIndices, '', contextGroup.key))
-
-                const topGroups = [...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name))
-                if (topGroups.length > 0) {
-                    const groupsWrap = el('div', 'cp-rule-groups')
-                    for (const groupNode of topGroups) groupsWrap.appendChild(renderGroupNode(groupNode, contextGroup))
-                    gBody.appendChild(groupsWrap)
+                    const text = await file.text()
+                    resolve(parsePresetText(text, file.name))
+                } catch {
+                    resolve(null)
+                } finally {
+                    input.remove()
                 }
-                _wireAreaDrop(gBody, '', contextGroup.key)
-            }
-
-            gWrap.append(gHeader, gBody)
-            board.appendChild(gWrap)
-        }
-
-        rowsWrap.appendChild(board)
-    }
-
-    rulePresetSel.addEventListener('change', () => {
-        const full = String(rulePresetSel.value || '')
-        if (!full) return
-        rulePresetName.value = _rulePresetShortName(full)
-    })
-    rulePresetSave.addEventListener('click', async () => {
-        await _saveSelectedRulePreset()
-    })
-    rulePresetLoad.addEventListener('click', async () => {
-        await _loadSingleRulePreset(String(rulePresetSel.value || ''))
-    })
-    rulePresetDel.addEventListener('click', async () => {
-        const full = String(rulePresetSel.value || '')
-        if (!full) return
-        const short = _rulePresetShortName(full)
-        if (!confirm(`Delete single-rule preset "${short}"?`)) return
-        await deletePreset(full)
-        await _refreshRulePresets()
-        rulePresetName.value = ''
-    })
-
-    const deleteAbortPrev = window.__seesoundRuleDeleteAbort
-    if (deleteAbortPrev && typeof deleteAbortPrev.abort === 'function') deleteAbortPrev.abort()
-    const deleteAbort = new AbortController()
-    window.__seesoundRuleDeleteAbort = deleteAbort
-    document.addEventListener('keydown', (e) => {
-        if (e.defaultPrevented) return
-        if (!(e.key === 'Delete' || e.key === 'Backspace')) return
-        if (_isTypingTarget(e.target)) return
-        if (!_deleteSelected()) return
-        e.preventDefault()
-        e.stopPropagation()
-    }, { signal: deleteAbort.signal })
-
-    _ruleBuilderApi = {
-        serialize: () => rows.map((r, i) => _rowToRule(r, i)),
-        createGroupFromSelection: () => {
-            _createGroupFromSelection()
-        },
-        insertRuleFromSelection: () => {
-            _insertRuleFromSelection()
-        },
-        addRow: (initialRule) => {
-            rows.push(_ruleToRow(initialRule || _defaultRule(rows.length), rows.length))
-            pushRules()
-        },
-        replaceFromRuleBlocks: (blocks) => {
-            rows = (Array.isArray(blocks) ? blocks : []).map(_ruleToRow)
-            _manualGroups.clear()
-            _groupOrder.length = 0
-            _selectedRuleUids.clear()
-            _lastSelectedIndex = -1
-            _dragRowIndex = -1
-            _dragSelectionUids = []
-            _selectedGroupPath = ''
-            _syncManualGroupsFromRows()
-            _applyRuleUiStateFromParams()
-            drawRows()
-            renderCompile({ compileStatus: 'stale', compileError: null })
-        },
-        renderCompileStatus: renderCompile,
-    }
-
-    subscribe((_, key) => {
-        if (key === 'ruleUiState') {
-            _applyRuleUiStateFromParams()
-            drawRows()
-            return
-        }
-        if (key === 'palettes') {
-            drawRows()
-            return
-        }
-        if (key !== 'ruleBlocks' || _syncingFromBuilder) return
-        _ruleBuilderApi?.replaceFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
-    })
-
-    section.addEventListener('keydown', (e) => {
-        if (e.defaultPrevented) return
-        if (e.ctrlKey || e.metaKey || e.altKey) return
-        if (!(e.key === 'ArrowUp' || e.key === 'ArrowDown')) return
-
-        const target = e.target instanceof Element
-            ? e.target.closest('input,textarea,select')
-            : null
-        if (!(target instanceof HTMLElement)) return
-        if (!target.closest('.cp-rule-row')) return
-
-        const focusables = Array.from(section.querySelectorAll(
-            '.cp-rule-row input:not([type="checkbox"]):not([disabled]), .cp-rule-row textarea:not([disabled]), .cp-rule-row select:not([disabled])',
-        ))
-        const index = focusables.indexOf(target)
-        if (index < 0) return
-
-        const delta = e.key === 'ArrowDown' ? 1 : -1
-        const next = focusables[index + delta]
-        if (!(next instanceof HTMLElement)) return
-
-        e.preventDefault()
-        next.focus()
-        if (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) {
-            try { next.select() } catch { }
-        }
-    })
-
-    drawRows()
-    window.addEventListener('seesound:calculated-rule-inputs', (e) => {
-        _setCalculatedRuleInputs(e?.detail?.calculatedInputs)
-        drawRows()
-    })
-    window.addEventListener('seesound:rule-probe', (e) => {
-        _lastProbeInputs = e?.detail?.inputs || Object.create(null)
-        const probeStates = _computeRuleProbeStates(rows, _lastProbeInputs)
-        const probes = rowsWrap.querySelectorAll('[data-rule-uid][data-probe-field]')
-        for (const node of probes) {
-            const uid = node.getAttribute('data-rule-uid')
-            const kind = node.getAttribute('data-probe-kind')
-            const field = node.getAttribute('data-probe-field')
-            const vals = probeStates.get(uid)
-            if (!vals) continue
-            if (field === 'key') {
-                node.textContent = kind === 'out' ? `${vals.outKey} out` : `${vals.inKey} in`
-                continue
-            }
-            node.textContent = kind === 'out'
-                ? _formatProbeNumber(vals.outValue)
-                : _formatProbeNumber(vals.inValue)
-        }
-    })
-    _refreshRulePresets()
-    pushRules()
-    window.addEventListener('seesound:rule-compile-state', (e) => renderCompile(e.detail || {}))
-    return _ruleBuilderApi
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// § 8  PUBLIC INIT
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Build the full control panel UI inside `container`.
- * Attach it to `document.getElementById('control-panel')`.
- *
- * @param {HTMLElement} container
- */
-export function initControlPanel(container) {
-    if (!container) { console.warn('[ControlPanel] No container element found.'); return }
-
-    const PANEL_WIDTH_KEY = 'seesound_settings_panel_width_v1'
-
-    function clampPanelWidth(px) {
-        const minW = 220
-        const maxW = Math.max(minW, Math.floor(window.innerWidth * 0.7))
-        return Math.max(minW, Math.min(maxW, Math.floor(Number(px) || minW)))
-    }
-
-    let expandedWidth = (() => {
-        try {
-            const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-            if (Number.isFinite(saved) && saved > 0) return clampPanelWidth(saved)
-        } catch { /* no-op */ }
-        return clampPanelWidth(container.getBoundingClientRect().width || 280)
-    })()
-
-    function _applyPanelWidth(widthPx, isCollapsed = false) {
-        const safe = clampPanelWidth(widthPx)
-        const effective = isCollapsed ? 28 : safe
-        document.documentElement.style.setProperty('--panel-width', `${effective}px`)
-        window.dispatchEvent(new CustomEvent('seesound:panel-width', {
-            detail: {
-                width: effective,
-                expandedWidth: safe,
-                collapsed: !!isCollapsed,
-            },
-        }))
-    }
-
-    container.style.width = `${expandedWidth}px`
-    _applyPanelWidth(expandedWidth, false)
-
-    // ── Sidebar header (title + collapse + reset)
-    const header = el('div', 'cp-header')
-    const resizeHandle = el('div', 'cp-resize-handle', { title: 'Drag to resize settings' })
-    const collapseBtn = el('button', 'cp-collapse-btn', { text: '»', title: 'Collapse panel' })
-    const title = el('span', 'cp-title', { text: 'Parameters' })
-    const resetBtn = el('button', 'cp-reset-btn', { text: '↺', title: 'Reset all to factory defaults' })
-    header.append(title, resetBtn, collapseBtn)
-
-    // ── Split-pane body (File / Settings / Rules)
-    const body = el('div', 'cp-body cp-pane-stack')
-
-    const PANE_COLLAPSE_KEY = 'seesound_panel_collapsed_panes_v1'
-    const paneCollapse = (() => {
-        try {
-            const raw = JSON.parse(localStorage.getItem(PANE_COLLAPSE_KEY) || '{}')
-            return {
-                file: !!raw.file,
-                settings: !!raw.settings,
-                rules: !!raw.rules,
-            }
-        } catch {
-            return { file: false, settings: false, rules: false }
-        }
-    })()
-
-    const persistPaneCollapse = () => {
-        try {
-            localStorage.setItem(PANE_COLLAPSE_KEY, JSON.stringify(paneCollapse))
-        } catch { /* no-op */ }
-    }
-
-    const createPane = (id, titleText, extraClass = '') => {
-        const pane = el('section', `cp-pane ${extraClass}`.trim())
-        const paneHeader = el('div', 'cp-pane-header')
-        const paneTitle = el('span', 'cp-pane-title', { text: titleText })
-        const paneToggle = el('button', 'cp-pane-toggle', {
-            type: 'button',
-            text: paneCollapse[id] ? '▸' : '▾',
-            title: paneCollapse[id] ? `Expand ${titleText}` : `Collapse ${titleText}`,
+            }, { once: true })
+            document.body.appendChild(input)
+            input.click()
         })
-        paneHeader.append(paneToggle, paneTitle)
-        const paneBody = el('div', 'cp-pane-body')
-        pane.append(paneHeader, paneBody)
-        return { id, pane, paneHeader, paneBody, paneToggle, paneTitle }
     }
 
-    const filePane = createPane('file', 'File', 'cp-pane-file')
-    const settingsPane = createPane('settings', 'Settings', 'cp-pane-settings')
-    const rulesPane = createPane('rules', 'Rules', 'cp-pane-rules')
-
-    const rulesPaneActions = el('div', 'cp-pane-header-actions')
-    const paneAddGroupBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-add-group', { type: 'button', text: '⮼' })
-    const paneAddRuleBtn = el('button', 'cp-preset-btn cp-rule-mini cp-rule-add', { type: 'button', text: '+' })
-    rulesPaneActions.append(paneAddGroupBtn, paneAddRuleBtn)
-    rulesPane.paneHeader.appendChild(rulesPaneActions)
-
-    const updateProjectTitle = (rawName = '') => {
-        const name = String(rawName || '').trim()
-        filePane.paneTitle.textContent = name ? `File: ${name}` : 'File'
+    const projectNameFromFile = (rawName = '') => {
+        const fileName = String(rawName || '').trim()
+        if (!fileName) return ''
+        if (/\.ssp\.json$/i.test(fileName)) return fileName.replace(/\.ssp\.json$/i, '')
+        return fileName.replace(/\.[^./\\]+$/g, '')
     }
 
-    updateProjectTitle('')
+    const projectSection = el('section', 'cp-section')
+    const projectTitleRow = el('div', 'cp-section-title-row')
+    const projectTitle = el('h3', 'cp-section-title', { text: UI_TEXT.file.project })
+    const projectNameLabel = el('span', 'cp-project-name')
+    const defaultProjectLabel = UI_TEXT.file.projectNew || 'New Project'
+    const updateProjectTitle = (detail = {}) => {
+        const rawProjectName = String(detail?.projectName || '').trim()
+        const rawFileName = String(detail?.fileName || '').trim()
+        const shownName = rawProjectName || projectNameFromFile(rawFileName) || defaultProjectLabel
+        projectNameLabel.textContent = shownName
+        projectNameLabel.title = shownName
+    }
+    updateProjectTitle()
+    projectTitleRow.append(projectTitle, projectNameLabel)
+    projectSection.appendChild(projectTitleRow)
+    const projectActions = el('div', 'cp-button-grid')
+    const btnLoadProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectLoad })
+    const btnSaveProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSave })
+    const btnSaveAsProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSaveAs })
+    applyButtonIcon(btnLoadProject, BUTTON_ICON_MAP.load, UI_TEXT.file.projectLoad)
+    applyButtonIcon(btnSaveProject, BUTTON_ICON_MAP.save, UI_TEXT.file.projectSave)
+    applyButtonIcon(btnSaveAsProject, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.projectSaveAs)
+    projectActions.append(btnLoadProject, btnSaveProject, btnSaveAsProject)
+    projectSection.appendChild(projectActions)
+
+    btnLoadProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-open-request')))
+    btnSaveProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-request')))
+    btnSaveAsProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-as-request')))
+
     window.addEventListener('seesound:project-file-state', (e) => {
-        updateProjectTitle(e?.detail?.fileName)
+        updateProjectTitle(e?.detail || {})
     })
     window.addEventListener('seesound:project-loaded', (e) => {
-        updateProjectTitle(e?.detail?.fileName)
+        updateProjectTitle(e?.detail || {})
     })
     window.addEventListener('seesound:project-autosaved', (e) => {
-        updateProjectTitle(e?.detail?.fileName)
+        updateProjectTitle(e?.detail || {})
     })
 
-    filePane.paneBody.appendChild(buildPresetBar())
-    settingsPane.paneBody.appendChild(buildCanvasSizeBar())
+    const presetsSection = el('section', 'cp-section cp-preset-bar')
+    presetsSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.file.presets }))
+    const presetRow = el('div', 'cp-preset-row')
+    const presetSelect = el('select', 'cp-input-select cp-preset-sel')
+    const presetName = el('input', 'cp-input-text cp-preset-name', { type: 'text', placeholder: UI_TEXT.file.presetNamePlaceholder })
+    const btnLoadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetLoad })
+    const btnUploadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetUpload || 'Upload' })
+    const btnSavePresetProject = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave })
+    const btnSavePresetLocal = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveLocal || 'Save Local' })
+    const btnDeletePreset = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.file.presetRemove })
+    applyButtonIcon(btnLoadPreset, BUTTON_ICON_MAP.load, UI_TEXT.file.presetLoad)
+    applyButtonIcon(btnUploadPreset, BUTTON_ICON_MAP.upload, UI_TEXT.file.presetUpload || 'Upload')
+    applyButtonIcon(btnSavePresetProject, BUTTON_ICON_MAP.save, UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave)
+    applyButtonIcon(btnSavePresetLocal, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.presetSaveLocal || 'Save Local')
+    applyButtonIcon(btnDeletePreset, BUTTON_ICON_MAP.remove, UI_TEXT.file.presetRemove)
+    presetRow.append(presetSelect, btnLoadPreset, btnUploadPreset, btnDeletePreset, presetName, btnSavePresetProject, btnSavePresetLocal)
+    presetsSection.appendChild(presetRow)
 
-    for (let i = 0; i < PARAM_GROUPS.length; i++) {
-        const g = PARAM_GROUPS[i]
-        const groupParams = PARAMS.filter(
-            p => p.group === g.id &&
-                p.key !== 'canvasWidth' &&
-                p.key !== 'canvasHeight' &&
-                p.key !== 'canvasScale' &&
-                p.key !== 'defaultBackgroundHue' &&
-                p.key !== 'defaultBackgroundSaturation' &&
-                p.key !== 'defaultBackgroundLightness'
-        )
-        if (groupParams.length === 0) continue
-        settingsPane.paneBody.appendChild(buildGroup(g, groupParams, i < 3))
+    async function refreshPresets() {
+        const names = await listPresets()
+        const selected = String(presetSelect.value || '')
+        presetSelect.innerHTML = ''
+        presetSelect.appendChild(el('option', '', { value: '', text: UI_TEXT.file.presetSelectPlaceholder }))
+        for (const name of names) {
+            presetSelect.appendChild(el('option', '', { value: name, text: name }))
+        }
+        if (selected && names.includes(selected)) presetSelect.value = selected
     }
 
-    const ruleBuilder = initRuleBuilder(rulesPane.paneBody)
-
-    paneAddGroupBtn.addEventListener('click', () => {
-        ruleBuilder?.createGroupFromSelection?.()
+    presetSelect.addEventListener('change', () => {
+        if (presetSelect.value) presetName.value = presetSelect.value
     })
-    paneAddRuleBtn.addEventListener('click', () => {
-        ruleBuilder?.insertRuleFromSelection?.()
+
+    btnLoadPreset.addEventListener('click', async () => {
+        const name = String(presetSelect.value || '').trim()
+        if (!name) return
+        const data = await loadPreset(name)
+        if (data?.params) setMany(data.params)
     })
 
-    const splitterA = el('div', 'cp-pane-splitter', { title: 'Resize File and Settings panes' })
-    const splitterB = el('div', 'cp-pane-splitter', { title: 'Resize Settings and Rules panes' })
-    body.append(filePane.pane, splitterA, settingsPane.pane, splitterB, rulesPane.pane)
-
-    const PANE_FILE_HEIGHT_KEY = 'seesound_panel_file_height_v1'
-    const PANE_SETTINGS_HEIGHT_KEY = 'seesound_panel_settings_height_v1'
-    const MIN_PANE = 120
-
-    let filePaneHeight = (() => {
-        try {
-            const saved = Number(localStorage.getItem(PANE_FILE_HEIGHT_KEY))
-            if (Number.isFinite(saved) && saved >= MIN_PANE) return saved
-        } catch { /* no-op */ }
-        return 138
-    })()
-    let settingsPaneHeight = (() => {
-        try {
-            const saved = Number(localStorage.getItem(PANE_SETTINGS_HEIGHT_KEY))
-            if (Number.isFinite(saved) && saved >= MIN_PANE) return saved
-        } catch { /* no-op */ }
-        return 320
-    })()
-
-    const applyPaneHeights = () => {
-        const panes = [filePane, settingsPane, rulesPane]
-        const expandedIds = panes.filter((pane) => !paneCollapse[pane.id]).map((pane) => pane.id)
-        if (expandedIds.length === 0) {
-            paneCollapse.rules = false
-            expandedIds.push('rules')
+    btnUploadPreset.addEventListener('click', async () => {
+        const loaded = await openPresetFromLocalFile()
+        if (!loaded?.params || typeof loaded.params !== 'object') return
+        const nextName = String(loaded.name || '').trim()
+        setMany(loaded.params)
+        if (nextName) {
+            await savePreset(nextName, loaded.params)
+            await refreshPresets()
+            presetSelect.value = nextName
+            presetName.value = nextName
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
         }
+    })
 
-        for (const pane of panes) {
-            const isCollapsedPane = !!paneCollapse[pane.id]
-            pane.pane.classList.toggle('cp-pane-collapsed', isCollapsedPane)
-            pane.paneBody.style.display = isCollapsedPane ? 'none' : ''
-            pane.paneToggle.textContent = isCollapsedPane ? '▸' : '▾'
-            pane.paneToggle.title = isCollapsedPane
-                ? `Expand ${pane.paneHeader.textContent?.trim() || 'pane'}`
-                : `Collapse ${pane.paneHeader.textContent?.trim() || 'pane'}`
-        }
+    btnSavePresetProject.addEventListener('click', async () => {
+        const typed = String(presetName.value || '').trim()
+        const selected = String(presetSelect.value || '').trim()
+        const name = typed || selected
+        if (!name) return
+        const snapshot = getSnapshot()
+        window.dispatchEvent(new CustomEvent('seesound:project-preset-save-request', {
+            detail: {
+                name,
+                params: snapshot,
+            },
+        }))
+        await savePreset(name, snapshot)
+        await refreshPresets()
+        presetSelect.value = name
+        presetName.value = name
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    })
 
-        const showSplitterA = !paneCollapse.file && !paneCollapse.settings
-        const showSplitterB = !paneCollapse.settings && !paneCollapse.rules
-        splitterA.style.display = showSplitterA ? '' : 'none'
-        splitterB.style.display = showSplitterB ? '' : 'none'
+    btnSavePresetLocal.addEventListener('click', async () => {
+        const typed = String(presetName.value || '').trim()
+        const selected = String(presetSelect.value || '').trim()
+        const name = typed || selected
+        if (!name) return
+        const didSave = await savePresetToLocalFile(name, getSnapshot())
+        if (!didSave) return
+        presetName.value = name
+    })
 
-        const splitterTotal = (showSplitterA ? splitterA.offsetHeight : 0) + (showSplitterB ? splitterB.offsetHeight : 0)
-        const collapsedSpace = panes
-            .filter((pane) => paneCollapse[pane.id])
-            .reduce((sum, pane) => sum + pane.paneHeader.offsetHeight, 0)
-        const available = Math.max(MIN_PANE, body.clientHeight - splitterTotal - collapsedSpace)
+    btnDeletePreset.addEventListener('click', async () => {
+        const name = String(presetSelect.value || '').trim()
+        if (!name) return
+        await deletePreset(name)
+        presetName.value = ''
+        await refreshPresets()
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    })
 
-        const flexPaneId = expandedIds.includes('rules')
-            ? 'rules'
-            : expandedIds[expandedIds.length - 1]
+    window.addEventListener('seesound:preset-library-changed', () => {
+        refreshPresets()
+    })
 
-        const fixedIds = expandedIds.filter((id) => id !== flexPaneId)
-        const maxFixed = Math.max(MIN_PANE, available - MIN_PANE)
-        filePaneHeight = Math.max(MIN_PANE, Math.min(maxFixed, Math.floor(filePaneHeight)))
-        settingsPaneHeight = Math.max(MIN_PANE, Math.min(maxFixed, Math.floor(settingsPaneHeight)))
+    const exportSection = el('section', 'cp-section')
+    exportSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.file.export }))
+    const exportActions = el('div', 'cp-button-grid')
+    const btnExportImage = el('button', 'cp-btn', { text: UI_TEXT.file.exportImage })
+    const btnExportImageNoBg = el('button', 'cp-btn', { text: UI_TEXT.file.exportImageNoBg })
+    const btnExportVideo = el('button', 'cp-btn', { text: UI_TEXT.file.exportVideo })
+    const btnExportObj = el('button', 'cp-btn', { text: UI_TEXT.file.exportObj })
+    applyButtonIcon(btnExportImage, BUTTON_ICON_MAP.exportImage, UI_TEXT.file.exportImage)
+    applyButtonIcon(btnExportImageNoBg, BUTTON_ICON_MAP.exportImageNoBg, UI_TEXT.file.exportImageNoBg)
+    applyButtonIcon(btnExportVideo, BUTTON_ICON_MAP.exportVideo, UI_TEXT.file.exportVideo)
+    applyButtonIcon(btnExportObj, BUTTON_ICON_MAP.exportObj, UI_TEXT.file.exportObj)
+    exportActions.append(btnExportImage, btnExportImageNoBg, btnExportVideo, btnExportObj)
+    exportSection.appendChild(exportActions)
 
-        if (fixedIds.includes('file') && fixedIds.includes('settings') && filePaneHeight + settingsPaneHeight > available - MIN_PANE) {
-            settingsPaneHeight = Math.max(MIN_PANE, available - MIN_PANE - filePaneHeight)
-        }
+    btnExportImage.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-image')))
+    btnExportImageNoBg.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-image-no-bg')))
+    btnExportVideo.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-video-toggle')))
+    btnExportObj.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-obj')))
 
-        filePane.pane.style.flex = paneCollapse.file
-            ? '0 0 auto'
-            : (flexPaneId === 'file' ? '1 1 auto' : `0 0 ${filePaneHeight}px`)
-        settingsPane.pane.style.flex = paneCollapse.settings
-            ? '0 0 auto'
-            : (flexPaneId === 'settings' ? '1 1 auto' : `0 0 ${settingsPaneHeight}px`)
-        rulesPane.pane.style.flex = paneCollapse.rules
-            ? '0 0 auto'
-            : (flexPaneId === 'rules' ? '1 1 auto' : `0 0 ${MIN_PANE}px`)
+    panel.append(projectSection, presetsSection, exportSection)
+    body.appendChild(panel)
+
+    refreshPresets()
+}
+
+function buildViewMenu(body, syncRegistry) {
+    const panel = el('div', 'cp-menu-pane-inner')
+
+    const canvasSection = el('section', 'cp-section')
+    canvasSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.canvasSize }))
+
+    const widthInput = el('input', 'cp-input-number', { type: 'number', min: 160, step: 1 })
+    const heightInput = el('input', 'cp-input-number', { type: 'number', min: 120, step: 1 })
+    const canvasRow = el('div', 'cp-inline-pair')
+    canvasRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.width }),
+        widthInput,
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.height }),
+        heightInput,
+    )
+    canvasSection.appendChild(canvasRow)
+
+    const zoomSlider = el('input', 'cp-input-range', { type: 'range', min: 5, max: 400, step: 1 })
+    const zoomNumber = el('input', 'cp-input-number', { type: 'number', min: 5, max: 400, step: 1 })
+    const zoomRow = el('div', 'cp-setting-row')
+    const zoomLabelWrap = el('div', 'cp-setting-label-wrap')
+    zoomLabelWrap.appendChild(el('label', 'cp-setting-label', { text: UI_TEXT.view.canvasZoom }))
+    const zoomControls = el('div', 'cp-setting-controls')
+    zoomControls.append(zoomSlider, zoomNumber)
+    zoomRow.append(zoomLabelWrap, zoomControls)
+    canvasSection.appendChild(zoomRow)
+
+    const backgroundSection = el('section', 'cp-section')
+    backgroundSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.backgroundColor }))
+    const bgColorInput = el('input', 'cp-input-color', { type: 'color' })
+    backgroundSection.appendChild(bgColorInput)
+
+    const cameraSection = el('section', 'cp-section')
+    cameraSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.cameraPosition }))
+    const camPosX = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const camPosY = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const camPosZ = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const posRow = el('div', 'cp-inline-triplet')
+    posRow.append(camPosX, camPosY, camPosZ)
+    cameraSection.appendChild(posRow)
+
+    cameraSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.cameraTarget }))
+    const camTargetX = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const camTargetY = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const camTargetZ = el('input', 'cp-input-number', { type: 'number', step: 1 })
+    const targetRow = el('div', 'cp-inline-triplet')
+    targetRow.append(camTargetX, camTargetY, camTargetZ)
+    cameraSection.appendChild(targetRow)
+
+    const cameraActions = el('div', 'cp-button-grid')
+    const btnResetCamera = el('button', 'cp-btn', { text: UI_TEXT.view.cameraReset })
+    const btnFitCamera = el('button', 'cp-btn', { text: UI_TEXT.view.cameraFit })
+    const btnCleanCanvas = el('button', 'cp-btn', { text: UI_TEXT.view.cameraClean })
+    applyButtonIcon(btnResetCamera, BUTTON_ICON_MAP.reset, UI_TEXT.view.cameraReset)
+    applyButtonIcon(btnFitCamera, BUTTON_ICON_MAP.fit, UI_TEXT.view.cameraFit)
+    applyButtonIcon(btnCleanCanvas, BUTTON_ICON_MAP.clean, UI_TEXT.view.cameraClean)
+    cameraActions.append(btnResetCamera, btnFitCamera, btnCleanCanvas)
+    cameraSection.appendChild(cameraActions)
+
+    const projectionSection = el('section', 'cp-section')
+    projectionSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.projection }))
+
+    const projectionSelect = el('select', 'cp-input-select')
+    projectionSelect.appendChild(createSelectOptions([
+        { value: 'axonometric', label: UI_TEXT.view.projectionAxo },
+        { value: 'perspective', label: UI_TEXT.view.projectionPerspective },
+    ], params.cameraProjection))
+
+    const axoSelect = el('select', 'cp-input-select')
+    axoSelect.appendChild(createSelectOptions([
+        { value: 'orthoXY', label: UI_TEXT.view.axoOrthoXY },
+        { value: 'topXZ', label: UI_TEXT.view.axoOrthoXZ },
+        { value: 'orthoYZ', label: UI_TEXT.view.axoOrthoYZ },
+        { value: 'isometric', label: UI_TEXT.view.axoIsometric },
+    ], params.cameraAxoPreset))
+
+    projectionSection.append(projectionSelect, axoSelect)
+
+    const fovSection = el('section', 'cp-section')
+    fovSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.angleOfView }))
+    const fovSlider = el('input', 'cp-input-range', { type: 'range', min: 20, max: 120, step: 1 })
+    const fovNumber = el('input', 'cp-input-number', { type: 'number', min: 20, max: 120, step: 1 })
+    const fovRow = el('div', 'cp-setting-controls')
+    fovRow.append(fovSlider, fovNumber)
+    fovSection.appendChild(fovRow)
+
+    const blendingSection = el('section', 'cp-section')
+    blendingSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.blending }))
+    const blendSelect = el('select', 'cp-input-select')
+    blendSelect.appendChild(createSelectOptions([
+        { value: 'source-over', label: 'Normal' },
+        { value: 'screen', label: 'Screen' },
+        { value: 'alpha', label: 'Alpha' },
+        { value: 'multiply', label: 'Multiply' },
+    ], params.blendMode))
+    blendingSection.appendChild(blendSelect)
+
+    const postSection = el('section', 'cp-section')
+    postSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.postProcessing }))
+
+    const postEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const bloomEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const bokehEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
+
+    const postEnabledRow = el('label', 'cp-toggle-row')
+    postEnabledRow.append(postEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.postProcessingEnabled }))
+    const bloomEnabledRow = el('label', 'cp-toggle-row')
+    bloomEnabledRow.append(bloomEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bloomEnabled }))
+    const bokehEnabledRow = el('label', 'cp-toggle-row')
+    bokehEnabledRow.append(bokehEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bokehEnabled }))
+
+    const bloomStrengthSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 4, step: 0.01 })
+    const bloomStrengthNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 4, step: 0.01 })
+    const bloomStrengthRow = el('div', 'cp-setting-row')
+    bloomStrengthRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bloomStrength }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bloomStrengthSlider, bloomStrengthNumber)
+            return controls
+        })(),
+    )
+
+    const bloomRadiusSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 2, step: 0.01 })
+    const bloomRadiusNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 2, step: 0.01 })
+    const bloomRadiusRow = el('div', 'cp-setting-row')
+    bloomRadiusRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bloomRadius }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bloomRadiusSlider, bloomRadiusNumber)
+            return controls
+        })(),
+    )
+
+    const bloomThresholdSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 1, step: 0.01 })
+    const bloomThresholdNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 1, step: 0.01 })
+    const bloomThresholdRow = el('div', 'cp-setting-row')
+    bloomThresholdRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bloomThreshold }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bloomThresholdSlider, bloomThresholdNumber)
+            return controls
+        })(),
+    )
+
+    const bokehFocusSlider = el('input', 'cp-input-range', { type: 'range', min: 1, max: 5000, step: 1 })
+    const bokehFocusNumber = el('input', 'cp-input-number', { type: 'number', min: 1, max: 5000, step: 1 })
+    const bokehFocusRow = el('div', 'cp-setting-row')
+    bokehFocusRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehFocus }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bokehFocusSlider, bokehFocusNumber)
+            return controls
+        })(),
+    )
+
+    const bokehApertureSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.001, step: 0.00001 })
+    const bokehApertureNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.001, step: 0.00001 })
+    const bokehApertureRow = el('div', 'cp-setting-row')
+    bokehApertureRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehAperture }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bokehApertureSlider, bokehApertureNumber)
+            return controls
+        })(),
+    )
+
+    const bokehMaxBlurSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.1, step: 0.0005 })
+    const bokehMaxBlurNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.1, step: 0.0005 })
+    const bokehMaxBlurRow = el('div', 'cp-setting-row')
+    bokehMaxBlurRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehMaxBlur }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(bokehMaxBlurSlider, bokehMaxBlurNumber)
+            return controls
+        })(),
+    )
+
+    postSection.append(
+        postEnabledRow,
+        bloomEnabledRow,
+        bloomStrengthRow,
+        bloomRadiusRow,
+        bloomThresholdRow,
+        bokehEnabledRow,
+        bokehFocusRow,
+        bokehApertureRow,
+        bokehMaxBlurRow,
+    )
+
+    const guideSection = el('section', 'cp-section')
+    guideSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.guides }))
+    const originToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const guideToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
+
+    const originRow = el('label', 'cp-inline-pair')
+    originRow.append(originToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideAxes }))
+    const guideRow = el('label', 'cp-inline-pair')
+    guideRow.append(guideToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideCoordinates }))
+    guideSection.append(originRow, guideRow)
+
+    widthInput.addEventListener('change', () => {
+        const w = Math.max(160, Math.floor(Number(widthInput.value) || 160))
+        set('canvasWidth', w)
+    })
+    heightInput.addEventListener('change', () => {
+        const h = Math.max(120, Math.floor(Number(heightInput.value) || 120))
+        set('canvasHeight', h)
+    })
+
+    const applyCanvasZoom = (raw) => {
+        const value = clamp(raw, 5, 400)
+        set('canvasScale', Math.floor(value))
+    }
+    zoomSlider.addEventListener('input', () => applyCanvasZoom(Number(zoomSlider.value)))
+    zoomNumber.addEventListener('change', () => applyCanvasZoom(Number(zoomNumber.value)))
+
+    bgColorInput.addEventListener('input', () => {
+        const hsl = hexToHsl(bgColorInput.value)
+        setMany({
+            defaultBackgroundHue: Math.round(hsl.h),
+            defaultBackgroundSaturation: Math.round(hsl.s),
+            defaultBackgroundLightness: Math.round(hsl.l),
+        })
+    })
+
+    const syncCameraNumbers = () => {
+        camPosX.value = String(Number(params.cameraPosX ?? 0))
+        camPosY.value = String(Number(params.cameraPosY ?? 0))
+        camPosZ.value = String(Number(params.cameraPosZ ?? 420))
+        camTargetX.value = String(Number(params.cameraTargetX ?? 0))
+        camTargetY.value = String(Number(params.cameraTargetY ?? 0))
+        camTargetZ.value = String(Number(params.cameraTargetZ ?? 0))
     }
 
-    let paneDrag = null
-    const beginPaneDrag = (type, ev) => {
-        if (collapsed) return
-        if (type === 'file' && (paneCollapse.file || paneCollapse.settings)) return
-        if (type === 'settings' && (paneCollapse.settings || paneCollapse.rules)) return
-        paneDrag = {
-            type,
-            startY: ev.clientY,
-            fileStart: filePaneHeight,
-            settingsStart: settingsPaneHeight,
-        }
-        ev.preventDefault()
-    }
-
-    splitterA.addEventListener('mousedown', (ev) => beginPaneDrag('file', ev))
-    splitterB.addEventListener('mousedown', (ev) => beginPaneDrag('settings', ev))
-
-    for (const pane of [filePane, settingsPane, rulesPane]) {
-        pane.paneToggle.addEventListener('click', (ev) => {
-            ev.preventDefault()
-            ev.stopPropagation()
-            if (!paneCollapse[pane.id]) {
-                const openCount = [filePane, settingsPane, rulesPane].filter((p) => !paneCollapse[p.id]).length
-                if (openCount <= 1) return
-            }
-            paneCollapse[pane.id] = !paneCollapse[pane.id]
-            persistPaneCollapse()
-            applyPaneHeights()
+    const applyCameraNumbers = () => {
+        setMany({
+            cameraPosX: Number(camPosX.value) || 0,
+            cameraPosY: Number(camPosY.value) || 0,
+            cameraPosZ: Number(camPosZ.value) || 0,
+            cameraTargetX: Number(camTargetX.value) || 0,
+            cameraTargetY: Number(camTargetY.value) || 0,
+            cameraTargetZ: Number(camTargetZ.value) || 0,
         })
     }
 
-    window.addEventListener('seesound:experience-mode-changed', (e) => {
-        const mode = String(e?.detail?.mode || '').toLowerCase()
-        if (mode === 'starter') {
-            paneCollapse.file = false
-            paneCollapse.settings = false
-            paneCollapse.rules = true
-            persistPaneCollapse()
-            applyPaneHeights()
-            return
+    for (const input of [camPosX, camPosY, camPosZ, camTargetX, camTargetY, camTargetZ]) {
+        input.addEventListener('change', applyCameraNumbers)
+    }
+
+    btnResetCamera.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:view-reset-camera'))
+    })
+
+    btnFitCamera.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:view-fit-camera'))
+    })
+
+    btnCleanCanvas.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:view-clean-canvas'))
+    })
+
+    projectionSelect.addEventListener('change', () => set('cameraProjection', projectionSelect.value))
+    axoSelect.addEventListener('change', () => set('cameraAxoPreset', axoSelect.value))
+    blendSelect.addEventListener('change', () => set('blendMode', blendSelect.value))
+
+    postEnabled.addEventListener('change', () => set('postProcessEnabled', postEnabled.checked ? 1 : 0))
+    bloomEnabled.addEventListener('change', () => set('bloomEnabled', bloomEnabled.checked ? 1 : 0))
+    bokehEnabled.addEventListener('change', () => set('bokehEnabled', bokehEnabled.checked ? 1 : 0))
+
+    const bindSliderAndNumber = ({ slider, number, key, min, max }) => {
+        const apply = (raw) => {
+            const value = clamp(raw, min, max)
+            set(key, value)
         }
-        if (mode === 'advanced') {
-            paneCollapse.file = false
-            paneCollapse.settings = false
-            paneCollapse.rules = false
-            persistPaneCollapse()
-            applyPaneHeights()
-            return
+        slider.addEventListener('input', () => apply(Number(slider.value)))
+        number.addEventListener('change', () => apply(Number(number.value)))
+    }
+
+    bindSliderAndNumber({ slider: bloomStrengthSlider, number: bloomStrengthNumber, key: 'bloomStrength', min: 0, max: 4 })
+    bindSliderAndNumber({ slider: bloomRadiusSlider, number: bloomRadiusNumber, key: 'bloomRadius', min: 0, max: 2 })
+    bindSliderAndNumber({ slider: bloomThresholdSlider, number: bloomThresholdNumber, key: 'bloomThreshold', min: 0, max: 1 })
+    bindSliderAndNumber({ slider: bokehFocusSlider, number: bokehFocusNumber, key: 'bokehFocus', min: 1, max: 5000 })
+    bindSliderAndNumber({ slider: bokehApertureSlider, number: bokehApertureNumber, key: 'bokehAperture', min: 0, max: 0.001 })
+    bindSliderAndNumber({ slider: bokehMaxBlurSlider, number: bokehMaxBlurNumber, key: 'bokehMaxBlur', min: 0, max: 0.1 })
+
+    const applyFov = (value) => {
+        set('cameraAngleOfView', clamp(value, 20, 120))
+    }
+
+    fovSlider.addEventListener('input', () => applyFov(Number(fovSlider.value)))
+    fovNumber.addEventListener('change', () => applyFov(Number(fovNumber.value)))
+
+    originToggle.addEventListener('change', () => {
+        set('originSignEnabled', originToggle.checked ? 1 : 0)
+    })
+    guideToggle.addEventListener('change', () => {
+        set('coordinateGuidesEnabled', guideToggle.checked ? 1 : 0)
+    })
+
+    window.addEventListener('seesound:origin-sign-state', (e) => {
+        const enabled = e?.detail?.enabled
+        if (typeof enabled === 'boolean') originToggle.checked = enabled
+    })
+
+    window.addEventListener('seesound:coordinate-guide-state', (e) => {
+        const enabled = e?.detail?.enabled
+        if (typeof enabled === 'boolean') guideToggle.checked = enabled
+    })
+
+    const syncCanvasSize = () => {
+        widthInput.value = String(Number(params.canvasWidth ?? 0) || 0)
+        heightInput.value = String(Number(params.canvasHeight ?? 0) || 0)
+    }
+
+    const syncCanvasZoom = () => {
+        const zoomPct = Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale) || 100)))
+        zoomSlider.value = String(zoomPct)
+        zoomNumber.value = String(zoomPct)
+    }
+
+    const syncBackgroundColor = () => {
+        const rgb = hslToRgb(
+            Number(params.defaultBackgroundHue ?? 0),
+            Number(params.defaultBackgroundSaturation ?? 0),
+            Number(params.defaultBackgroundLightness ?? 0),
+        )
+        bgColorInput.value = rgbToHex(rgb.r, rgb.g, rgb.b)
+    }
+
+    const syncProjectionControls = () => {
+        projectionSelect.value = String(params.cameraProjection || 'axonometric')
+        axoSelect.value = String(params.cameraAxoPreset || 'orthoXY')
+        const perspectiveActive = projectionSelect.value === 'perspective'
+        fovSection.style.display = perspectiveActive ? '' : 'none'
+    }
+
+    const syncBlendMode = () => {
+        blendSelect.value = String(params.blendMode || 'screen')
+    }
+
+    const syncFov = () => {
+        const fov = Number(params.cameraAngleOfView ?? 55)
+        fovSlider.value = String(fov)
+        fovNumber.value = String(fov)
+    }
+
+    const syncPostEnabled = () => {
+        postEnabled.checked = Number(params.postProcessEnabled ?? 1) >= 0.5
+        bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
+        bokehEnabled.checked = Number(params.bokehEnabled ?? 1) >= 0.5
+    }
+
+    const syncGuideToggles = () => {
+        originToggle.checked = Number(params.originSignEnabled ?? 1) >= 0.5
+        guideToggle.checked = Number(params.coordinateGuidesEnabled ?? 1) >= 0.5
+    }
+
+    const syncBloomStrength = () => {
+        const bloomStrength = Number(params.bloomStrength ?? 1.15)
+        bloomStrengthSlider.value = String(bloomStrength)
+        bloomStrengthNumber.value = String(bloomStrength)
+    }
+
+    const syncBloomRadius = () => {
+        const bloomRadius = Number(params.bloomRadius ?? 0.7)
+        bloomRadiusSlider.value = String(bloomRadius)
+        bloomRadiusNumber.value = String(bloomRadius)
+    }
+
+    const syncBloomThreshold = () => {
+        const bloomThreshold = Number(params.bloomThreshold ?? 0.18)
+        bloomThresholdSlider.value = String(bloomThreshold)
+        bloomThresholdNumber.value = String(bloomThreshold)
+    }
+
+    const syncBokehFocus = () => {
+        const bokehFocus = Number(params.bokehFocus ?? 380)
+        bokehFocusSlider.value = String(bokehFocus)
+        bokehFocusNumber.value = String(bokehFocus)
+    }
+
+    const syncBokehAperture = () => {
+        const bokehAperture = Number(params.bokehAperture ?? 0.00012)
+        bokehApertureSlider.value = String(bokehAperture)
+        bokehApertureNumber.value = String(bokehAperture)
+    }
+
+    const syncBokehMaxBlur = () => {
+        const bokehMaxBlur = Number(params.bokehMaxBlur ?? 0.01)
+        bokehMaxBlurSlider.value = String(bokehMaxBlur)
+        bokehMaxBlurNumber.value = String(bokehMaxBlur)
+    }
+
+    const syncCameraFields = () => {
+        syncCameraNumbers()
+    }
+
+    registerSync(syncRegistry, syncCanvasSize, ['canvasWidth', 'canvasHeight'])
+    registerSync(syncRegistry, syncCanvasZoom, ['canvasScale'])
+    registerSync(syncRegistry, syncBackgroundColor, ['defaultBackgroundHue', 'defaultBackgroundSaturation', 'defaultBackgroundLightness'])
+    registerSync(syncRegistry, syncProjectionControls, ['cameraProjection', 'cameraAxoPreset'])
+    registerSync(syncRegistry, syncBlendMode, ['blendMode'])
+    registerSync(syncRegistry, syncFov, ['cameraAngleOfView'])
+    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled', 'bokehEnabled'])
+    registerSync(syncRegistry, syncGuideToggles, ['originSignEnabled', 'coordinateGuidesEnabled'])
+    registerSync(syncRegistry, syncBloomStrength, ['bloomStrength'])
+    registerSync(syncRegistry, syncBloomRadius, ['bloomRadius'])
+    registerSync(syncRegistry, syncBloomThreshold, ['bloomThreshold'])
+    registerSync(syncRegistry, syncBokehFocus, ['bokehFocus'])
+    registerSync(syncRegistry, syncBokehAperture, ['bokehAperture'])
+    registerSync(syncRegistry, syncBokehMaxBlur, ['bokehMaxBlur'])
+    registerSync(syncRegistry, syncCameraFields, ['cameraPosX', 'cameraPosY', 'cameraPosZ', 'cameraTargetX', 'cameraTargetY', 'cameraTargetZ'])
+
+    window.addEventListener('seesound:camera-state', (event) => {
+        const detail = event?.detail || {}
+        const px = Number(detail.position?.x)
+        const py = Number(detail.position?.y)
+        const pz = Number(detail.position?.z)
+        const tx = Number(detail.target?.x)
+        const ty = Number(detail.target?.y)
+        const tz = Number(detail.target?.z)
+        const fov = Number(detail.fov)
+        const projection = String(detail.projection || '')
+        if (Number.isFinite(px)) camPosX.value = String(px)
+        if (Number.isFinite(py)) camPosY.value = String(py)
+        if (Number.isFinite(pz)) camPosZ.value = String(pz)
+        if (Number.isFinite(tx)) camTargetX.value = String(tx)
+        if (Number.isFinite(ty)) camTargetY.value = String(ty)
+        if (Number.isFinite(tz)) camTargetZ.value = String(tz)
+        if (Number.isFinite(fov)) {
+            fovSlider.value = String(fov)
+            fovNumber.value = String(fov)
         }
-        if (mode === 'pro') {
-            paneCollapse.file = false
-            paneCollapse.settings = false
-            paneCollapse.rules = false
-            persistPaneCollapse()
-            applyPaneHeights()
+        if (projection === 'perspective' || projection === 'axonometric') {
+            projectionSelect.value = projection
+            fovSection.style.display = projection === 'perspective' ? '' : 'none'
         }
     })
 
-    const onPaneDragMove = (ev) => {
-        if (!paneDrag || collapsed) return
-        const dy = ev.clientY - paneDrag.startY
-        if (paneDrag.type === 'file') filePaneHeight = paneDrag.fileStart + dy
-        else settingsPaneHeight = paneDrag.settingsStart + dy
-        applyPaneHeights()
-    }
+    syncCanvasSize()
+    syncCanvasZoom()
+    syncBackgroundColor()
+    syncProjectionControls()
+    syncBlendMode()
+    syncFov()
+    syncPostEnabled()
+    syncGuideToggles()
+    syncBloomStrength()
+    syncBloomRadius()
+    syncBloomThreshold()
+    syncBokehFocus()
+    syncBokehAperture()
+    syncBokehMaxBlur()
+    syncCameraFields()
 
-    const onPaneDragEnd = () => {
-        if (!paneDrag) return
-        paneDrag = null
-        try {
-            localStorage.setItem(PANE_FILE_HEIGHT_KEY, String(Math.floor(filePaneHeight)))
-            localStorage.setItem(PANE_SETTINGS_HEIGHT_KEY, String(Math.floor(settingsPaneHeight)))
-        } catch { /* no-op */ }
-    }
+    panel.append(canvasSection, backgroundSection, cameraSection, projectionSection, fovSection, blendingSection, postSection, guideSection)
+    body.appendChild(panel)
+}
 
-    container.append(resizeHandle, header, body)
+function buildSettingsMenu(body, syncRegistry) {
+    const panel = el('div', 'cp-menu-pane-inner')
 
-    // ── Collapse / expand sidebar
-    let collapsed = false
-    collapseBtn.addEventListener('click', () => {
-        collapsed = !collapsed
-        container.classList.toggle('cp-collapsed', collapsed)
-        if (collapsed) {
-            expandedWidth = clampPanelWidth(container.getBoundingClientRect().width || expandedWidth)
-            container.style.width = '28px'
-            _applyPanelWidth(expandedWidth, true)
-        } else {
-            container.style.width = `${expandedWidth}px`
-            _applyPanelWidth(expandedWidth, false)
-        }
-        collapseBtn.textContent = collapsed ? '«' : '»'
-        title.style.display = collapsed ? 'none' : ''
-        resetBtn.style.display = collapsed ? 'none' : ''
-        body.style.display = collapsed ? 'none' : ''
-        if (!collapsed) applyPaneHeights()
+    const sliderSection = el('section', 'cp-section')
+    sliderSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.sliders }))
+
+    const resolutionRow = el('div', 'cp-setting-row')
+    const resolutionLabelWrap = el('div', 'cp-setting-label-wrap')
+    resolutionLabelWrap.appendChild(el('label', 'cp-setting-label', {
+        text: UI_TEXT.settings.audioResolution,
+        title: 'Technical term: FFT Size. Frequency-domain analysis resolution.',
+    }))
+    const resolutionSelect = el('select', 'cp-input-select')
+    resolutionSelect.appendChild(createSelectOptions(
+        FFT_OPTIONS.map((value) => ({ value, label: String(value) })),
+        params.fftSize,
+    ))
+    resolutionSelect.addEventListener('change', () => {
+        set('fftSize', Number(resolutionSelect.value))
     })
+    resolutionRow.append(resolutionLabelWrap, resolutionSelect)
+    sliderSection.appendChild(resolutionRow)
 
-    const resizeAbortPrev = window.__seesoundPanelResizeAbort
-    if (resizeAbortPrev && typeof resizeAbortPrev.abort === 'function') resizeAbortPrev.abort()
-    const resizeAbort = new AbortController()
-    window.__seesoundPanelResizeAbort = resizeAbort
+    for (const definition of SETTINGS_SLIDERS) {
+        sliderSection.appendChild(createSliderControl(definition, syncRegistry))
+    }
 
-    let dragState = null
-    resizeHandle.addEventListener('mousedown', (e) => {
-        if (collapsed) return
-        dragState = {
-            startX: e.clientX,
-            startWidth: container.getBoundingClientRect().width,
-        }
-        e.preventDefault()
-    }, { signal: resizeAbort.signal })
-
-    window.addEventListener('mousemove', (e) => {
-        if (!dragState || collapsed) return
-        const dx = dragState.startX - e.clientX
-        const nextW = clampPanelWidth(dragState.startWidth + dx)
-        expandedWidth = nextW
-        container.style.width = `${nextW}px`
-        _applyPanelWidth(nextW, false)
-    }, { signal: resizeAbort.signal })
-
-    window.addEventListener('mousemove', onPaneDragMove, { signal: resizeAbort.signal })
-
-    window.addEventListener('mouseup', () => {
-        if (!dragState) return
-        dragState = null
-        try { localStorage.setItem(PANEL_WIDTH_KEY, String(expandedWidth)) } catch { /* no-op */ }
-    }, { signal: resizeAbort.signal })
-
-    window.addEventListener('mouseup', onPaneDragEnd, { signal: resizeAbort.signal })
-
-    window.addEventListener('resize', () => {
-        if (collapsed) return
-        expandedWidth = clampPanelWidth(expandedWidth)
-        container.style.width = `${expandedWidth}px`
-        _applyPanelWidth(expandedWidth, false)
-        applyPaneHeights()
-    }, { signal: resizeAbort.signal })
-
-    applyPaneHeights()
-
-    // ── Reset all params
-    resetBtn.addEventListener('click', () => {
-        if (!confirm('Reset all parameters to factory defaults?')) return
+    const resetButton = el('button', 'cp-btn cp-btn-wide', { text: UI_TEXT.settings.resetDefaults })
+    applyButtonIcon(resetButton, BUTTON_ICON_MAP.reset, UI_TEXT.settings.resetDefaults)
+    resetButton.addEventListener('click', () => {
         resetToDefaults()
-        for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
     })
+    sliderSection.appendChild(resetButton)
 
-    // Keep controls in sync when params are changed outside direct row handlers
-    // (preset load, project load, runtime normalization).
-    subscribe((_, key) => {
-        if (key === 'ruleBlocks') return
-        if (key === '*' || key === 'disabled') {
-            for (const p of PARAMS) _rowSyncMap.get(p.key)?.(params[p.key])
+    const rangeSection = el('section', 'cp-section')
+    rangeSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.normalizationRanges }))
+    for (const definition of SETTINGS_RANGES) {
+        rangeSection.appendChild(createRangePairControl(definition, syncRegistry))
+    }
+
+    const syncResolution = () => {
+        resolutionSelect.value = String(params.fftSize || 2048)
+    }
+    registerSync(syncRegistry, syncResolution, ['fftSize'])
+    syncResolution()
+
+    panel.append(sliderSection, rangeSection)
+    body.appendChild(panel)
+}
+
+function toActionFromState(rowState) {
+    const output = rowState.definition.output
+    if (rowState.definition.type === 'enum') {
+        return {
+            operator: 'set',
+            output,
+            value: rowState.enumValue || rowState.definition.options?.[0] || 'square',
+        }
+    }
+
+    const expression = rowState.definition.type === 'enum'
+        ? ''
+        : compileTokens(rowState.tokens)
+    if (rowState.definition.type !== 'enum' && hasUnresolvedSlots(rowState.tokens)) return null
+    rowState.expression = expression
+
+    const text = String(expression || '').trim()
+    if (!text) return null
+
+    const numeric = Number(text)
+    if (Number.isFinite(numeric) && /^[-+]?\d+(\.\d+)?$/.test(text)) {
+        return {
+            operator: 'set',
+            output,
+            value: numeric,
+        }
+    }
+
+    if (RULE_VARIABLE_ID_SET.has(text)) {
+        return {
+            operator: 'set',
+            output,
+            input: text,
+        }
+    }
+
+    return {
+        operator: 'set',
+        output,
+        expression: text,
+    }
+}
+
+function buildRulesMenu(body, syncRegistry) {
+    const panel = el('div', 'cp-menu-pane-inner')
+    const wrapper = el('div', 'cp-rules-wrapper')
+    panel.appendChild(wrapper)
+
+    const rowsByKey = new Map()
+    const orderedRows = []
+
+    function rowKey(target, output) {
+        return `${target}:${output}`
+    }
+
+    function syncColorMode(target, changedOutput = '') {
+        const rgbRows = [
+            rowsByKey.get(rowKey(target, 'red')),
+            rowsByKey.get(rowKey(target, 'green')),
+            rowsByKey.get(rowKey(target, 'blue')),
+        ].filter(Boolean)
+        const hueRow = rowsByKey.get(rowKey(target, 'hue'))
+        if (!hueRow || rgbRows.length === 0) return
+
+        if (changedOutput === 'red' || changedOutput === 'green' || changedOutput === 'blue') {
+            const changed = rowsByKey.get(rowKey(target, changedOutput))
+            if (changed) {
+                for (const row of rgbRows) row.enabled = !!changed.enabled
+                if (changed.enabled && String(changed.expression || '').trim()) hueRow.enabled = false
+            }
+        }
+
+        if (changedOutput === 'hue') {
+            if (hueRow.enabled && String(hueRow.expression || '').trim()) {
+                for (const row of rgbRows) row.enabled = false
+            }
+        }
+
+        const rgbActive = rgbRows.some((row) => row.enabled && String(row.expression || '').trim())
+        const hueActive = hueRow.enabled && String(hueRow.expression || '').trim()
+        if (rgbActive && hueActive) {
+            if (changedOutput === 'hue') {
+                for (const row of rgbRows) row.enabled = false
+            } else {
+                hueRow.enabled = false
+            }
+        }
+
+        for (const row of rgbRows) {
+            if (row.toggle) row.toggle.checked = row.enabled
+        }
+        if (hueRow.toggle) hueRow.toggle.checked = hueRow.enabled
+    }
+
+    function buildCondition(rowState) {
+        if (!rowState.conditionEnabled || rowState.conditionOperator === 'always') return { operator: 'always' }
+        const detail = String(rowState.conditionDetail || NONE_VAR)
+        const overall = String(rowState.conditionOverall || NONE_VAR)
+        const inputId = detail !== NONE_VAR ? detail : (overall !== NONE_VAR ? overall : '')
+        if (!inputId) return { operator: 'always' }
+        const valueInput = String(rowState.conditionValueInput || NONE_VAR)
+        if (valueInput && valueInput !== NONE_VAR) {
+            return {
+                operator: rowState.conditionOperator,
+                input: inputId,
+                valueInput,
+            }
+        }
+        return {
+            operator: rowState.conditionOperator,
+            input: inputId,
+            value: Number(rowState.conditionValue) || 0,
+        }
+    }
+
+    let syncingFromParamStore = false
+    let skipNextRuleBlocksApply = false
+
+    function commitRowIfReady(rowState, force = false) {
+        if (!rowState) return
+        if (!force && !rowState.enabled) return
+        if (!force && rowState.conditionEnabled) {
+            const hasConditionInput = rowState.conditionDetail !== NONE_VAR || rowState.conditionOverall !== NONE_VAR
+            if (!hasConditionInput) return
+        }
+        const action = toActionFromState(rowState)
+        if (!force && rowState.enabled && !action) return
+        commitRuleBlocks()
+    }
+
+    function commitRuleBlocks() {
+        if (syncingFromParamStore) return
+
+        syncColorMode('spawnedParticles')
+        syncColorMode('lines')
+        syncColorMode('background')
+
+        const nextBlocks = []
+        for (let i = 0; i < orderedRows.length; i++) {
+            const rowState = orderedRows[i]
+            const action = toActionFromState(rowState)
+            if (!action) continue
+
+            nextBlocks.push({
+                id: `${rowState.definition.target}-${rowState.definition.output}`,
+                group: `${rowState.definition.section}/${rowState.definition.subgroup}`,
+                subgroup: '',
+                enabled: !!rowState.enabled,
+                target: rowState.definition.target,
+                condition: buildCondition(rowState),
+                actions: [action],
+                order: i,
+            })
+        }
+
+        // Local edits already updated rowState in-place; skip one immediate
+        // apply-from-store pass so transient UI state on other rows is preserved.
+        skipNextRuleBlocksApply = true
+        set('ruleBlocks', nextBlocks)
+    }
+
+    function applyRowsFromRuleBlocks(blocks) {
+        syncingFromParamStore = true
+        try {
+            for (const rowState of orderedRows) {
+                rowState.enabled = false
+                rowState.conditionEnabled = false
+                rowState.conditionOperator = 'always'
+                rowState.conditionDetail = NONE_VAR
+                rowState.conditionOverall = NONE_VAR
+                rowState.conditionValue = 0
+                rowState.conditionValueInput = NONE_VAR
+                rowState.expression = ''
+                rowState.tokens = []
+                rowState.insertContext = null
+                rowState.pendingInsertIndex = null
+                rowState.enumValue = rowState.definition.options?.[0] || 'square'
+            }
+
+            const safeBlocks = Array.isArray(blocks) ? blocks : []
+            for (const rule of safeBlocks) {
+                const target = String(rule?.target || '')
+                const action = Array.isArray(rule?.actions) ? rule.actions[0] : null
+                const output = String(action?.output || '')
+                const key = rowKey(target, output)
+                const rowState = rowsByKey.get(key)
+                if (!rowState) continue
+
+                rowState.enabled = rule.enabled !== false
+                const operator = String(rule?.condition?.operator || 'always')
+                rowState.conditionOperator = RULE_OPERATORS.includes(operator) ? operator : 'always'
+                rowState.conditionValue = Number(rule?.condition?.value ?? 0)
+                const rhsInputId = String(rule?.condition?.valueInput || '')
+                rowState.conditionValueInput = RULE_VARIABLE_ID_SET.has(rhsInputId) ? rhsInputId : NONE_VAR
+
+                const condInput = String(rule?.condition?.input || '')
+                const inputMeta = getRuleVariableById(condInput)
+                if (inputMeta?.group === 'detail') {
+                    rowState.conditionDetail = condInput
+                    rowState.conditionOverall = NONE_VAR
+                } else if (inputMeta?.group === 'overall') {
+                    rowState.conditionOverall = condInput
+                    rowState.conditionDetail = NONE_VAR
+                }
+                rowState.conditionEnabled = rowState.conditionOperator !== 'always' && !!condInput
+
+                if (rowState.definition.type === 'enum') {
+                    rowState.enumValue = String(action?.value || rowState.enumValue)
+                } else if (typeof action?.expression === 'string') {
+                    rowState.expression = action.expression
+                } else if (typeof action?.input === 'string') {
+                    rowState.expression = action.input
+                } else if (action?.value !== undefined && action?.value !== null) {
+                    rowState.expression = String(action.value)
+                }
+                rowState.tokens = parseExpressionToTokens(rowState.expression)
+            }
+
+            syncColorMode('spawnedParticles')
+            syncColorMode('lines')
+            syncColorMode('background')
+
+            for (const rowState of orderedRows) {
+                if (rowState.toggle) rowState.toggle.checked = rowState.enabled
+                rowState.syncConditionUi?.()
+                if (rowState.enumSelect) rowState.enumSelect.value = rowState.enumValue
+                renderTokenEditor(rowState)
+            }
+        } finally {
+            syncingFromParamStore = false
+        }
+    }
+
+    let currentSection = ''
+    let currentSubgroup = ''
+
+    for (const definition of FIXED_RULE_ROWS) {
+        if (definition.section !== currentSection) {
+            currentSection = definition.section
+            currentSubgroup = ''
+            wrapper.appendChild(el('h3', 'cp-section-title cp-rule-section-title', { text: currentSection }))
+        }
+
+        if (definition.subgroup !== currentSubgroup) {
+            currentSubgroup = definition.subgroup
+            wrapper.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
+        }
+
+        const rowState = {
+            definition,
+            enabled: false,
+            conditionEnabled: false,
+            conditionOperator: 'always',
+            conditionDetail: NONE_VAR,
+            conditionOverall: NONE_VAR,
+            conditionValue: 0,
+            conditionValueInput: NONE_VAR,
+            expression: '',
+            tokens: [],
+            insertContext: null,
+            pendingInsertIndex: null,
+            dragTokenIndex: null,
+            enumValue: definition.options?.[0] || 'square',
+            toggle: null,
+            conditionRow: null,
+            syncConditionUi: null,
+            tokenEditor: null,
+            onExpressionChanged: null,
+            enumSelect: null,
+            actionSelect: null,
+        }
+
+        const card = el('article', 'cp-rule-card')
+        const header = el('div', 'cp-rule-card-header')
+        const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
+        const title = el('div', 'cp-rule-card-title', { text: definition.label })
+        header.append(toggle, title)
+
+        const conditionRow = el('div', 'cp-rule-card-condition-builder')
+        const addConditionButton = el('button', 'cp-btn cp-rule-condition-add', { type: 'button', text: UI_TEXT.rules.addCondition })
+        applyButtonIcon(addConditionButton, BUTTON_ICON_MAP.add, UI_TEXT.rules.addCondition)
+
+        const conditionSentence = el('div', 'cp-rule-condition-sentence')
+        const whenLabel = el('span', 'cp-rule-condition-when', { text: UI_TEXT.rules.when })
+        const conditionInputSelect = createRuleConditionInputSelect(NONE_VAR)
+        const conditionOperatorSelect = el('select', 'cp-input-select cp-rule-condition-operator')
+        conditionOperatorSelect.appendChild(createSelectOptions(
+            RULE_OPERATORS.filter((value) => value !== 'always').map((value) => ({ value, label: value })),
+            '>',
+        ))
+        const conditionValueInput = el('input', 'cp-input-number', { type: 'number', step: 0.001, value: '0' })
+        const conditionValueInputSelect = createRuleConditionInputSelect(NONE_VAR)
+        conditionValueInputSelect.classList.add('cp-rule-condition-value-input')
+        const removeConditionButton = el('button', 'cp-btn cp-btn-danger cp-rule-condition-remove', { type: 'button', text: UI_TEXT.rules.removeCondition })
+        applyButtonIcon(removeConditionButton, BUTTON_ICON_MAP.clear, UI_TEXT.rules.removeCondition)
+        conditionSentence.append(whenLabel, conditionInputSelect, conditionOperatorSelect, conditionValueInput, conditionValueInputSelect, removeConditionButton)
+        conditionRow.append(addConditionButton, conditionSentence)
+
+        const expressionRow = el('div', 'cp-rule-card-expression')
+        let enumSelect = null
+        let tokenEditor = null
+        let actionSelect = null
+
+        if (definition.type === 'enum') {
+            enumSelect = el('select', 'cp-input-select')
+            enumSelect.appendChild(createSelectOptions(
+                definition.options.map((option) => ({ value: option, label: option })),
+                rowState.enumValue,
+            ))
+            expressionRow.appendChild(enumSelect)
+        } else {
+            const tokenRow = el('div', 'cp-rule-token-row')
+            const valueActionSelect = createRuleTokenValueSelect('')
+            actionSelect = createRuleTokenMathSelect('')
+
+            tokenEditor = el('div', 'cp-rule-token-editor', { role: 'list', tabindex: '0' })
+
+            tokenRow.append(valueActionSelect, actionSelect)
+            expressionRow.append(tokenRow, tokenEditor)
+
+            const commitExpression = () => {
+                rowState.expression = compileTokens(rowState.tokens)
+
+                if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
+                    syncColorMode(definition.target, definition.output)
+                }
+                if (definition.output === 'hue') {
+                    syncColorMode(definition.target, 'hue')
+                }
+
+                if (rowState.enabled && !String(rowState.expression || '').trim()) {
+                    rowState.enabled = false
+                    if (rowState.toggle) rowState.toggle.checked = false
+                    commitRuleBlocks()
+                    return
+                }
+
+                commitRowIfReady(rowState)
+            }
+
+            rowState.onExpressionChanged = commitExpression
+
+            const insertSelection = (selected, control) => {
+                const next = tokensForInsertSelection(selected)
+                if (!next.length) return
+                if (!Number.isInteger(rowState.pendingInsertIndex)) {
+                    if (control) control.value = ''
+                    return
+                }
+                rowState.tokens.splice(rowState.pendingInsertIndex, 0, ...next)
+                rowState.pendingInsertIndex = null
+                if (control) control.value = ''
+                renderTokenEditor(rowState)
+                commitExpression()
+            }
+
+            valueActionSelect.addEventListener('change', () => {
+                insertSelection(String(valueActionSelect.value || ''), valueActionSelect)
+            })
+
+            actionSelect.addEventListener('change', () => {
+                insertSelection(String(actionSelect.value || ''), actionSelect)
+            })
+        }
+
+        card.append(header, conditionRow, expressionRow)
+        wrapper.appendChild(card)
+
+        rowState.toggle = toggle
+        rowState.conditionRow = conditionRow
+        rowState.tokenEditor = tokenEditor
+        rowState.enumSelect = enumSelect
+        rowState.actionSelect = actionSelect
+
+        rowState.syncConditionUi = () => {
+            addConditionButton.style.display = rowState.conditionEnabled ? 'none' : ''
+            conditionSentence.style.display = rowState.conditionEnabled ? '' : 'none'
+            if (!rowState.conditionEnabled) return
+            conditionOperatorSelect.value = rowState.conditionOperator === 'always' ? '>' : rowState.conditionOperator
+            const activeInput = rowState.conditionDetail !== NONE_VAR ? rowState.conditionDetail : rowState.conditionOverall
+            conditionInputSelect.value = activeInput || NONE_VAR
+            conditionValueInput.value = String(Number(rowState.conditionValue || 0))
+            conditionValueInputSelect.value = rowState.conditionValueInput || NONE_VAR
+        }
+        rowState.syncConditionUi()
+
+        rowsByKey.set(rowKey(definition.target, definition.output), rowState)
+        orderedRows.push(rowState)
+
+        toggle.addEventListener('change', () => {
+            rowState.enabled = toggle.checked
+            if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
+                syncColorMode(definition.target, definition.output)
+            }
+            if (definition.output === 'hue') {
+                syncColorMode(definition.target, 'hue')
+            }
+            if (!rowState.enabled) {
+                commitRuleBlocks()
+                return
+            }
+            commitRowIfReady(rowState)
+        })
+
+        addConditionButton.addEventListener('click', () => {
+            rowState.conditionEnabled = true
+            if (rowState.conditionOperator === 'always') rowState.conditionOperator = '>'
+            rowState.syncConditionUi?.()
+            commitRowIfReady(rowState)
+        })
+
+        conditionOperatorSelect.addEventListener('change', () => {
+            rowState.conditionEnabled = true
+            rowState.conditionOperator = conditionOperatorSelect.value
+            commitRowIfReady(rowState)
+        })
+
+        conditionInputSelect.addEventListener('change', () => {
+            const selected = String(conditionInputSelect.value || NONE_VAR)
+            rowState.conditionEnabled = true
+            rowState.conditionDetail = NONE_VAR
+            rowState.conditionOverall = NONE_VAR
+            if (selected !== NONE_VAR) {
+                const meta = getRuleVariableById(selected)
+                if (meta?.group === 'detail') rowState.conditionDetail = selected
+                else if (meta?.group === 'overall') rowState.conditionOverall = selected
+            }
+            commitRowIfReady(rowState)
+        })
+
+        conditionValueInput.addEventListener('change', () => {
+            rowState.conditionEnabled = true
+            rowState.conditionValue = Number(conditionValueInput.value) || 0
+            rowState.conditionValueInput = NONE_VAR
+            commitRowIfReady(rowState)
+        })
+
+        conditionValueInputSelect.addEventListener('change', () => {
+            rowState.conditionEnabled = true
+            const selected = String(conditionValueInputSelect.value || NONE_VAR)
+            rowState.conditionValueInput = selected !== NONE_VAR ? selected : NONE_VAR
+            commitRowIfReady(rowState)
+        })
+
+        removeConditionButton.addEventListener('click', () => {
+            rowState.conditionEnabled = false
+            rowState.conditionOperator = 'always'
+            rowState.conditionDetail = NONE_VAR
+            rowState.conditionOverall = NONE_VAR
+            rowState.conditionValue = 0
+            rowState.conditionValueInput = NONE_VAR
+            rowState.syncConditionUi?.()
+            commitRowIfReady(rowState, true)
+        })
+
+        if (enumSelect) {
+            enumSelect.addEventListener('change', () => {
+                rowState.enumValue = enumSelect.value
+                commitRowIfReady(rowState)
+            })
+        }
+
+        if (definition.type !== 'enum') {
+            renderTokenEditor(rowState)
+        }
+    }
+
+    const applyRowsFromParams = () => {
+        if (skipNextRuleBlocksApply) {
+            skipNextRuleBlocksApply = false
             return
         }
-        _rowSyncMap.get(key)?.(params[key])
+        applyRowsFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+    }
+
+    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks'])
+    applyRowsFromParams()
+    body.appendChild(panel)
+}
+
+function createMenuButton(item) {
+    const button = el('button', 'cp-menu-button', {
+        type: 'button',
+        'data-menu-id': item.id,
+        'aria-label': item.label,
+        title: item.label,
     })
+    const icon = el('span', 'cp-menu-icon', { html: getMenuIconSvg(item.id) })
+    const label = el('span', 'cp-menu-label', { text: item.label })
+    button.append(icon, label)
+    return button
+}
+
+function createMenuPane(item) {
+    const pane = el('section', 'cp-menu-pane', { 'data-menu-id': item.id })
+    const header = el('div', 'cp-menu-pane-header')
+    header.appendChild(el('h2', 'cp-menu-pane-title', { text: item.label }))
+    const closeButton = el('button', 'cp-btn cp-menu-collapse', { type: 'button', text: UI_TEXT.menu.collapse })
+    applyButtonIcon(closeButton, BUTTON_ICON_MAP.close, UI_TEXT.menu.collapse)
+    header.appendChild(closeButton)
+
+    const body = el('div', 'cp-menu-pane-body')
+    pane.append(header, body)
+    return { pane, body, closeButton }
+}
+
+export function initControlPanel(container) {
+    if (!container) return
+
+    container.innerHTML = ''
+    container.className = ''
+    container.classList.add('cp-shell')
+
+    const shell = el('div', 'cp-shell-root')
+    const rail = el('nav', 'cp-menu-rail')
+    const stack = el('div', 'cp-menu-stack')
+
+    const syncRegistry = createSyncRegistry()
+    const menuButtons = new Map()
+    const menuPanes = new Map()
+
+    for (const item of MENU_ITEMS) {
+        const button = createMenuButton(item)
+        menuButtons.set(item.id, button)
+        rail.appendChild(button)
+
+        const paneParts = createMenuPane(item)
+        menuPanes.set(item.id, paneParts)
+        stack.appendChild(paneParts.pane)
+    }
+
+    shell.append(rail, stack)
+    container.appendChild(shell)
+
+    buildFileMenu(menuPanes.get('file').body)
+    buildViewMenu(menuPanes.get('view').body, syncRegistry)
+    buildSettingsMenu(menuPanes.get('settings').body, syncRegistry)
+    buildRulesMenu(menuPanes.get('rules').body, syncRegistry)
+
+    let pinnedMenuId = null
+    let hoverMenuId = 'settings'
+    let pointerInRail = false
+    let pointerInPane = false
+    let autoCollapseTimer = null
+
+    const clearAutoCollapseTimer = () => {
+        if (autoCollapseTimer !== null) {
+            window.clearTimeout(autoCollapseTimer)
+            autoCollapseTimer = null
+        }
+    }
+
+    const scheduleAutoCollapse = () => {
+        clearAutoCollapseTimer()
+        if (pinnedMenuId || pointerInRail || pointerInPane) return
+        autoCollapseTimer = window.setTimeout(() => {
+            autoCollapseTimer = null
+            if (pinnedMenuId || pointerInRail || pointerInPane) return
+            hoverMenuId = null
+            renderMenuState()
+        }, 100)
+    }
+
+    function expandedMenuId() {
+        if (pinnedMenuId) return pinnedMenuId
+        if (pointerInRail || pointerInPane) return hoverMenuId
+        return null
+    }
+
+    function renderMenuState() {
+        const expanded = expandedMenuId()
+
+        for (const [menuId, button] of menuButtons.entries()) {
+            const active = expanded === menuId
+            const pinned = pinnedMenuId === menuId
+            button.classList.toggle('is-active', active)
+            button.classList.toggle('is-pinned', pinned)
+            button.setAttribute('aria-expanded', active ? 'true' : 'false')
+        }
+
+        for (const [menuId, paneParts] of menuPanes.entries()) {
+            const active = expanded === menuId
+            paneParts.pane.classList.toggle('is-active', active)
+        }
+
+        container.classList.toggle('is-open', !!expanded)
+    }
+
+    rail.addEventListener('mouseenter', () => {
+        clearAutoCollapseTimer()
+        pointerInRail = true
+        renderMenuState()
+    })
+
+    rail.addEventListener('mouseleave', () => {
+        pointerInRail = false
+        scheduleAutoCollapse()
+    })
+
+    for (const item of MENU_ITEMS) {
+        const button = menuButtons.get(item.id)
+        const paneParts = menuPanes.get(item.id)
+
+        button.addEventListener('mouseenter', () => {
+            clearAutoCollapseTimer()
+            hoverMenuId = item.id
+            renderMenuState()
+        })
+
+        button.addEventListener('click', () => {
+            if (pinnedMenuId === item.id) {
+                pinnedMenuId = null
+                hoverMenuId = pointerInRail ? item.id : null
+            } else {
+                pinnedMenuId = item.id
+                hoverMenuId = item.id
+            }
+            renderMenuState()
+        })
+
+        paneParts.pane.addEventListener('mouseenter', () => {
+            clearAutoCollapseTimer()
+            pointerInPane = true
+            hoverMenuId = item.id
+            renderMenuState()
+        })
+
+        paneParts.pane.addEventListener('mouseleave', () => {
+            pointerInPane = false
+            scheduleAutoCollapse()
+        })
+
+        paneParts.closeButton.addEventListener('click', () => {
+            pinnedMenuId = null
+            hoverMenuId = null
+            renderMenuState()
+        })
+    }
+
+    const syncAll = () => {
+        runSyncCallbacks(collectSyncCallbacks(syncRegistry, [], true))
+    }
+
+    const syncByKeys = (keys) => {
+        const callbacks = collectSyncCallbacks(syncRegistry, keys, false)
+        if (!callbacks.length) return
+        runSyncCallbacks(callbacks)
+    }
+
+    subscribe((_, key, value) => {
+        if (!key) {
+            syncAll()
+            return
+        }
+        if (key === '*') {
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                // setMany already emits per-key notifications before '*'.
+                return
+            }
+            syncAll()
+            return
+        }
+        syncByKeys([key])
+    })
+
+    hoverMenuId = 'settings'
+    renderMenuState()
+    syncAll()
 }
