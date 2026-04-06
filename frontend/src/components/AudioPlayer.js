@@ -135,37 +135,37 @@ export function initAudioPlayer(container) {
     // Transport buttons
     const transport = el('div', 'audio-player__transport')
 
-    const btnPlayPause = el('button', 'audio-player__btn audio-player__btn--play', {
+    const btnPlayPause = el('button', 'audio-player__btn audio-player__btn--play cp-btn cp-btn-icon', {
         id: 'btn-play-pause', 'aria-label': 'Play', disabled: 'true'
     })
     applyIcon(btnPlayPause, playIcon, 'Play')
 
-    const btnStop = el('button', 'audio-player__btn', {
+    const btnStop = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-stop', 'aria-label': 'Stop', disabled: 'true', title: 'Stop (return to start)'
     })
     applyIcon(btnStop, stopIcon, 'Stop')
 
-    const btnBack = el('button', 'audio-player__btn', {
+    const btnBack = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-back', 'aria-label': '−10 seconds', disabled: 'true', title: '−10 s'
     })
     applyIcon(btnBack, rewindIcon, '−10 seconds')
 
-    const btnFwd = el('button', 'audio-player__btn', {
+    const btnFwd = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-fwd', 'aria-label': '+10 seconds', disabled: 'true', title: '+10 s'
     })
     applyIcon(btnFwd, rewindForwardIcon, '+10 seconds')
 
-    const btnPng = el('button', 'audio-player__btn', {
+    const btnPng = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
     })
     applyIcon(btnPng, imageIcon, 'Save PNG')
 
-    const btnRecord = el('button', 'audio-player__btn', {
+    const btnRecord = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-record', 'aria-label': 'Record video', disabled: 'true', title: 'Record canvas and audio'
     })
     applyIcon(btnRecord, recordIcon, 'Record video')
 
-    const btnPaintAll = el('button', 'audio-player__btn', {
+    const btnPaintAll = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-paint-all', 'aria-label': 'Paint all', disabled: 'true', title: 'Run through full audio and stop'
     })
     applyIcon(btnPaintAll, paintIcon, 'Paint all')

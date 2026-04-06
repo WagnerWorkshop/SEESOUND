@@ -2399,9 +2399,10 @@ export function initControlPanel(container) {
         })
 
         button.addEventListener('click', () => {
-            if (pinnedMenuId === item.id) {
+            const expanded = expandedMenuId()
+            if (expanded === item.id) {
                 pinnedMenuId = null
-                hoverMenuId = pointerInRail ? item.id : null
+                hoverMenuId = null
             } else {
                 pinnedMenuId = item.id
                 hoverMenuId = item.id

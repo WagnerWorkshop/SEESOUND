@@ -17,6 +17,7 @@ import './styles/ui.css'
 import * as THREE from 'three'
 import {
     params,
+    set,
     setMany,
     subscribe,
     getSnapshot,
@@ -53,6 +54,11 @@ import {
     computeChromagram,
     normalizeCentroidHzToUnit,
 } from './engine/audio/AudioFeatures.js'
+import resetIcon from './icons/reset.svg?raw'
+import fitIcon from './icons/fit.svg?raw'
+import clearIcon from './icons/clear.svg?raw'
+import magnifierPlusIcon from './icons/magnifier-plus.svg?raw'
+import magnifierMinusIcon from './icons/magnifier-minus.svg?raw'
 
 // Phase checklist workflow anchor:
 // Implement one task cluster at a time and verify before advancing to the next phase item.
@@ -230,7 +236,6 @@ const pointerState = {
     pinchDistance: 0,
 }
 
-const canvasWrapper = document.getElementById('canvas-wrapper')
 const wrapperState = {
     active: false,
     offsetX: 0,
@@ -241,8 +246,93 @@ const wrapperState = {
     pinchDistance: 0
 }
 
+function bumpCanvasScale(delta) {
+    const current = Math.max(5, Math.min(2000, Math.floor(Number(params.canvasScale) || 100)))
+    const next = Math.max(5, Math.min(2000, current + delta))
+    if (next !== current) set('canvasScale', next)
+}
+
+function resetViewCamera() {
+    resetCameraPose()
+}
+
+function fitViewToCanvas() {
+    fitCameraToVisible()
+}
+
+function clearSceneElements() {
+    ps.clear()
+}
+
+function applyNavButtonIcon(button, svgMarkup, label) {
+    if (!button || !svgMarkup) return
+    const caption = String(label || '').trim()
+    button.textContent = ''
+    button.append(
+        Object.assign(document.createElement('span'), { className: 'canvas-nav-actions__icon cp-btn-icon', innerHTML: svgMarkup }),
+        Object.assign(document.createElement('span'), { className: 'canvas-nav-actions__label', textContent: caption }),
+    )
+    if (caption) button.setAttribute('aria-label', caption)
+}
+
+const navActions = document.createElement('div')
+navActions.className = 'canvas-nav-actions'
+
+const navResetBtn = document.createElement('button')
+navResetBtn.type = 'button'
+navResetBtn.className = 'canvas-nav-actions__btn cp-btn'
+navResetBtn.title = 'Reset camera'
+applyNavButtonIcon(navResetBtn, resetIcon, 'Reset Camera')
+navResetBtn.addEventListener('click', resetViewCamera)
+
+const navFitBtn = document.createElement('button')
+navFitBtn.type = 'button'
+navFitBtn.className = 'canvas-nav-actions__btn cp-btn'
+navFitBtn.title = 'Fit image to canvas bounds'
+applyNavButtonIcon(navFitBtn, fitIcon, 'Fit')
+navFitBtn.addEventListener('click', fitViewToCanvas)
+
+const navClearBtn = document.createElement('button')
+navClearBtn.type = 'button'
+navClearBtn.className = 'canvas-nav-actions__btn cp-btn'
+navClearBtn.title = 'Clear particles and scene elements'
+applyNavButtonIcon(navClearBtn, clearIcon, 'Clear')
+navClearBtn.addEventListener('click', clearSceneElements)
+
+const navZoomInBtn = document.createElement('button')
+navZoomInBtn.type = 'button'
+navZoomInBtn.className = 'canvas-nav-actions__btn cp-btn'
+navZoomInBtn.title = 'Increase canvas zoom'
+applyNavButtonIcon(navZoomInBtn, magnifierPlusIcon, 'Zoom In')
+navZoomInBtn.addEventListener('click', () => bumpCanvasScale(10))
+
+const navZoomOutBtn = document.createElement('button')
+navZoomOutBtn.type = 'button'
+navZoomOutBtn.className = 'canvas-nav-actions__btn canvas-nav-actions__btn--conditional cp-btn'
+navZoomOutBtn.title = 'Decrease canvas zoom'
+applyNavButtonIcon(navZoomOutBtn, magnifierMinusIcon, 'Zoom Out')
+navZoomOutBtn.addEventListener('click', () => bumpCanvasScale(-10))
+
+navActions.append(navResetBtn, navFitBtn, navClearBtn, navZoomInBtn, navZoomOutBtn)
+const navHost = document.getElementById('app') || document.body
+if (navHost) navHost.appendChild(navActions)
+
+function updateZoomButtonsVisibility() {
+    const ww = wrapper.clientWidth
+    const wh = wrapper.clientHeight
+    const cw = col.clientWidth
+    const ch = col.clientHeight
+
+    // Show Zoom Out only when the canvas is effectively maxed out in both axes.
+    const isLarge = (ww >= cw * 0.95) && (wh >= ch * 0.95)
+    navZoomOutBtn.classList.toggle('is-visible', isLarge)
+    navZoomOutBtn.disabled = !isLarge
+}
+window.addEventListener('resize', updateZoomButtonsVisibility)
+updateZoomButtonsVisibility()
+
 function updateWrapperTransform() {
-    canvasWrapper.style.transform = `translate(${wrapperState.offsetX}px, ${wrapperState.offsetY}px) scale(${wrapperState.scale})`
+    wrapper.style.transform = `translate(${wrapperState.offsetX}px, ${wrapperState.offsetY}px) scale(${wrapperState.scale})`
 }
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault())
@@ -305,7 +395,7 @@ function handleZoom(deltaY) {
 }
 
 col.addEventListener('mousedown', (e) => {
-    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
     if (e.button !== 0) return
     wrapperState.active = true
     wrapperState.lastX = e.clientX
@@ -314,7 +404,7 @@ col.addEventListener('mousedown', (e) => {
 })
 
 col.addEventListener('touchstart', (e) => {
-    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
     if (e.touches.length === 1) {
         wrapperState.active = true
         wrapperState.lastX = e.touches[0].clientX
@@ -396,7 +486,7 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('touchmove', (e) => {
     if (wrapperState.active) {
         if (e.cancelable) e.preventDefault()
-        
+
         if (e.touches.length === 1) {
             const dx = e.touches[0].clientX - wrapperState.lastX
             const dy = e.touches[0].clientY - wrapperState.lastY
@@ -409,11 +499,11 @@ window.addEventListener('touchmove', (e) => {
             const dx = e.touches[0].clientX - e.touches[1].clientX
             const dy = e.touches[0].clientY - e.touches[1].clientY
             const distance = Math.sqrt(dx * dx + dy * dy)
-            
+
             if (wrapperState.pinchDistance > 0) {
                 const scaleDiff = (distance - wrapperState.pinchDistance) * 0.005
-                wrapperState.scale = Math.max(0.1, Math.min(10, wrapperState.scale + scaleDiff))
-                updateWrapperTransform()
+                const newScale = Math.max(0.05, Math.min(20, wrapperState.scale + scaleDiff))
+                set('canvasScale', Math.round(newScale * 100))
             }
             wrapperState.pinchDistance = distance
         }
@@ -458,12 +548,12 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false })
 
 col.addEventListener('wheel', (e) => {
-    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
     e.preventDefault()
     const scaleSpeed = 0.001
     const delta = -e.deltaY * scaleSpeed
-    wrapperState.scale = Math.max(0.05, Math.min(20, wrapperState.scale + delta))
-    updateWrapperTransform()
+    const newScale = Math.max(0.05, Math.min(20, wrapperState.scale + delta))
+    set('canvasScale', Math.round(newScale * 100))
 }, { passive: false })
 
 function applyRuleCameraOutput(output) {
@@ -2454,6 +2544,7 @@ _resizer = initCanvasResizer({
     onResize(w, h) {
         resizeRenderer(w, h)
         emitCanvasSize(w, h)
+        updateZoomButtonsVisibility()
         if (!_syncingCanvasFromParams) {
             const iw = Math.max(160, Math.floor(w || 160))
             const ih = Math.max(120, Math.floor(h || 120))
@@ -2502,10 +2593,12 @@ window.addEventListener('keydown', (e) => {
 })
 
 function applyCanvasScaleFromParams() {
-    const scalePct = Math.max(5, Math.min(400, Math.floor(Number(params.canvasScale) || 100)))
+    const scalePct = Math.max(5, Math.min(2000, Math.floor(Number(params.canvasScale) || 100)))
     const scale = scalePct / 100
+    wrapperState.scale = scale
     wrapper.style.transformOrigin = 'center center'
-    wrapper.style.transform = `scale(${scale})`
+    updateWrapperTransform()
+    updateZoomButtonsVisibility()
 }
 
 function getSafeCanvasSize() {
@@ -2523,11 +2616,13 @@ function applyCanvasSizeFromParams() {
 
     if (explicitW === current.w && explicitH === current.h) {
         emitCanvasSize(current.w, current.h)
+        updateZoomButtonsVisibility()
         return
     }
     _syncingCanvasFromParams = true
     _resizer.setSize(explicitW, explicitH)
     _syncingCanvasFromParams = false
+    updateZoomButtonsVisibility()
 }
 
 applyCanvasSizeFromParams()
@@ -2573,6 +2668,10 @@ subscribe((_, key) => {
         }
     }
 })
+
+window.addEventListener('seesound:view-reset-camera', resetViewCamera)
+window.addEventListener('seesound:view-fit-camera', fitViewToCanvas)
+window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
 
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))
