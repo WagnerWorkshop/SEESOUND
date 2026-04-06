@@ -309,7 +309,7 @@ export const PARAMS = [
 
     // ── Geometry ────────────────────────────────────────────────────────────
     {
-        key: 'defaultParticleSize', group: 'geometry', label: 'Particle Default Size',
+        key: 'defaultParticleSize', group: 'geometry', label: 'Default Size',
         min: 1, max: 40, step: 0.5, default: 6, unit: 'px',
         desc: 'Base diameter of every particle before per-frequency size scaling.',
         canDisable: false,
@@ -351,7 +351,7 @@ export const PARAMS = [
         canDisable: false,
     },
     {
-        key: 'maxParticles', group: 'geometry', label: 'Particle Capacity',
+        key: 'maxParticles', group: 'geometry', label: 'Capacity',
         min: 100000, max: 5000000, step: 1000, default: 1000000, unit: '',
         desc: 'Maximum total particle slots in GPU buffers. Higher values allow longer painting trails.',
         canDisable: false,

@@ -61,13 +61,14 @@
             "bokehMaxBlur": "Bokeh Max Blur",
             "guides": "Guides",
             "guideAxes": "Origin Axes",
-            "guideCoordinates": "Coordinate Guides"
+            "guideCoordinates": "Coordinate Guides",
+            "cameraHud": "Camera HUD"
         },
         "settings": {
             "sensitivity": "Sensitivity",
             "audioResolution": "Audio Resolution",
-            "particleDefaultSize": "Particle Default Size",
-            "particleCapacity": "Particle Capacity",
+            "particleDefaultSize": "Default Size",
+            "particleCapacity": "Capacity",
             "spawnRate": "Spawn Rate",
             "activityInterval": "Activity Interval",
             "frequencyRange": "Frequency Range",

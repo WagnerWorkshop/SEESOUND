@@ -1051,6 +1051,61 @@ input[type=number]::-webkit-inner-spin-button {
     gap: 9px;
 }
 
+.cp-rule-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cp-rule-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.cp-rule-section-toggle {
+    width: 100%;
+    margin-top: 8px;
+    border: none;
+    background: none;
+    color: var(--brand-300);
+    text-align: left;
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+
+.cp-rule-section-toggle::before {
+    content: '▾';
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
+
+.cp-rule-section.is-collapsed .cp-rule-section-toggle::before {
+    content: '▸';
+}
+
+.cp-rule-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cp-rule-section.is-section-disabled .cp-rule-section-body {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.cp-rule-section.is-collapsed .cp-rule-section-body {
+    display: none;
+}
+
 .cp-rule-card {
     border: var(--border-default);
     border-radius: var(--radius-md);
@@ -1067,6 +1122,40 @@ input[type=number]::-webkit-inner-spin-button {
     gap: 8px;
 }
 
+.cp-rule-card-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.cp-rule-duplicates {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: -2px;
+}
+
+.cp-rule-card--duplicate {
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+}
+
+.cp-rule-card-duplicate,
+.cp-rule-card-remove,
+.cp-rule-card-collapse {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    min-width: 24px;
+    min-height: 24px;
+}
+
+.cp-rule-card-collapse {
+    font-size: 12px;
+    line-height: 1;
+}
+
 .cp-rule-card-title {
     font-family: var(--font-display);
     font-size: 14px;
@@ -1078,6 +1167,16 @@ input[type=number]::-webkit-inner-spin-button {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.cp-rule-card.is-danger {
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 52%, var(--color-border));
+}
+
+.cp-rule-card.is-collapsed .cp-rule-card-condition-builder,
+.cp-rule-card.is-collapsed .cp-rule-card-expression {
+    display: none;
 }
 
 .cp-rule-card.is-disabled .cp-rule-card-condition-builder,
@@ -1759,8 +1858,4 @@ input[type=number]::-webkit-inner-spin-button {
 .cp-menu-icon svg [stroke],
 .cp-btn-icon svg [stroke] {
     stroke: currentColor;
-}
-
-#camera-hud {
-    display: none !important;
 }

@@ -15,6 +15,10 @@ import './styles/ui.css'
 
 // ── Modules ───────────────────────────────────────────────────────────────────
 import * as THREE from 'three'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js'
 import {
     params,
     set,
@@ -82,6 +86,8 @@ renderer.setPixelRatio(window.devicePixelRatio)
 renderer.setClearColor(0x000000, 1)
 renderer.autoClear = true
 
+const composer = new EffectComposer(renderer)
+
 const scene = new THREE.Scene()
 const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
@@ -109,6 +115,23 @@ const orbitTarget = new THREE.Vector3(0, 0, 0)
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 0, 420)
 const DEFAULT_ORBIT_RADIUS = DEFAULT_CAMERA_POS.length()
 
+const renderPass = new RenderPass(scene, camera)
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(1, 1),
+    Number(params.bloomStrength ?? 1.15),
+    Number(params.bloomRadius ?? 0.7),
+    Number(params.bloomThreshold ?? 0.18),
+)
+const bokehPass = new BokehPass(scene, camera, {
+    focus: Number(params.bokehFocus ?? 380),
+    aperture: Number(params.bokehAperture ?? 0.00012),
+    maxblur: Number(params.bokehMaxBlur ?? 0.01),
+})
+
+composer.addPass(renderPass)
+composer.addPass(bloomPass)
+composer.addPass(bokehPass)
+
 for (const c of [cameraOrtho, cameraPerspective]) {
     c.position.copy(DEFAULT_CAMERA_POS)
     c.up.set(0, 1, 0)
@@ -128,7 +151,51 @@ function applyProjectionFromParams() {
     nextCamera.updateProjectionMatrix()
 
     camera = nextCamera
+    renderPass.camera = camera
+    bokehPass.camera = camera
+    const wantPerspectiveDefine = camera.isPerspectiveCamera ? 1 : 0
+    if (bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA !== wantPerspectiveDefine) {
+        bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA = wantPerspectiveDefine
+        bokehPass.materialBokeh.needsUpdate = true
+    }
     syncOrbitFromCamera()
+}
+
+function _setBokehUniform(name, value) {
+    const v = Number(value)
+    if (!Number.isFinite(v)) return
+    if (bokehPass?.uniforms?.[name]) {
+        bokehPass.uniforms[name].value = v
+        return
+    }
+    if (bokehPass?.materialBokeh?.uniforms?.[name]) {
+        bokehPass.materialBokeh.uniforms[name].value = v
+    }
+}
+
+function syncPostProcessingFromParams() {
+    const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
+    const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
+    const bokehEnabled = Number(params.bokehEnabled ?? 1) >= 0.5
+
+    bloomPass.enabled = postEnabled && bloomEnabled
+    bokehPass.enabled = postEnabled && bokehEnabled
+
+    bloomPass.strength = Math.max(0, Number(params.bloomStrength ?? 1.15) || 0)
+    bloomPass.radius = Math.max(0, Number(params.bloomRadius ?? 0.7) || 0)
+    bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
+
+    _setBokehUniform('focus', Math.max(1, Number(params.bokehFocus ?? 380) || 380))
+    _setBokehUniform('aperture', Math.max(0, Number(params.bokehAperture ?? 0.00012) || 0))
+    _setBokehUniform('maxblur', Math.max(0, Number(params.bokehMaxBlur ?? 0.01) || 0))
+}
+
+function shouldUsePostProcessing() {
+    const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
+    if (!postEnabled) return false
+    const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
+    const bokehEnabled = Number(params.bokehEnabled ?? 1) >= 0.5
+    return bloomEnabled || bokehEnabled
 }
 
 // Mouse camera controls:
@@ -588,7 +655,7 @@ function fitCameraToVisible() {
         return
     }
 
-    const pad = 1.18
+    const EPS = 1e-6
     const dpr = Math.max(1, Number(window.devicePixelRatio) || 1)
     const canvasPxW = renderer.domElement.width / dpr
     const canvasPxH = renderer.domElement.height / dpr
@@ -633,24 +700,59 @@ function fitCameraToVisible() {
             maxY = Math.max(maxY, Math.abs(tmp.dot(up)))
         }
 
-        const halfW = Math.max(maxX, maxY * aspect, radius * 0.35)
-        const halfH = Math.max(maxY, maxX / Math.max(0.001, aspect), radius * 0.35)
-        cameraOrtho.left = -halfW * pad
-        cameraOrtho.right = halfW * pad
-        cameraOrtho.top = halfH * pad
-        cameraOrtho.bottom = -halfH * pad
+        const halfW = Math.max(maxX, maxY * aspect, EPS)
+        const halfH = Math.max(maxY, maxX / Math.max(EPS, aspect), EPS)
+        cameraOrtho.left = -halfW
+        cameraOrtho.right = halfW
+        cameraOrtho.top = halfH
+        cameraOrtho.bottom = -halfH
         cameraOrtho.zoom = 1
         cameraOrtho.near = -Math.max(5000, radius * 6)
         cameraOrtho.far = Math.max(5000, radius * 6)
         cameraOrtho.updateProjectionMatrix()
     } else {
+        // Preserve current view direction and solve exact camera distance needed
+        // so all bbox corners fit the frustum without extra margin.
         cameraPerspective.lookAt(center)
         syncOrbitFromCamera()
+
+        cameraPerspective.updateMatrixWorld(true)
+        const m = cameraPerspective.matrixWorld.elements
+        const right = new THREE.Vector3(m[0], m[1], m[2]).normalize()
+        const up = new THREE.Vector3(m[4], m[5], m[6]).normalize()
+        const forward = new THREE.Vector3()
+        cameraPerspective.getWorldDirection(forward)
+
+        const corners = [
+            new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+            new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+            new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+            new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+            new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+            new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+            new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+            new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+        ]
+
         const fovY = THREE.MathUtils.degToRad(cameraPerspective.fov)
-        const distY = (radius * pad) / Math.max(0.001, Math.tan(fovY * 0.5))
+        const tanY = Math.max(EPS, Math.tan(fovY * 0.5))
         const fovX = 2 * Math.atan(Math.tan(fovY * 0.5) * (cameraPerspective.aspect || aspect))
-        const distX = (radius * pad) / Math.max(0.001, Math.tan(fovX * 0.5))
-        orbitState.radius = Math.max(distX, distY, 40)
+        const tanX = Math.max(EPS, Math.tan(fovX * 0.5))
+
+        let requiredDistance = EPS
+        let maxDepthTowardCamera = 0
+        const offset = new THREE.Vector3()
+        for (const c of corners) {
+            offset.copy(c).sub(center)
+            const xCam = Math.abs(offset.dot(right))
+            const yCam = Math.abs(offset.dot(up))
+            const zCam = offset.dot(forward)
+            maxDepthTowardCamera = Math.max(maxDepthTowardCamera, zCam)
+            const reqForCorner = zCam + Math.max(xCam / tanX, yCam / tanY)
+            requiredDistance = Math.max(requiredDistance, reqForCorner)
+        }
+
+        orbitState.radius = Math.max(requiredDistance + EPS, maxDepthTowardCamera + EPS)
         applyOrbitToCamera()
         cameraPerspective.near = Math.max(0.001, orbitState.radius - radius * 3)
         cameraPerspective.far = Math.max(cameraPerspective.near + 1, orbitState.radius + radius * 6)
@@ -670,6 +772,8 @@ function resizeRenderer(w, h) {
     cameraPerspective.aspect = w / Math.max(1, h)
     cameraPerspective.updateProjectionMatrix()
     renderer.setSize(w, h, false)   // false → do NOT set canvas style size
+    composer.setSize(w, h)
+    bloomPass.setSize(w, h)
 }
 
 // Initial size
@@ -678,6 +782,14 @@ const initH = col.clientHeight || window.innerHeight
 resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
+{
+    const wantPerspectiveDefine = camera.isPerspectiveCamera ? 1 : 0
+    if (bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA !== wantPerspectiveDefine) {
+        bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA = wantPerspectiveDefine
+        bokehPass.materialBokeh.needsUpdate = true
+    }
+}
+syncPostProcessingFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -691,6 +803,7 @@ function _collectUsedRuleInputs(requiredInputsByTarget = null) {
     return new Set([
         ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.physicalParticles) ? requiredInputsByTarget.physicalParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
         ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
     ])
@@ -1335,51 +1448,13 @@ setStatus('open', 'Browser mode')
 const cameraHud = document.createElement('div')
 cameraHud.id = 'camera-hud'
 cameraHud.style.position = 'fixed'
-cameraHud.style.left = '8px'
-cameraHud.style.bottom = '8px'
+cameraHud.style.top = '8px'
+cameraHud.style.left = '50%'
+cameraHud.style.transform = 'translateX(-50%)'
 cameraHud.style.zIndex = '220'
-cameraHud.style.display = 'flex'
+cameraHud.style.display = 'none'
 cameraHud.style.alignItems = 'center'
 cameraHud.style.gap = '6px'
-
-const resetCameraBtn = document.createElement('button')
-resetCameraBtn.type = 'button'
-resetCameraBtn.title = 'Reset camera'
-resetCameraBtn.textContent = '↺'
-resetCameraBtn.style.width = '22px'
-resetCameraBtn.style.height = '22px'
-resetCameraBtn.style.border = '1px solid var(--color-border, #444)'
-resetCameraBtn.style.borderRadius = '6px'
-resetCameraBtn.style.background = 'rgba(0,0,0,0.55)'
-resetCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
-resetCameraBtn.style.cursor = 'pointer'
-resetCameraBtn.addEventListener('click', resetCameraPose)
-
-const fitCameraBtn = document.createElement('button')
-fitCameraBtn.type = 'button'
-fitCameraBtn.title = 'Fit to visible particles'
-fitCameraBtn.textContent = 'Fit'
-fitCameraBtn.style.height = '22px'
-fitCameraBtn.style.padding = '0 8px'
-fitCameraBtn.style.border = '1px solid var(--color-border, #444)'
-fitCameraBtn.style.borderRadius = '6px'
-fitCameraBtn.style.background = 'rgba(0,0,0,0.55)'
-fitCameraBtn.style.color = 'var(--color-text-muted, #bbb)'
-fitCameraBtn.style.cursor = 'pointer'
-fitCameraBtn.addEventListener('click', fitCameraToVisible)
-
-const clearCanvasBtn = document.createElement('button')
-clearCanvasBtn.type = 'button'
-clearCanvasBtn.title = 'Clear canvas'
-clearCanvasBtn.textContent = 'Clean'
-clearCanvasBtn.style.height = '22px'
-clearCanvasBtn.style.padding = '0 8px'
-clearCanvasBtn.style.border = '1px solid var(--color-border, #444)'
-clearCanvasBtn.style.borderRadius = '6px'
-clearCanvasBtn.style.background = 'rgba(0,0,0,0.55)'
-clearCanvasBtn.style.color = 'var(--color-text-muted, #bbb)'
-clearCanvasBtn.style.cursor = 'pointer'
-clearCanvasBtn.addEventListener('click', () => ps.clear())
 
 const cameraReadout = document.createElement('div')
 cameraReadout.id = 'camera-readout'
@@ -1392,7 +1467,33 @@ cameraReadout.style.borderRadius = '4px'
 cameraReadout.style.pointerEvents = 'none'
 cameraReadout.textContent = 'cam p(0.00,0.00,10.00) r(0.00,0.00,0.00) pts 0 fft 0 amp 0.000 sc 0.000 sf 0.000 sfl 0.000 inh 0.000 canv 0 × 0'
 
-cameraHud.append(resetCameraBtn, fitCameraBtn, clearCanvasBtn, cameraReadout)
+let cameraHudEnabled = false
+
+function emitCameraHudState() {
+    window.dispatchEvent(new CustomEvent('seesound:camera-hud-state', {
+        detail: { enabled: cameraHudEnabled },
+    }))
+}
+
+function setCameraHudEnabled(nextEnabled) {
+    cameraHudEnabled = !!nextEnabled
+    cameraHud.style.display = cameraHudEnabled ? 'flex' : 'none'
+    emitCameraHudState()
+}
+
+window.addEventListener('seesound:camera-hud-toggle', (e) => {
+    const requested = e?.detail?.enabled
+    if (typeof requested === 'boolean') {
+        setCameraHudEnabled(requested)
+    } else {
+        setCameraHudEnabled(!cameraHudEnabled)
+    }
+})
+
+cameraHud.append(cameraReadout)
+const hudHost = document.getElementById('app') || document.body
+if (hudHost) hudHost.appendChild(cameraHud)
+setCameraHudEnabled(false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  ANIMATION LOOP
@@ -2049,20 +2150,26 @@ function animate() {
     renderer.setClearColor(bg, 1)
     ps.setViewportHeight(renderer.domElement.height)
 
-    renderer.render(scene, camera)
+    if (shouldUsePostProcessing()) {
+        composer.render()
+    } else {
+        renderer.render(scene, camera)
+    }
 
     // HUD update ~10 fps
-    if (frameN % 6 === 0) {
+    if (cameraHudEnabled && frameN % 6 === 0) {
         const rx = (camera.rotation.x * 180 / Math.PI).toFixed(2)
         const ry = (camera.rotation.y * 180 / Math.PI).toFixed(2)
         const rz = (camera.rotation.z * 180 / Math.PI).toFixed(2)
         const px = camera.position.x.toFixed(2)
         const py = camera.position.y.toFixed(2)
         const pz = camera.position.z.toFixed(2)
+        const lineCount = Math.max(0, Number(ps.getLineVisibleCount?.() ?? 0))
+        const lineSegment = lineCount > 0 ? ` lines ${lineCount}` : ''
         const cameraUnits = getCameraCanvasUnits()
         const canvW = cameraUnits.w
         const canvH = cameraUnits.h
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
+        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()}${lineSegment} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
     }
 }
 animate()
@@ -2637,6 +2744,17 @@ applyCanvasScaleFromParams()
 subscribe((_, key) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
     if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
+    if (
+        key === 'postProcessEnabled' ||
+        key === 'bloomEnabled' ||
+        key === 'bokehEnabled' ||
+        key === 'bloomStrength' ||
+        key === 'bloomRadius' ||
+        key === 'bloomThreshold' ||
+        key === 'bokehFocus' ||
+        key === 'bokehAperture' ||
+        key === 'bokehMaxBlur'
+    ) syncPostProcessingFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {

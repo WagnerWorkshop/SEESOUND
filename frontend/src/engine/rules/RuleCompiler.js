@@ -206,6 +206,7 @@ function _normalizeExpressionSyntax(expr) {
 
 function _usesHsbOutput(rules) {
     for (const rule of (rules || [])) {
+        if (rule?.enabled === false || rule?.sectionDisabled === true) continue
         const actions = Array.isArray(rule?.actions) ? rule.actions : []
         for (const action of actions) {
             if (action?.output === 'hue' || action?.output === 'saturation' || action?.output === 'brightness' || action?.output === 'hsv') return true
@@ -216,6 +217,7 @@ function _usesHsbOutput(rules) {
 
 function _usesOutput(rules, outputId) {
     for (const rule of (rules || [])) {
+        if (rule?.enabled === false || rule?.sectionDisabled === true) continue
         const actions = Array.isArray(rule?.actions) ? rule.actions : []
         for (const action of actions) {
             if (action?.output === outputId) return true
@@ -238,6 +240,7 @@ let _cache = {
         requiredInputsByTarget: {
             spawnedParticles: [],
             allParticles: [],
+            physicalParticles: [],
             lines: [],
             background: [],
             camera: [],
@@ -245,6 +248,7 @@ let _cache = {
         requiredInputs: [],
         applySpawnRules: _NOOP_SPAWN,
         applyLivingRules: _NOOP_LIVING,
+        applyPhysicalRules: _NOOP_LIVING,
         applyLineRules: _NOOP_LIVING,
     },
 }
@@ -263,7 +267,7 @@ function _extractInputIdsFromExpression(expr, inputSet) {
 function _collectRuleInputs(rules, inputSet) {
     const ids = new Set()
     for (const rule of (rules || [])) {
-        if (!rule?.enabled) continue
+        if (!rule?.enabled || rule?.sectionDisabled === true) continue
         const cond = rule.condition || {}
         if (typeof cond.input === 'string' && inputSet.has(cond.input)) ids.add(cond.input)
         if (typeof cond.valueInput === 'string' && inputSet.has(cond.valueInput)) ids.add(cond.valueInput)
@@ -514,6 +518,7 @@ function _compileAction(action) {
 function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
     const lines = []
     const lineMap = []
+    const seenConditionOutput = new Set()
 
     lines.push(`function ${fnName}(ctx${includeParticleArg ? ', particle' : ''}) {`)
     lines.push(`  const target = ${includeParticleArg ? '(particle ?? ctx?.particle ?? ctx)' : '(ctx?.particle ?? ctx)'};`)
@@ -535,12 +540,23 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
     }
 
     rules.forEach((rule) => {
-        if (!rule.enabled) return
+        if (!rule.enabled || rule.sectionDisabled === true) return
         const cond = _compileCondition(rule.condition)
+        const actions = Array.isArray(rule.actions) ? rule.actions : []
+        const emittedActions = []
+        for (const action of actions) {
+            const out = String(action?.output || '')
+            if (!out) continue
+            const conflictKey = `${cond}::${out}`
+            if (seenConditionOutput.has(conflictKey)) continue
+            seenConditionOutput.add(conflictKey)
+            emittedActions.push(action)
+        }
+        if (emittedActions.length === 0) return
         lines.push(`  // rule ${rule.id}`)
         lines.push(`  if (${cond}) {`)
         lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: lines.length + 1 })
-        for (const action of (rule.actions ?? [])) {
+        for (const action of emittedActions) {
             lines.push(`    ${_compileAction(action)}`)
         }
         lines.push('  }')
@@ -575,9 +591,21 @@ export function compileRules(ruleBlocks, dictionaries) {
     const sortedRules = [...normalizedRules].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     const spawnedRules = sortedRules.filter((rule) => rule.target === 'spawnedParticles')
     const livingRules = sortedRules.filter((rule) => rule.target === 'allParticles')
+    // Legacy disabled: physical/sphere rules are intentionally not compiled.
+    const physicalRules = []
     const lineRules = sortedRules.filter((rule) => rule.target === 'lines')
     const backgroundRules = sortedRules.filter((rule) => rule.target === 'background')
     const cameraRules = sortedRules.filter((rule) => rule.target === 'camera')
+    const isActiveRule = (rule) => {
+        if (!rule || rule.enabled === false || rule.sectionDisabled === true) return false
+        return Array.isArray(rule.actions) && rule.actions.length > 0
+    }
+    const activeSpawnedRuleCount = spawnedRules.filter(isActiveRule).length
+    const activeLivingRuleCount = livingRules.filter(isActiveRule).length
+    const activePhysicalRuleCount = physicalRules.filter(isActiveRule).length
+    const activeLineRuleCount = lineRules.filter(isActiveRule).length
+    const activeBackgroundRuleCount = backgroundRules.filter(isActiveRule).length
+    const activeCameraRuleCount = cameraRules.filter(isActiveRule).length
     const hash = hashRules(sortedRules)
 
     if (_cache.hash === hash) return _cache.result
@@ -587,6 +615,7 @@ export function compileRules(ruleBlocks, dictionaries) {
     const requiredInputsByTarget = {
         spawnedParticles: _collectRuleInputs(spawnedRules, inputIdSet),
         allParticles: _collectRuleInputs(livingRules, inputIdSet),
+        physicalParticles: _collectRuleInputs(physicalRules, inputIdSet),
         lines: _collectRuleInputs(lineRules, inputIdSet),
         background: _collectRuleInputs(backgroundRules, inputIdSet),
         camera: _collectRuleInputs(cameraRules, inputIdSet),
@@ -594,12 +623,14 @@ export function compileRules(ruleBlocks, dictionaries) {
     const requiredInputs = [...new Set([
         ...requiredInputsByTarget.spawnedParticles,
         ...requiredInputsByTarget.allParticles,
+        ...requiredInputsByTarget.physicalParticles,
         ...requiredInputsByTarget.lines,
         ...requiredInputsByTarget.background,
         ...requiredInputsByTarget.camera,
     ])]
     const spawnBuild = buildSpawnFunction(spawnedRules, inputIds)
     const livingBuild = buildLivingFunction(livingRules, inputIds)
+    const physicalBuild = _buildFunctionSource('applyPhysicalRules', physicalRules, inputIds, true)
     const lineBuild = _buildFunctionSource('applyLineRules', lineRules, inputIds, true)
     const bgBuild = _buildFunctionSource('applyBackgroundRules', backgroundRules, inputIds, true)
     const camBuild = _buildFunctionSource('applyCameraRules', cameraRules, inputIds, true)
@@ -609,10 +640,11 @@ export function compileRules(ruleBlocks, dictionaries) {
         'const { clamp, lerp, smoothstep, pow, min, max, abs } = helpers;',
         spawnBuild.source,
         livingBuild.source,
+        physicalBuild.source,
         lineBuild.source,
         bgBuild.source,
         camBuild.source,
-        'return { applySpawnRules, applyLivingRules, applyLineRules, applyBackgroundRules, applyCameraRules };',
+        'return { applySpawnRules, applyLivingRules, applyPhysicalRules, applyLineRules, applyBackgroundRules, applyCameraRules };',
     ].join('\n\n')
 
     try {
@@ -623,22 +655,25 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileStatus: sanitized.rejected.length > 0 ? 'compiled-with-rejections' : 'compiled',
             compileError: null,
             compileTimeMs: Math.max(0, performance.now() - t0),
-            spawnRuleCount: spawnedRules.length,
-            livingRuleCount: livingRules.length,
-            lineRuleCount: lineRules.length,
-            backgroundRuleCount: backgroundRules.length,
-            cameraRuleCount: cameraRules.length,
+            spawnRuleCount: activeSpawnedRuleCount,
+            livingRuleCount: activeLivingRuleCount,
+            physicalRuleCount: activePhysicalRuleCount,
+            lineRuleCount: activeLineRuleCount,
+            backgroundRuleCount: activeBackgroundRuleCount,
+            cameraRuleCount: activeCameraRuleCount,
             usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesPhysicalHsb: _usesHsbOutput(physicalRules),
             usesLineHsb: _usesHsbOutput(lineRules),
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             rejected: sanitized.rejected,
             requiredInputsByTarget,
             requiredInputs,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...physicalBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             applySpawnRules: typeof compiled.applySpawnRules === 'function' ? compiled.applySpawnRules : _NOOP_SPAWN,
             applyLivingRules: typeof compiled.applyLivingRules === 'function' ? compiled.applyLivingRules : _NOOP_LIVING,
+            applyPhysicalRules: typeof compiled.applyPhysicalRules === 'function' ? compiled.applyPhysicalRules : _NOOP_LIVING,
             applyLineRules: typeof compiled.applyLineRules === 'function' ? compiled.applyLineRules : _NOOP_LIVING,
             applyBackgroundRules: typeof compiled.applyBackgroundRules === 'function' ? compiled.applyBackgroundRules : _NOOP_LIVING,
             applyCameraRules: typeof compiled.applyCameraRules === 'function' ? compiled.applyCameraRules : _NOOP_LIVING,
@@ -654,18 +689,20 @@ export function compileRules(ruleBlocks, dictionaries) {
             compileError: err?.message || String(err),
             compileLine: lineHint,
             compileTimeMs: Math.max(0, performance.now() - t0),
-            spawnRuleCount: spawnedRules.length,
-            livingRuleCount: livingRules.length,
-            lineRuleCount: lineRules.length,
-            backgroundRuleCount: backgroundRules.length,
-            cameraRuleCount: cameraRules.length,
+            spawnRuleCount: activeSpawnedRuleCount,
+            livingRuleCount: activeLivingRuleCount,
+            physicalRuleCount: activePhysicalRuleCount,
+            lineRuleCount: activeLineRuleCount,
+            backgroundRuleCount: activeBackgroundRuleCount,
+            cameraRuleCount: activeCameraRuleCount,
             usesParticleHsb: _usesHsbOutput([...spawnedRules, ...livingRules]),
+            usesPhysicalHsb: _usesHsbOutput(physicalRules),
             usesLineHsb: _usesHsbOutput(lineRules),
             usesBackgroundHsb: _usesHsbOutput(backgroundRules),
             usesLivingShapeType: _usesOutput(livingRules, 'shapeType'),
             requiredInputsByTarget,
             requiredInputs,
-            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
+            lineMap: [...spawnBuild.lineMap, ...livingBuild.lineMap, ...physicalBuild.lineMap, ...lineBuild.lineMap, ...bgBuild.lineMap, ...camBuild.lineMap],
             source,
             rejected: sanitized.rejected,
         }

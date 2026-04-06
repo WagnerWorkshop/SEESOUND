@@ -38,6 +38,7 @@ import addIcon from '../icons/add.svg?raw'
 import clearIcon from '../icons/clear.svg?raw'
 import resetIcon from '../icons/reset.svg?raw'
 import fitIcon from '../icons/fit.svg?raw'
+import copyIcon from '../icons/copy.svg?raw'
 
 
 const NONE_VAR = '__none__'
@@ -67,7 +68,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 1,
         max: 40,
         step: 0.5,
-        tooltip: 'Technical term: Particle Size. Base sprite diameter in pixels.',
+        tooltip: 'Technical term: Default Size. Base object size before rule outputs.',
     },
     {
         key: 'maxParticles',
@@ -75,7 +76,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100000,
         max: 5000000,
         step: 50000,
-        tooltip: 'Technical term: Max Particle Capacity. Total GPU particle slots.',
+        tooltip: 'Technical term: Capacity. Total GPU object slots.',
     },
     {
         key: 'particlesByFrame',
@@ -83,7 +84,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100,
         max: 5000,
         step: 1,
-        tooltip: 'Technical term: Particles By Frame. Number of log-frequency spawn buckets per frame.',
+        tooltip: 'Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.',
     },
     {
         key: 'fluxWindowFrames',
@@ -205,29 +206,46 @@ const SETTINGS_RANGES = Object.freeze([
 ])
 
 const FIXED_RULE_ROWS = Object.freeze([
-    // Particles
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'x', label: 'X' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'y', label: 'Y' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Position', output: 'z', label: 'Z' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'shapeType', label: 'Shape', type: 'enum', options: ['circle', 'square'] },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'red', label: 'Red' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'green', label: 'Green' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
-    { target: 'spawnedParticles', section: 'Particles', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
+    // Light Particles
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'y', label: 'Y' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'z', label: 'Z' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'shapeType', label: 'Shape', type: 'enum', options: ['circle', 'square'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'red', label: 'Red' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'green', label: 'Green' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
+
+    // Legacy disabled: Physical Particles rules section intentionally hidden from the UI.
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Position', output: 'x', label: 'X' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Position', output: 'y', label: 'Y' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Position', output: 'z', label: 'Z' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'red', label: 'Red' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'green', label: 'Green' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'blue', label: 'Blue' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Material', output: 'luminosity', label: 'Luminosity' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Material', output: 'transparency', label: 'Transparency' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Material', output: 'roughness', label: 'Roughness' },
+    // { target: 'physicalParticles', section: 'Physical Particles', subgroup: 'Material', output: 'metalness', label: 'Metalness' },
 
     // Lines
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'xStart', label: 'X Start' },
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'xEnd', label: 'X End' },
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'yStart', label: 'Y Start' },
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'yEnd', label: 'Y End' },
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'zStart', label: 'Z Start' },
-    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'zEnd', label: 'Z End' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'x', label: 'X' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'y', label: 'Y' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'z', label: 'Z' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'length', label: 'Length' },
+    { target: 'lines', section: 'Lines', subgroup: 'Position', output: 'direction', label: 'Direction', type: 'enum', options: ['x', 'y', 'z'] },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'thickness', label: 'Thickness' },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'lineCount', label: 'Line Count' },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'red', label: 'Red' },
@@ -281,6 +299,7 @@ const BUTTON_ICON_MAP = Object.freeze({
     reset: resetIcon,
     fit: fitIcon,
     add: addIcon,
+    duplicate: copyIcon,
     clear: clearIcon,
     clean: clearIcon,
     close: closeIcon,
@@ -848,6 +867,7 @@ function createRangePairControl(definition, syncRegistry) {
     const sliderApi = rangeContainer.noUiSlider
     // Keep initial noUiSlider update from writing min/max into ParamStore before we sync defaults.
     let suppressCommit = true
+    let suppressInputSync = false
 
     const updateNumberInputs = (minValue, maxValue) => {
         minInput.value = String(minValue)
@@ -857,7 +877,7 @@ function createRangePairControl(definition, syncRegistry) {
     sliderApi.on('update', (values) => {
         const minValue = Number(values[0])
         const maxValue = Number(values[1])
-        updateNumberInputs(minValue, maxValue)
+        if (!suppressInputSync) updateNumberInputs(minValue, maxValue)
         if (suppressCommit) return
         definition.set(minValue, maxValue)
     })
@@ -867,15 +887,20 @@ function createRangePairControl(definition, syncRegistry) {
         let maxValue = Number(maxInput.value)
         if (!Number.isFinite(minValue)) minValue = definition.min
         if (!Number.isFinite(maxValue)) maxValue = definition.max
-        minValue = clamp(minValue, definition.min, definition.max)
-        maxValue = clamp(maxValue, definition.min, definition.max)
         if (minValue > maxValue) {
             const temp = minValue
             minValue = maxValue
             maxValue = temp
         }
+
+        const sliderMin = clamp(minValue, definition.min, definition.max)
+        const sliderMax = clamp(maxValue, definition.min, definition.max)
+        const keepTypedValues = sliderMin !== minValue || sliderMax !== maxValue
+
         suppressCommit = true
-        sliderApi.set([minValue, maxValue])
+        suppressInputSync = keepTypedValues
+        sliderApi.set([sliderMin, sliderMax])
+        suppressInputSync = false
         suppressCommit = false
         updateNumberInputs(minValue, maxValue)
         definition.set(minValue, maxValue)
@@ -888,10 +913,20 @@ function createRangePairControl(definition, syncRegistry) {
 
     const sync = () => {
         const current = definition.get()
+        const nextMin = Number(current.min)
+        const nextMax = Number(current.max)
+        const safeMin = Number.isFinite(nextMin) ? nextMin : definition.min
+        const safeMax = Number.isFinite(nextMax) ? nextMax : definition.max
+        const sliderMin = clamp(safeMin, definition.min, definition.max)
+        const sliderMax = clamp(safeMax, definition.min, definition.max)
+        const keepTypedValues = sliderMin !== safeMin || sliderMax !== safeMax
+
         suppressCommit = true
-        sliderApi.set([current.min, current.max])
+        suppressInputSync = keepTypedValues
+        sliderApi.set([sliderMin, sliderMax])
+        suppressInputSync = false
         suppressCommit = false
-        updateNumberInputs(current.min, current.max)
+        updateNumberInputs(safeMin, safeMax)
     }
 
     controls.append(rangeContainer, minInput, maxInput)
@@ -922,18 +957,25 @@ function createSliderControl(definition, syncRegistry) {
         max: definition.max,
     })
 
-    const apply = (raw) => {
+    const applyFromSlider = (raw) => {
         const value = clamp(raw, definition.min, definition.max)
         set(definition.key, value)
     }
 
-    slider.addEventListener('input', () => apply(Number(slider.value)))
-    number.addEventListener('change', () => apply(Number(number.value)))
+    const applyFromNumber = (raw) => {
+        const value = Number(raw)
+        if (!Number.isFinite(value)) return
+        set(definition.key, value)
+    }
+
+    slider.addEventListener('input', () => applyFromSlider(Number(slider.value)))
+    number.addEventListener('change', () => applyFromNumber(number.value))
 
     const sync = () => {
         const value = Number(params[definition.key])
-        slider.value = String(Number.isFinite(value) ? value : definition.min)
-        number.value = String(Number.isFinite(value) ? value : definition.min)
+        const safeValue = Number.isFinite(value) ? value : definition.min
+        slider.value = String(clamp(safeValue, definition.min, definition.max))
+        number.value = String(safeValue)
     }
 
     controls.append(slider, number)
@@ -1466,12 +1508,15 @@ function buildViewMenu(body, syncRegistry) {
     guideSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.guides }))
     const originToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const guideToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const cameraHudToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
 
     const originRow = el('label', 'cp-inline-pair')
     originRow.append(originToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideAxes }))
     const guideRow = el('label', 'cp-inline-pair')
     guideRow.append(guideToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideCoordinates }))
-    guideSection.append(originRow, guideRow)
+    const cameraHudRow = el('label', 'cp-inline-pair')
+    cameraHudRow.append(cameraHudToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.cameraHud }))
+    guideSection.append(originRow, guideRow, cameraHudRow)
 
     widthInput.addEventListener('change', () => {
         const w = Math.max(160, Math.floor(Number(widthInput.value) || 160))
@@ -1482,12 +1527,17 @@ function buildViewMenu(body, syncRegistry) {
         set('canvasHeight', h)
     })
 
-    const applyCanvasZoom = (raw) => {
+    const applyCanvasZoomFromSlider = (raw) => {
         const value = clamp(raw, 5, 400)
         set('canvasScale', Math.floor(value))
     }
-    zoomSlider.addEventListener('input', () => applyCanvasZoom(Number(zoomSlider.value)))
-    zoomNumber.addEventListener('change', () => applyCanvasZoom(Number(zoomNumber.value)))
+    const applyCanvasZoomFromNumber = (raw) => {
+        const value = Number(raw)
+        if (!Number.isFinite(value)) return
+        set('canvasScale', Math.floor(value))
+    }
+    zoomSlider.addEventListener('input', () => applyCanvasZoomFromSlider(Number(zoomSlider.value)))
+    zoomNumber.addEventListener('change', () => applyCanvasZoomFromNumber(zoomNumber.value))
 
     bgColorInput.addEventListener('input', () => {
         const hsl = hexToHsl(bgColorInput.value)
@@ -1543,12 +1593,17 @@ function buildViewMenu(body, syncRegistry) {
     bokehEnabled.addEventListener('change', () => set('bokehEnabled', bokehEnabled.checked ? 1 : 0))
 
     const bindSliderAndNumber = ({ slider, number, key, min, max }) => {
-        const apply = (raw) => {
+        const applyFromSlider = (raw) => {
             const value = clamp(raw, min, max)
             set(key, value)
         }
-        slider.addEventListener('input', () => apply(Number(slider.value)))
-        number.addEventListener('change', () => apply(Number(number.value)))
+        const applyFromNumber = (raw) => {
+            const value = Number(raw)
+            if (!Number.isFinite(value)) return
+            set(key, value)
+        }
+        slider.addEventListener('input', () => applyFromSlider(Number(slider.value)))
+        number.addEventListener('change', () => applyFromNumber(number.value))
     }
 
     bindSliderAndNumber({ slider: bloomStrengthSlider, number: bloomStrengthNumber, key: 'bloomStrength', min: 0, max: 4 })
@@ -1558,18 +1613,29 @@ function buildViewMenu(body, syncRegistry) {
     bindSliderAndNumber({ slider: bokehApertureSlider, number: bokehApertureNumber, key: 'bokehAperture', min: 0, max: 0.001 })
     bindSliderAndNumber({ slider: bokehMaxBlurSlider, number: bokehMaxBlurNumber, key: 'bokehMaxBlur', min: 0, max: 0.1 })
 
-    const applyFov = (value) => {
+    const applyFovFromSlider = (value) => {
         set('cameraAngleOfView', clamp(value, 20, 120))
     }
 
-    fovSlider.addEventListener('input', () => applyFov(Number(fovSlider.value)))
-    fovNumber.addEventListener('change', () => applyFov(Number(fovNumber.value)))
+    const applyFovFromNumber = (value) => {
+        const n = Number(value)
+        if (!Number.isFinite(n)) return
+        set('cameraAngleOfView', n)
+    }
+
+    fovSlider.addEventListener('input', () => applyFovFromSlider(Number(fovSlider.value)))
+    fovNumber.addEventListener('change', () => applyFovFromNumber(fovNumber.value))
 
     originToggle.addEventListener('change', () => {
         set('originSignEnabled', originToggle.checked ? 1 : 0)
     })
     guideToggle.addEventListener('change', () => {
         set('coordinateGuidesEnabled', guideToggle.checked ? 1 : 0)
+    })
+    cameraHudToggle.addEventListener('change', () => {
+        window.dispatchEvent(new CustomEvent('seesound:camera-hud-toggle', {
+            detail: { enabled: cameraHudToggle.checked },
+        }))
     })
 
     window.addEventListener('seesound:origin-sign-state', (e) => {
@@ -1580,6 +1646,11 @@ function buildViewMenu(body, syncRegistry) {
     window.addEventListener('seesound:coordinate-guide-state', (e) => {
         const enabled = e?.detail?.enabled
         if (typeof enabled === 'boolean') guideToggle.checked = enabled
+    })
+
+    window.addEventListener('seesound:camera-hud-state', (e) => {
+        const enabled = e?.detail?.enabled
+        if (typeof enabled === 'boolean') cameraHudToggle.checked = enabled
     })
 
     const syncCanvasSize = () => {
@@ -1727,6 +1798,7 @@ function buildViewMenu(body, syncRegistry) {
     syncBokehAperture()
     syncBokehMaxBlur()
     syncCameraFields()
+    cameraHudToggle.checked = false
 
     panel.append(canvasSection, backgroundSection, cameraSection, projectionSection, fovSection, blendingSection, postSection, guideSection)
     body.appendChild(panel)
@@ -1832,18 +1904,138 @@ function buildRulesMenu(body, syncRegistry) {
 
     const rowsByKey = new Map()
     const orderedRows = []
+    const sectionToggleByName = new Map()
+    const sectionByName = new Map()
+    const sectionRows = new Map()
+    let duplicateSequence = 0
 
     function rowKey(target, output) {
         return `${target}:${output}`
     }
 
+    function createInstanceId(definition, isDuplicate = false) {
+        const base = `${definition.target}-${definition.output}`
+        if (!isDuplicate) return `${base}-base`
+        duplicateSequence += 1
+        return `${base}-dup-${duplicateSequence}`
+    }
+
+    function normalizeConditionSignature(rowState) {
+        const condition = buildCondition(rowState)
+        return JSON.stringify(condition || { operator: 'always' })
+    }
+
+    function updateContradictionState() {
+        const seen = new Map()
+        const conflictIds = new Set()
+        for (const rowState of orderedRows) {
+            if (!rowState?.enabled) continue
+            const action = toActionFromState(rowState)
+            if (!action) continue
+            const signature = `${rowState.definition.target}|${rowState.definition.output}|${normalizeConditionSignature(rowState)}`
+            const prior = seen.get(signature)
+            if (prior) {
+                conflictIds.add(prior.instanceId)
+                conflictIds.add(rowState.instanceId)
+                continue
+            }
+            seen.set(signature, rowState)
+            if (Array.isArray(rowState.duplicateIds) && rowState.duplicateIds.length > 0) {
+                conflictIds.add(rowState.instanceId)
+            }
+        }
+        for (const rowState of orderedRows) {
+            rowState.card?.classList.toggle('is-danger', conflictIds.has(rowState.instanceId))
+            if (typeof rowState.renderDuplicateCards === 'function') rowState.renderDuplicateCards()
+        }
+    }
+
+    const isSectionEnabled = (sectionName) => !(sectionEnabledState.get(sectionName) === false)
+
+    const refreshRowCardState = (row) => {
+        if (!row?.card) return
+        const activeSection = isSectionEnabled(row.definition.section)
+        row.card.classList.toggle('is-disabled', !row.enabled || !activeSection)
+        row.card.classList.toggle('is-collapsed', !!row.collapsed)
+        const duplicateCount = Array.isArray(row.duplicateIds) ? row.duplicateIds.length : 0
+        if (row.removeBtn) row.removeBtn.style.display = duplicateCount > 0 ? '' : 'none'
+        if (row.duplicateBtn) row.duplicateBtn.title = duplicateCount > 0 ? `Duplicate rule (${duplicateCount} duplicate${duplicateCount > 1 ? 's' : ''})` : 'Duplicate rule'
+        if (row.collapseBtn) row.collapseBtn.textContent = row.collapsed ? '▸' : '▾'
+        if (typeof row.renderDuplicateCards === 'function') row.renderDuplicateCards()
+    }
+
+    function buildDuplicateCard(rowState, duplicateId, index) {
+        const card = el('article', 'cp-rule-card cp-rule-card--duplicate')
+        card.dataset.duplicateId = duplicateId
+        const header = el('div', 'cp-rule-card-header')
+        const title = el('div', 'cp-rule-card-title', { text: `${rowState.definition.label} (Duplicate ${index + 1})` })
+        const tools = el('div', 'cp-rule-card-tools')
+        const duplicateBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-duplicate', {
+            type: 'button',
+            title: 'Duplicate rule',
+            'aria-label': 'Duplicate rule',
+        })
+        duplicateBtn.innerHTML = BUTTON_ICON_MAP.duplicate
+        const removeBtn = el('button', 'cp-btn cp-btn-icon cp-btn-danger cp-rule-card-remove', {
+            type: 'button',
+            title: 'Remove duplicate rule',
+            'aria-label': 'Remove duplicate rule',
+        })
+        removeBtn.innerHTML = BUTTON_ICON_MAP.remove
+        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', {
+            type: 'button',
+            title: 'Collapse rule',
+            'aria-label': 'Collapse rule',
+            text: rowState.collapsed ? '▸' : '▾',
+        })
+        tools.append(duplicateBtn, removeBtn, collapseBtn)
+        header.append(title, tools)
+        card.appendChild(header)
+
+        if (rowState.card.classList.contains('is-danger')) card.classList.add('is-danger')
+        if (rowState.collapsed || !rowState.enabled) card.classList.add('is-collapsed')
+
+        duplicateBtn.addEventListener('click', () => {
+            rowState.duplicateIds.push(createInstanceId(rowState.definition, true))
+            refreshRowCardState(rowState)
+            commitRuleBlocks()
+        })
+
+        removeBtn.addEventListener('click', () => {
+            const idx = rowState.duplicateIds.indexOf(duplicateId)
+            if (idx < 0) return
+            rowState.duplicateIds.splice(idx, 1)
+            refreshRowCardState(rowState)
+            commitRuleBlocks()
+        })
+
+        collapseBtn.addEventListener('click', () => {
+            rowState.collapsed = !rowState.collapsed
+            refreshRowCardState(rowState)
+        })
+
+        return card
+    }
+
+    function renderDuplicateCards(rowState) {
+        const host = rowState?.duplicateContainer
+        if (!host) return
+        host.innerHTML = ''
+        const ids = Array.isArray(rowState.duplicateIds) ? rowState.duplicateIds : []
+        for (let i = 0; i < ids.length; i++) {
+            host.appendChild(buildDuplicateCard(rowState, ids[i], i))
+        }
+    }
+
     function syncColorMode(target, changedOutput = '') {
+        const byOutput = (outputId) => orderedRows.filter((row) => row.definition.target === target && row.definition.output === outputId)
         const rgbRows = [
-            rowsByKey.get(rowKey(target, 'red')),
-            rowsByKey.get(rowKey(target, 'green')),
-            rowsByKey.get(rowKey(target, 'blue')),
-        ].filter(Boolean)
-        const hueRow = rowsByKey.get(rowKey(target, 'hue'))
+            ...byOutput('red'),
+            ...byOutput('green'),
+            ...byOutput('blue'),
+        ]
+        const hueRows = byOutput('hue')
+        const hueRow = hueRows[0] || null
         if (!hueRow || rgbRows.length === 0) return
 
         if (changedOutput === 'red' || changedOutput === 'green' || changedOutput === 'blue') {
@@ -1872,10 +2064,10 @@ function buildRulesMenu(body, syncRegistry) {
 
         for (const row of rgbRows) {
             if (row.toggle) row.toggle.checked = row.enabled
-            if (row.card) row.card.classList.toggle('is-disabled', !row.enabled)
+            refreshRowCardState(row)
         }
         if (hueRow.toggle) hueRow.toggle.checked = hueRow.enabled
-        if (hueRow.card) hueRow.card.classList.toggle('is-disabled', !hueRow.enabled)
+        refreshRowCardState(hueRow)
     }
 
     function buildCondition(rowState) {
@@ -1901,6 +2093,7 @@ function buildRulesMenu(body, syncRegistry) {
 
     let syncingFromParamStore = false
     let skipNextRuleBlocksApply = false
+    const sectionEnabledState = new Map()
 
     function commitRowIfReady(rowState, force = false) {
         if (!rowState) return
@@ -1918,8 +2111,10 @@ function buildRulesMenu(body, syncRegistry) {
         if (syncingFromParamStore) return
 
         syncColorMode('spawnedParticles')
+        syncColorMode('physicalParticles')
         syncColorMode('lines')
         syncColorMode('background')
+        updateContradictionState()
 
         const nextBlocks = []
         for (let i = 0; i < orderedRows.length; i++) {
@@ -1928,15 +2123,31 @@ function buildRulesMenu(body, syncRegistry) {
             if (!action) continue
 
             nextBlocks.push({
-                id: `${rowState.definition.target}-${rowState.definition.output}`,
+                id: rowState.instanceId || `${rowState.definition.target}-${rowState.definition.output}`,
                 group: `${rowState.definition.section}/${rowState.definition.subgroup}`,
                 subgroup: '',
                 enabled: !!rowState.enabled,
+                sectionDisabled: !isSectionEnabled(rowState.definition.section),
                 target: rowState.definition.target,
                 condition: buildCondition(rowState),
                 actions: [action],
                 order: i,
             })
+
+            const duplicates = Array.isArray(rowState.duplicateIds) ? rowState.duplicateIds : []
+            for (const duplicateId of duplicates) {
+                nextBlocks.push({
+                    id: duplicateId,
+                    group: `${rowState.definition.section}/${rowState.definition.subgroup}`,
+                    subgroup: '',
+                    enabled: !!rowState.enabled,
+                    sectionDisabled: !isSectionEnabled(rowState.definition.section),
+                    target: rowState.definition.target,
+                    condition: buildCondition(rowState),
+                    actions: [action],
+                    order: i,
+                })
+            }
         }
 
         // Local edits already updated rowState in-place; skip one immediate
@@ -1950,6 +2161,8 @@ function buildRulesMenu(body, syncRegistry) {
         try {
             for (const rowState of orderedRows) {
                 rowState.enabled = false
+                rowState.collapsed = false
+                rowState.duplicateIds = []
                 rowState.conditionEnabled = false
                 rowState.conditionOperator = 'always'
                 rowState.conditionDetail = NONE_VAR
@@ -1963,7 +2176,13 @@ function buildRulesMenu(body, syncRegistry) {
                 rowState.enumValue = rowState.definition.options?.[0] || 'square'
             }
 
+            sectionEnabledState.clear()
+            for (const def of FIXED_RULE_ROWS) {
+                if (!sectionEnabledState.has(def.section)) sectionEnabledState.set(def.section, true)
+            }
+
             const safeBlocks = Array.isArray(blocks) ? blocks : []
+            const seenKeyCount = new Map()
             for (const rule of safeBlocks) {
                 const target = String(rule?.target || '')
                 const action = Array.isArray(rule?.actions) ? rule.actions[0] : null
@@ -1971,6 +2190,18 @@ function buildRulesMenu(body, syncRegistry) {
                 const key = rowKey(target, output)
                 const rowState = rowsByKey.get(key)
                 if (!rowState) continue
+
+                const seenCount = seenKeyCount.get(key) || 0
+                if (seenCount > 0) {
+                    rowState.duplicateIds.push(String(rule?.id || createInstanceId(rowState.definition, true)))
+                    seenKeyCount.set(key, seenCount + 1)
+                    continue
+                }
+                seenKeyCount.set(key, 1)
+
+                if (rule?.sectionDisabled === true) {
+                    sectionEnabledState.set(rowState.definition.section, false)
+                }
 
                 rowState.enabled = rule.enabled !== false
                 const operator = String(rule?.condition?.operator || 'always')
@@ -2003,16 +2234,25 @@ function buildRulesMenu(body, syncRegistry) {
             }
 
             syncColorMode('spawnedParticles')
+            syncColorMode('physicalParticles')
             syncColorMode('lines')
             syncColorMode('background')
 
             for (const rowState of orderedRows) {
                 if (rowState.toggle) rowState.toggle.checked = rowState.enabled
-                if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
+                refreshRowCardState(rowState)
                 rowState.syncConditionUi?.()
                 if (rowState.enumSelect) rowState.enumSelect.value = rowState.enumValue
                 renderTokenEditor(rowState)
             }
+
+            for (const [sectionName, toggle] of sectionToggleByName.entries()) {
+                const enabled = isSectionEnabled(sectionName)
+                toggle.checked = enabled
+                const sectionEl = sectionByName.get(sectionName)
+                if (sectionEl) sectionEl.classList.toggle('is-section-disabled', !enabled)
+            }
+            updateContradictionState()
         } finally {
             syncingFromParamStore = false
         }
@@ -2020,22 +2260,63 @@ function buildRulesMenu(body, syncRegistry) {
 
     let currentSection = ''
     let currentSubgroup = ''
+    let currentSectionBody = null
+    const sectionCollapseState = new Map()
 
     for (const definition of FIXED_RULE_ROWS) {
         if (definition.section !== currentSection) {
             currentSection = definition.section
+            const sectionName = currentSection
             currentSubgroup = ''
-            wrapper.appendChild(el('h3', 'cp-section-title cp-rule-section-title', { text: currentSection }))
+            const section = el('section', 'cp-rule-section')
+            const sectionHeader = el('div', 'cp-rule-section-header')
+            const titleBtn = el('button', 'cp-rule-section-title cp-rule-section-toggle', {
+                type: 'button',
+                text: sectionName,
+                'aria-expanded': 'true',
+            })
+            const sectionEnable = el('input', 'cp-input-toggle cp-rule-section-enable', { type: 'checkbox' })
+            sectionEnable.checked = true
+            const sectionBody = el('div', 'cp-rule-section-body')
+
+            sectionToggleByName.set(sectionName, sectionEnable)
+            sectionByName.set(sectionName, section)
+            sectionRows.set(sectionName, [])
+
+            titleBtn.addEventListener('click', () => {
+                const expanded = !(sectionCollapseState.get(sectionName) === false)
+                const nextExpanded = !expanded
+                sectionCollapseState.set(sectionName, nextExpanded)
+                section.classList.toggle('is-collapsed', !nextExpanded)
+                titleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false')
+            })
+
+            sectionEnable.addEventListener('change', () => {
+                sectionEnabledState.set(sectionName, !!sectionEnable.checked)
+                section.classList.toggle('is-section-disabled', !sectionEnable.checked)
+                const rows = sectionRows.get(sectionName) || []
+                for (const row of rows) refreshRowCardState(row)
+                commitRuleBlocks()
+            })
+
+            sectionHeader.append(titleBtn, sectionEnable)
+            section.append(sectionHeader, sectionBody)
+            wrapper.appendChild(section)
+            currentSectionBody = sectionBody
         }
 
         if (definition.subgroup !== currentSubgroup) {
             currentSubgroup = definition.subgroup
-            wrapper.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
+            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
         }
 
         const rowState = {
             definition,
+            instanceId: createInstanceId(definition, false),
+            isDuplicate: false,
             enabled: false,
+            collapsed: false,
+            duplicateIds: [],
             conditionEnabled: false,
             conditionOperator: 'always',
             conditionDetail: NONE_VAR,
@@ -2060,9 +2341,17 @@ function buildRulesMenu(body, syncRegistry) {
 
         const card = el('article', 'cp-rule-card')
         const header = el('div', 'cp-rule-card-header')
+        const headerTools = el('div', 'cp-rule-card-tools')
+        const duplicateBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-duplicate', { type: 'button', title: 'Duplicate rule', 'aria-label': 'Duplicate rule' })
+        duplicateBtn.innerHTML = BUTTON_ICON_MAP.duplicate
+        const removeBtn = el('button', 'cp-btn cp-btn-icon cp-btn-danger cp-rule-card-remove', { type: 'button', title: 'Remove duplicate rule', 'aria-label': 'Remove duplicate rule' })
+        removeBtn.innerHTML = BUTTON_ICON_MAP.remove
+        removeBtn.style.display = 'none'
+        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule', text: '▾' })
+        headerTools.append(duplicateBtn, removeBtn, collapseBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
         const title = el('div', 'cp-rule-card-title', { text: definition.label })
-        header.append(toggle, title)
+        header.append(toggle, title, headerTools)
 
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
         const addConditionButton = el('button', 'cp-btn cp-rule-condition-add', { type: 'button', text: UI_TEXT.rules.addCondition })
@@ -2119,7 +2408,7 @@ function buildRulesMenu(body, syncRegistry) {
                 if (rowState.enabled && !String(rowState.expression || '').trim()) {
                     rowState.enabled = false
                     if (rowState.toggle) rowState.toggle.checked = false
-                    if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
+                    refreshRowCardState(rowState)
                     commitRuleBlocks()
                     return
                 }
@@ -2151,16 +2440,23 @@ function buildRulesMenu(body, syncRegistry) {
             })
         }
 
+        const duplicateContainer = el('div', 'cp-rule-duplicates')
         card.append(header, conditionRow, expressionRow)
-        wrapper.appendChild(card)
+        currentSectionBody.appendChild(card)
+        currentSectionBody.appendChild(duplicateContainer)
 
         rowState.toggle = toggle
         rowState.card = card
+        rowState.duplicateContainer = duplicateContainer
+        rowState.renderDuplicateCards = () => renderDuplicateCards(rowState)
+        rowState.duplicateBtn = duplicateBtn
+        rowState.removeBtn = removeBtn
+        rowState.collapseBtn = collapseBtn
         rowState.conditionRow = conditionRow
         rowState.tokenEditor = tokenEditor
         rowState.enumSelect = enumSelect
         rowState.actionSelect = actionSelect
-        card.classList.toggle('is-disabled', !rowState.enabled)
+        refreshRowCardState(rowState)
 
         rowState.syncConditionUi = () => {
             addConditionButton.style.display = rowState.conditionEnabled ? 'none' : ''
@@ -2176,10 +2472,30 @@ function buildRulesMenu(body, syncRegistry) {
 
         rowsByKey.set(rowKey(definition.target, definition.output), rowState)
         orderedRows.push(rowState)
+        sectionRows.get(definition.section)?.push(rowState)
+
+        duplicateBtn.addEventListener('click', () => {
+            if (!Array.isArray(rowState.duplicateIds)) rowState.duplicateIds = []
+            rowState.duplicateIds.push(createInstanceId(definition, true))
+            refreshRowCardState(rowState)
+            commitRuleBlocks()
+        })
+
+        removeBtn.addEventListener('click', () => {
+            if (!Array.isArray(rowState.duplicateIds) || rowState.duplicateIds.length === 0) return
+            rowState.duplicateIds.pop()
+            refreshRowCardState(rowState)
+            commitRuleBlocks()
+        })
+
+        collapseBtn.addEventListener('click', () => {
+            rowState.collapsed = !rowState.collapsed
+            refreshRowCardState(rowState)
+        })
 
         toggle.addEventListener('change', () => {
             rowState.enabled = toggle.checked
-            if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
+            refreshRowCardState(rowState)
             if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
                 syncColorMode(definition.target, definition.output)
             }
@@ -2399,8 +2715,7 @@ export function initControlPanel(container) {
         })
 
         button.addEventListener('click', () => {
-            const expanded = expandedMenuId()
-            if (expanded === item.id) {
+            if (pinnedMenuId === item.id) {
                 pinnedMenuId = null
                 hoverMenuId = null
             } else {
