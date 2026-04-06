@@ -80,6 +80,8 @@
             "activity": "Activity",
             "noisiness": "Noisiness",
             "sliders": "Sliders",
+            "processing": "Processing",
+            "system": "System",
             "normalizationRanges": "Normalization Ranges",
             "resetDefaults": "Reset Defaults"
         },

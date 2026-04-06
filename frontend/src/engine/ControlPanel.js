@@ -1808,7 +1808,7 @@ function buildSettingsMenu(body, syncRegistry) {
     const panel = el('div', 'cp-menu-pane-inner')
 
     const sliderSection = el('section', 'cp-section')
-    sliderSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.sliders }))
+    sliderSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.processing || 'Processing' }))
 
     const resolutionRow = el('div', 'cp-setting-row')
     const resolutionLabelWrap = el('div', 'cp-setting-label-wrap')
@@ -1902,10 +1902,11 @@ function buildRulesMenu(body, syncRegistry) {
     const wrapper = el('div', 'cp-rules-wrapper')
     panel.appendChild(wrapper)
 
-    const rowsByKey = new Map()
+    const baseRowsByKey = new Map()
     const orderedRows = []
     const sectionToggleByName = new Map()
     const sectionByName = new Map()
+    const sectionBodyByName = new Map()
     const sectionRows = new Map()
     let duplicateSequence = 0
 
@@ -1918,6 +1919,55 @@ function buildRulesMenu(body, syncRegistry) {
         if (!isDuplicate) return `${base}-base`
         duplicateSequence += 1
         return `${base}-dup-${duplicateSequence}`
+    }
+
+    function createRowState(definition, isDuplicate = false) {
+        return {
+            definition,
+            instanceId: createInstanceId(definition, isDuplicate),
+            isDuplicate,
+            enabled: false,
+            collapsed: false,
+            conditionEnabled: false,
+            conditionOperator: 'always',
+            conditionDetail: NONE_VAR,
+            conditionOverall: NONE_VAR,
+            conditionValue: 0,
+            conditionValueInput: NONE_VAR,
+            expression: '',
+            tokens: [],
+            insertContext: null,
+            pendingInsertIndex: null,
+            dragTokenIndex: null,
+            enumValue: definition.options?.[0] || 'square',
+            toggle: null,
+            card: null,
+            conditionRow: null,
+            syncConditionUi: null,
+            tokenEditor: null,
+            onExpressionChanged: null,
+            enumSelect: null,
+            actionSelect: null,
+            duplicateBtn: null,
+            removeBtn: null,
+            collapseBtn: null,
+        }
+    }
+
+    function resetRowState(rowState) {
+        rowState.enabled = false
+        rowState.collapsed = false
+        rowState.conditionEnabled = false
+        rowState.conditionOperator = 'always'
+        rowState.conditionDetail = NONE_VAR
+        rowState.conditionOverall = NONE_VAR
+        rowState.conditionValue = 0
+        rowState.conditionValueInput = NONE_VAR
+        rowState.expression = ''
+        rowState.tokens = []
+        rowState.insertContext = null
+        rowState.pendingInsertIndex = null
+        rowState.enumValue = rowState.definition.options?.[0] || 'square'
     }
 
     function normalizeConditionSignature(rowState) {
@@ -1940,13 +1990,9 @@ function buildRulesMenu(body, syncRegistry) {
                 continue
             }
             seen.set(signature, rowState)
-            if (Array.isArray(rowState.duplicateIds) && rowState.duplicateIds.length > 0) {
-                conflictIds.add(rowState.instanceId)
-            }
         }
         for (const rowState of orderedRows) {
             rowState.card?.classList.toggle('is-danger', conflictIds.has(rowState.instanceId))
-            if (typeof rowState.renderDuplicateCards === 'function') rowState.renderDuplicateCards()
         }
     }
 
@@ -1957,77 +2003,11 @@ function buildRulesMenu(body, syncRegistry) {
         const activeSection = isSectionEnabled(row.definition.section)
         row.card.classList.toggle('is-disabled', !row.enabled || !activeSection)
         row.card.classList.toggle('is-collapsed', !!row.collapsed)
-        const duplicateCount = Array.isArray(row.duplicateIds) ? row.duplicateIds.length : 0
-        if (row.removeBtn) row.removeBtn.style.display = duplicateCount > 0 ? '' : 'none'
-        if (row.duplicateBtn) row.duplicateBtn.title = duplicateCount > 0 ? `Duplicate rule (${duplicateCount} duplicate${duplicateCount > 1 ? 's' : ''})` : 'Duplicate rule'
+        if (row.removeBtn) row.removeBtn.style.display = row.isDuplicate ? '' : 'none'
         if (row.collapseBtn) row.collapseBtn.textContent = row.collapsed ? '▸' : '▾'
-        if (typeof row.renderDuplicateCards === 'function') row.renderDuplicateCards()
     }
 
-    function buildDuplicateCard(rowState, duplicateId, index) {
-        const card = el('article', 'cp-rule-card cp-rule-card--duplicate')
-        card.dataset.duplicateId = duplicateId
-        const header = el('div', 'cp-rule-card-header')
-        const title = el('div', 'cp-rule-card-title', { text: `${rowState.definition.label} (Duplicate ${index + 1})` })
-        const tools = el('div', 'cp-rule-card-tools')
-        const duplicateBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-duplicate', {
-            type: 'button',
-            title: 'Duplicate rule',
-            'aria-label': 'Duplicate rule',
-        })
-        duplicateBtn.innerHTML = BUTTON_ICON_MAP.duplicate
-        const removeBtn = el('button', 'cp-btn cp-btn-icon cp-btn-danger cp-rule-card-remove', {
-            type: 'button',
-            title: 'Remove duplicate rule',
-            'aria-label': 'Remove duplicate rule',
-        })
-        removeBtn.innerHTML = BUTTON_ICON_MAP.remove
-        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', {
-            type: 'button',
-            title: 'Collapse rule',
-            'aria-label': 'Collapse rule',
-            text: rowState.collapsed ? '▸' : '▾',
-        })
-        tools.append(duplicateBtn, removeBtn, collapseBtn)
-        header.append(title, tools)
-        card.appendChild(header)
-
-        if (rowState.card.classList.contains('is-danger')) card.classList.add('is-danger')
-        if (rowState.collapsed || !rowState.enabled) card.classList.add('is-collapsed')
-
-        duplicateBtn.addEventListener('click', () => {
-            rowState.duplicateIds.push(createInstanceId(rowState.definition, true))
-            refreshRowCardState(rowState)
-            commitRuleBlocks()
-        })
-
-        removeBtn.addEventListener('click', () => {
-            const idx = rowState.duplicateIds.indexOf(duplicateId)
-            if (idx < 0) return
-            rowState.duplicateIds.splice(idx, 1)
-            refreshRowCardState(rowState)
-            commitRuleBlocks()
-        })
-
-        collapseBtn.addEventListener('click', () => {
-            rowState.collapsed = !rowState.collapsed
-            refreshRowCardState(rowState)
-        })
-
-        return card
-    }
-
-    function renderDuplicateCards(rowState) {
-        const host = rowState?.duplicateContainer
-        if (!host) return
-        host.innerHTML = ''
-        const ids = Array.isArray(rowState.duplicateIds) ? rowState.duplicateIds : []
-        for (let i = 0; i < ids.length; i++) {
-            host.appendChild(buildDuplicateCard(rowState, ids[i], i))
-        }
-    }
-
-    function syncColorMode(target, changedOutput = '') {
+    function syncColorMode(target, changedOutput = '', changedRow = null) {
         const byOutput = (outputId) => orderedRows.filter((row) => row.definition.target === target && row.definition.output === outputId)
         const rgbRows = [
             ...byOutput('red'),
@@ -2039,7 +2019,7 @@ function buildRulesMenu(body, syncRegistry) {
         if (!hueRow || rgbRows.length === 0) return
 
         if (changedOutput === 'red' || changedOutput === 'green' || changedOutput === 'blue') {
-            const changed = rowsByKey.get(rowKey(target, changedOutput))
+            const changed = changedRow || byOutput(changedOutput)[0]
             if (changed) {
                 for (const row of rgbRows) row.enabled = !!changed.enabled
                 if (changed.enabled && String(changed.expression || '').trim()) hueRow.enabled = false
@@ -2133,21 +2113,6 @@ function buildRulesMenu(body, syncRegistry) {
                 actions: [action],
                 order: i,
             })
-
-            const duplicates = Array.isArray(rowState.duplicateIds) ? rowState.duplicateIds : []
-            for (const duplicateId of duplicates) {
-                nextBlocks.push({
-                    id: duplicateId,
-                    group: `${rowState.definition.section}/${rowState.definition.subgroup}`,
-                    subgroup: '',
-                    enabled: !!rowState.enabled,
-                    sectionDisabled: !isSectionEnabled(rowState.definition.section),
-                    target: rowState.definition.target,
-                    condition: buildCondition(rowState),
-                    actions: [action],
-                    order: i,
-                })
-            }
         }
 
         // Local edits already updated rowState in-place; skip one immediate
@@ -2159,21 +2124,20 @@ function buildRulesMenu(body, syncRegistry) {
     function applyRowsFromRuleBlocks(blocks) {
         syncingFromParamStore = true
         try {
+            for (const rowState of [...orderedRows]) {
+                if (!rowState.isDuplicate) continue
+                rowState.card?.remove()
+                const idx = orderedRows.indexOf(rowState)
+                if (idx >= 0) orderedRows.splice(idx, 1)
+                const sectionRowsList = sectionRows.get(rowState.definition.section)
+                if (sectionRowsList) {
+                    const rowIdx = sectionRowsList.indexOf(rowState)
+                    if (rowIdx >= 0) sectionRowsList.splice(rowIdx, 1)
+                }
+            }
+
             for (const rowState of orderedRows) {
-                rowState.enabled = false
-                rowState.collapsed = false
-                rowState.duplicateIds = []
-                rowState.conditionEnabled = false
-                rowState.conditionOperator = 'always'
-                rowState.conditionDetail = NONE_VAR
-                rowState.conditionOverall = NONE_VAR
-                rowState.conditionValue = 0
-                rowState.conditionValueInput = NONE_VAR
-                rowState.expression = ''
-                rowState.tokens = []
-                rowState.insertContext = null
-                rowState.pendingInsertIndex = null
-                rowState.enumValue = rowState.definition.options?.[0] || 'square'
+                resetRowState(rowState)
             }
 
             sectionEnabledState.clear()
@@ -2181,21 +2145,26 @@ function buildRulesMenu(body, syncRegistry) {
                 if (!sectionEnabledState.has(def.section)) sectionEnabledState.set(def.section, true)
             }
 
-            const safeBlocks = Array.isArray(blocks) ? blocks : []
+            const safeBlocks = Array.isArray(blocks) ? [...blocks] : []
+            safeBlocks.sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0))
             const seenKeyCount = new Map()
             for (const rule of safeBlocks) {
                 const target = String(rule?.target || '')
                 const action = Array.isArray(rule?.actions) ? rule.actions[0] : null
                 const output = String(action?.output || '')
                 const key = rowKey(target, output)
-                const rowState = rowsByKey.get(key)
-                if (!rowState) continue
+                const baseRow = baseRowsByKey.get(key)
+                if (!baseRow) continue
 
                 const seenCount = seenKeyCount.get(key) || 0
+                let rowState = baseRow
                 if (seenCount > 0) {
-                    rowState.duplicateIds.push(String(rule?.id || createInstanceId(rowState.definition, true)))
-                    seenKeyCount.set(key, seenCount + 1)
-                    continue
+                    const id = String(rule?.id || '')
+                    const explicitDuplicate = /-dup-\d+$/i.test(id)
+                    if (!explicitDuplicate) continue
+                    rowState = createRowState(baseRow.definition, true)
+                    rowState.instanceId = id || createInstanceId(baseRow.definition, true)
+                    attachRowCard(rowState, baseRow.card)
                 }
                 seenKeyCount.set(key, 1)
 
@@ -2263,94 +2232,28 @@ function buildRulesMenu(body, syncRegistry) {
     let currentSectionBody = null
     const sectionCollapseState = new Map()
 
-    for (const definition of FIXED_RULE_ROWS) {
-        if (definition.section !== currentSection) {
-            currentSection = definition.section
-            const sectionName = currentSection
-            currentSubgroup = ''
-            const section = el('section', 'cp-rule-section')
-            const sectionHeader = el('div', 'cp-rule-section-header')
-            const titleBtn = el('button', 'cp-rule-section-title cp-rule-section-toggle', {
-                type: 'button',
-                text: sectionName,
-                'aria-expanded': 'true',
-            })
-            const sectionEnable = el('input', 'cp-input-toggle cp-rule-section-enable', { type: 'checkbox' })
-            sectionEnable.checked = true
-            const sectionBody = el('div', 'cp-rule-section-body')
+    function cloneTokens(tokens) {
+        return (Array.isArray(tokens) ? tokens : []).map((token) => normalizeToken(token)).filter(Boolean)
+    }
 
-            sectionToggleByName.set(sectionName, sectionEnable)
-            sectionByName.set(sectionName, section)
-            sectionRows.set(sectionName, [])
+    function attachRowCard(rowState, insertAfterCard = null) {
+        const definition = rowState.definition
+        const sectionBody = sectionBodyByName.get(definition.section)
+        if (!sectionBody) return
 
-            titleBtn.addEventListener('click', () => {
-                const expanded = !(sectionCollapseState.get(sectionName) === false)
-                const nextExpanded = !expanded
-                sectionCollapseState.set(sectionName, nextExpanded)
-                section.classList.toggle('is-collapsed', !nextExpanded)
-                titleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false')
-            })
-
-            sectionEnable.addEventListener('change', () => {
-                sectionEnabledState.set(sectionName, !!sectionEnable.checked)
-                section.classList.toggle('is-section-disabled', !sectionEnable.checked)
-                const rows = sectionRows.get(sectionName) || []
-                for (const row of rows) refreshRowCardState(row)
-                commitRuleBlocks()
-            })
-
-            sectionHeader.append(titleBtn, sectionEnable)
-            section.append(sectionHeader, sectionBody)
-            wrapper.appendChild(section)
-            currentSectionBody = sectionBody
-        }
-
-        if (definition.subgroup !== currentSubgroup) {
-            currentSubgroup = definition.subgroup
-            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
-        }
-
-        const rowState = {
-            definition,
-            instanceId: createInstanceId(definition, false),
-            isDuplicate: false,
-            enabled: false,
-            collapsed: false,
-            duplicateIds: [],
-            conditionEnabled: false,
-            conditionOperator: 'always',
-            conditionDetail: NONE_VAR,
-            conditionOverall: NONE_VAR,
-            conditionValue: 0,
-            conditionValueInput: NONE_VAR,
-            expression: '',
-            tokens: [],
-            insertContext: null,
-            pendingInsertIndex: null,
-            dragTokenIndex: null,
-            enumValue: definition.options?.[0] || 'square',
-            toggle: null,
-            card: null,
-            conditionRow: null,
-            syncConditionUi: null,
-            tokenEditor: null,
-            onExpressionChanged: null,
-            enumSelect: null,
-            actionSelect: null,
-        }
-
-        const card = el('article', 'cp-rule-card')
+        const card = el('article', `cp-rule-card${rowState.isDuplicate ? ' cp-rule-card--duplicate' : ''}`)
         const header = el('div', 'cp-rule-card-header')
         const headerTools = el('div', 'cp-rule-card-tools')
         const duplicateBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-duplicate', { type: 'button', title: 'Duplicate rule', 'aria-label': 'Duplicate rule' })
         duplicateBtn.innerHTML = BUTTON_ICON_MAP.duplicate
         const removeBtn = el('button', 'cp-btn cp-btn-icon cp-btn-danger cp-rule-card-remove', { type: 'button', title: 'Remove duplicate rule', 'aria-label': 'Remove duplicate rule' })
         removeBtn.innerHTML = BUTTON_ICON_MAP.remove
-        removeBtn.style.display = 'none'
-        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule', text: '▾' })
+        removeBtn.style.display = rowState.isDuplicate ? '' : 'none'
+        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule', text: rowState.collapsed ? '▸' : '▾' })
         headerTools.append(duplicateBtn, removeBtn, collapseBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-        const title = el('div', 'cp-rule-card-title', { text: definition.label })
+        const titleSuffix = rowState.isDuplicate ? ' (Duplicate)' : ''
+        const title = el('div', 'cp-rule-card-title', { text: `${definition.label}${titleSuffix}` })
         header.append(toggle, title, headerTools)
 
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
@@ -2399,10 +2302,10 @@ function buildRulesMenu(body, syncRegistry) {
                 rowState.expression = compileTokens(rowState.tokens)
 
                 if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
-                    syncColorMode(definition.target, definition.output)
+                    syncColorMode(definition.target, definition.output, rowState)
                 }
                 if (definition.output === 'hue') {
-                    syncColorMode(definition.target, 'hue')
+                    syncColorMode(definition.target, 'hue', rowState)
                 }
 
                 if (rowState.enabled && !String(rowState.expression || '').trim()) {
@@ -2440,15 +2343,15 @@ function buildRulesMenu(body, syncRegistry) {
             })
         }
 
-        const duplicateContainer = el('div', 'cp-rule-duplicates')
         card.append(header, conditionRow, expressionRow)
-        currentSectionBody.appendChild(card)
-        currentSectionBody.appendChild(duplicateContainer)
+        if (insertAfterCard?.parentNode === sectionBody) {
+            insertAfterCard.after(card)
+        } else {
+            sectionBody.appendChild(card)
+        }
 
         rowState.toggle = toggle
         rowState.card = card
-        rowState.duplicateContainer = duplicateContainer
-        rowState.renderDuplicateCards = () => renderDuplicateCards(rowState)
         rowState.duplicateBtn = duplicateBtn
         rowState.removeBtn = removeBtn
         rowState.collapseBtn = collapseBtn
@@ -2456,7 +2359,6 @@ function buildRulesMenu(body, syncRegistry) {
         rowState.tokenEditor = tokenEditor
         rowState.enumSelect = enumSelect
         rowState.actionSelect = actionSelect
-        refreshRowCardState(rowState)
 
         rowState.syncConditionUi = () => {
             addConditionButton.style.display = rowState.conditionEnabled ? 'none' : ''
@@ -2470,21 +2372,40 @@ function buildRulesMenu(body, syncRegistry) {
         }
         rowState.syncConditionUi()
 
-        rowsByKey.set(rowKey(definition.target, definition.output), rowState)
-        orderedRows.push(rowState)
+        const orderedInsertIdx = insertAfterCard
+            ? Math.max(0, orderedRows.findIndex((entry) => entry.card === insertAfterCard) + 1)
+            : orderedRows.length
+        orderedRows.splice(orderedInsertIdx, 0, rowState)
         sectionRows.get(definition.section)?.push(rowState)
 
         duplicateBtn.addEventListener('click', () => {
-            if (!Array.isArray(rowState.duplicateIds)) rowState.duplicateIds = []
-            rowState.duplicateIds.push(createInstanceId(definition, true))
-            refreshRowCardState(rowState)
+            const duplicateState = createRowState(definition, true)
+            duplicateState.enabled = rowState.enabled
+            duplicateState.conditionEnabled = rowState.conditionEnabled
+            duplicateState.conditionOperator = rowState.conditionOperator
+            duplicateState.conditionDetail = rowState.conditionDetail
+            duplicateState.conditionOverall = rowState.conditionOverall
+            duplicateState.conditionValue = rowState.conditionValue
+            duplicateState.conditionValueInput = rowState.conditionValueInput
+            duplicateState.expression = rowState.expression
+            duplicateState.tokens = cloneTokens(rowState.tokens)
+            duplicateState.enumValue = rowState.enumValue
+            attachRowCard(duplicateState, rowState.card)
+            refreshRowCardState(duplicateState)
+            duplicateState.syncConditionUi?.()
+            if (duplicateState.enumSelect) duplicateState.enumSelect.value = duplicateState.enumValue
+            if (duplicateState.definition.type !== 'enum') renderTokenEditor(duplicateState)
             commitRuleBlocks()
         })
 
         removeBtn.addEventListener('click', () => {
-            if (!Array.isArray(rowState.duplicateIds) || rowState.duplicateIds.length === 0) return
-            rowState.duplicateIds.pop()
-            refreshRowCardState(rowState)
+            if (!rowState.isDuplicate) return
+            const idx = orderedRows.indexOf(rowState)
+            if (idx >= 0) orderedRows.splice(idx, 1)
+            const rows = sectionRows.get(definition.section) || []
+            const rowIdx = rows.indexOf(rowState)
+            if (rowIdx >= 0) rows.splice(rowIdx, 1)
+            rowState.card?.remove()
             commitRuleBlocks()
         })
 
@@ -2497,10 +2418,10 @@ function buildRulesMenu(body, syncRegistry) {
             rowState.enabled = toggle.checked
             refreshRowCardState(rowState)
             if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
-                syncColorMode(definition.target, definition.output)
+                syncColorMode(definition.target, definition.output, rowState)
             }
             if (definition.output === 'hue') {
-                syncColorMode(definition.target, 'hue')
+                syncColorMode(definition.target, 'hue', rowState)
             }
             if (!rowState.enabled) {
                 commitRuleBlocks()
@@ -2570,6 +2491,62 @@ function buildRulesMenu(body, syncRegistry) {
         if (definition.type !== 'enum') {
             renderTokenEditor(rowState)
         }
+
+        if (rowState.toggle) rowState.toggle.checked = rowState.enabled
+        refreshRowCardState(rowState)
+    }
+
+    for (const definition of FIXED_RULE_ROWS) {
+        if (definition.section !== currentSection) {
+            currentSection = definition.section
+            const sectionName = currentSection
+            currentSubgroup = ''
+            const section = el('section', 'cp-rule-section')
+            const sectionHeader = el('div', 'cp-rule-section-header')
+            const titleBtn = el('button', 'cp-rule-section-title cp-rule-section-toggle', {
+                type: 'button',
+                text: sectionName,
+                'aria-expanded': 'true',
+            })
+            const sectionEnable = el('input', 'cp-input-toggle cp-rule-section-enable', { type: 'checkbox' })
+            sectionEnable.checked = true
+            const sectionBody = el('div', 'cp-rule-section-body')
+
+            sectionToggleByName.set(sectionName, sectionEnable)
+            sectionByName.set(sectionName, section)
+            sectionBodyByName.set(sectionName, sectionBody)
+            sectionRows.set(sectionName, [])
+
+            titleBtn.addEventListener('click', () => {
+                const expanded = !(sectionCollapseState.get(sectionName) === false)
+                const nextExpanded = !expanded
+                sectionCollapseState.set(sectionName, nextExpanded)
+                section.classList.toggle('is-collapsed', !nextExpanded)
+                titleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false')
+            })
+
+            sectionEnable.addEventListener('change', () => {
+                sectionEnabledState.set(sectionName, !!sectionEnable.checked)
+                section.classList.toggle('is-section-disabled', !sectionEnable.checked)
+                const rows = sectionRows.get(sectionName) || []
+                for (const row of rows) refreshRowCardState(row)
+                commitRuleBlocks()
+            })
+
+            sectionHeader.append(titleBtn, sectionEnable)
+            section.append(sectionHeader, sectionBody)
+            wrapper.appendChild(section)
+            currentSectionBody = sectionBody
+        }
+
+        if (definition.subgroup !== currentSubgroup) {
+            currentSubgroup = definition.subgroup
+            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
+        }
+
+        const rowState = createRowState(definition, false)
+        baseRowsByKey.set(rowKey(definition.target, definition.output), rowState)
+        attachRowCard(rowState)
     }
 
     const applyRowsFromParams = () => {

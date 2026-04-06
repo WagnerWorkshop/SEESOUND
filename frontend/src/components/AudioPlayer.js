@@ -12,7 +12,7 @@
  *  • > / || Play-Pause, [] Stop, <<10 / 10>> seek
  *  • [PNG] save trigger
  *  • [REC] record canvas + audio trigger
- *  • [PAINT ALL] full-audio paint trigger
+ *  • [MUTE] monitor mute toggle
  *  • Progress bar (input[type=range], click/drag to seek)
  *  • MM:SS / MM:SS timestamp display
  *  • Collapsible panel (single left-side chevron button)
@@ -40,7 +40,9 @@ import rewindIcon from '../icons/rewind.svg?raw'
 import rewindForwardIcon from '../icons/rewind-forward.svg?raw'
 import imageIcon from '../icons/image.svg?raw'
 import recordIcon from '../icons/record.svg?raw'
-import paintIcon from '../icons/paint.svg?raw'
+import speedIcon from '../icons/speed.svg?raw'
+import muteIcon from '../icons/mute.svg?raw'
+import loudIcon from '../icons/loud.svg?raw'
 
 /** Format seconds → "M:SS" */
 function fmtTime(sec) {
@@ -155,6 +157,11 @@ export function initAudioPlayer(container) {
     })
     applyIcon(btnFwd, rewindForwardIcon, '+10 seconds')
 
+    const btnMute = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
+        id: 'btn-mute', 'aria-label': 'Mute output', disabled: 'true', title: 'Mute output'
+    })
+    applyIcon(btnMute, muteIcon, 'Mute output')
+
     const btnPng = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
         id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
     })
@@ -165,20 +172,48 @@ export function initAudioPlayer(container) {
     })
     applyIcon(btnRecord, recordIcon, 'Record video')
 
-    const btnPaintAll = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-paint-all', 'aria-label': 'Paint all', disabled: 'true', title: 'Run through full audio and stop'
-    })
-    applyIcon(btnPaintAll, paintIcon, 'Paint all')
+    const SPEED_MIN = 0.25
+    const SPEED_MAX = 4
+    const SPEED_STEP = 0.05
+    const SPEED_PRESETS = [1.0, 1.5, 2.0, 3.0]
 
     const speedWrap = el('div', 'audio-player__speed-wrap')
-    const speedInput = el('input', 'audio-player__speed-input', {
-        type: 'number', min: '0.1', max: '16', step: '0.1', value: '1', 'aria-label': 'Playback speed multiplier',
-        title: 'Playback speed multiplier (0.1 to 16)'
+    const btnSpeed = el('button', 'audio-player__btn cp-btn cp-btn-icon audio-player__speed-btn', {
+        id: 'btn-speed',
+        'aria-label': 'Playback speed',
+        title: 'Playback speed',
+        disabled: 'true',
+        type: 'button',
     })
-    const speedSuffix = el('span', 'audio-player__speed-suffix', { text: 'x' })
-    speedWrap.append(speedInput, speedSuffix)
+    applyIcon(btnSpeed, speedIcon, 'Playback speed')
 
-    transport.append(btnBack, btnPlayPause, btnStop, btnFwd, btnPng, btnRecord, btnPaintAll, speedWrap)
+    const speedPopover = el('div', 'audio-player__speed-popover', {
+        role: 'dialog',
+        'aria-label': 'Playback speed controls',
+    })
+    speedPopover.hidden = true
+    const speedSlider = el('input', 'audio-player__speed-slider cp-input-range', {
+        type: 'range',
+        min: String(SPEED_MIN),
+        max: String(SPEED_MAX),
+        step: String(SPEED_STEP),
+        value: '1',
+        'aria-label': 'Playback speed multiplier',
+    })
+    const speedValue = el('div', 'audio-player__speed-value', { text: '1.00x' })
+    const speedPresets = el('div', 'audio-player__speed-presets')
+    const speedPresetButtons = SPEED_PRESETS.map((value) => {
+        const btn = el('button', 'cp-btn audio-player__speed-preset', {
+            type: 'button',
+            text: `${value.toFixed(1)}x`,
+        })
+        speedPresets.appendChild(btn)
+        return { value, btn }
+    })
+    speedPopover.append(speedSlider, speedValue, speedPresets)
+    speedWrap.append(btnSpeed, speedPopover)
+
+    transport.append(btnBack, btnPlayPause, btnStop, btnFwd, btnMute, btnPng, btnRecord, speedWrap)
 
     // Progress row
     const progressRow = el('div', 'audio-player__progress-row')
@@ -214,8 +249,10 @@ export function initAudioPlayer(container) {
         applyIcon(btnRecord, running ? stopIcon : recordIcon, running ? 'Stop recording' : 'Record video')
     }
 
-    function setPaintButtonVisual() {
-        applyIcon(btnPaintAll, paintIcon, 'Paint all')
+    function setMuteButtonVisual(muted) {
+        applyIcon(btnMute, muted ? loudIcon : muteIcon, muted ? 'Unmute output' : 'Mute output')
+        btnMute.classList.toggle('audio-player__btn--active', !!muted)
+        btnMute.title = muted ? 'Unmute output' : 'Mute output'
     }
 
     function _setBusy(busy, text = '') {
@@ -224,17 +261,25 @@ export function initAudioPlayer(container) {
         btnStop.disabled = busy || !audioEl.src
         btnBack.disabled = busy || !audioEl.src
         btnFwd.disabled = busy || !audioEl.src
+        btnMute.disabled = busy || !audioEl.src
         btnRecord.disabled = busy || !audioEl.src
-        btnPaintAll.disabled = busy || !audioEl.src
-        speedInput.disabled = busy || !audioEl.src
+        btnSpeed.disabled = busy || !audioEl.src
+        speedSlider.disabled = busy || !audioEl.src
+        for (const entry of speedPresetButtons) entry.btn.disabled = busy || !audioEl.src
+        if (busy || !audioEl.src) speedPopover.hidden = true
         if (busy && text) fileName.textContent = text
     }
 
     function _applyPlaybackRate(raw) {
-        const next = Math.max(0.1, Math.min(16, Number(raw)))
+        const next = Math.max(SPEED_MIN, Math.min(SPEED_MAX, Number(raw)))
         if (!Number.isFinite(next)) return
         audioEl.playbackRate = next
-        speedInput.value = String(Number(next.toFixed(2)))
+        const formatted = Number(next.toFixed(2))
+        speedSlider.value = String(formatted)
+        speedValue.textContent = `${formatted.toFixed(2)}x`
+        for (const entry of speedPresetButtons) {
+            entry.btn.classList.toggle('is-active', Math.abs(formatted - entry.value) < 0.001)
+        }
         container.dispatchEvent(new CustomEvent('player:playbackrate', {
             detail: { rate: next }, bubbles: true,
         }))
@@ -264,9 +309,11 @@ export function initAudioPlayer(container) {
         btnStop.disabled = false
         btnBack.disabled = false
         btnFwd.disabled = false
+        btnMute.disabled = false
         btnRecord.disabled = false
-        btnPaintAll.disabled = false
-        speedInput.disabled = false
+        btnSpeed.disabled = false
+        speedSlider.disabled = false
+        for (const entry of speedPresetButtons) entry.btn.disabled = false
     }
 
     // ── File input handler ────────────────────────────────────────────────
@@ -352,37 +399,59 @@ export function initAudioPlayer(container) {
         }))
     })
 
-    btnPaintAll.addEventListener('click', () => {
-        if (btnPaintAll.disabled) return
-        container.dispatchEvent(new CustomEvent('player:paintall', {
-            detail: { audioEl }, bubbles: true
+    btnMute.addEventListener('click', () => {
+        if (btnMute.disabled) return
+        container.dispatchEvent(new CustomEvent('player:mute-toggle', {
+            detail: { audioEl }, bubbles: true,
         }))
     })
 
-    container.addEventListener('player:paintall-state', (e) => {
-        const running = !!e?.detail?.running
-        btnPaintAll.disabled = running || !audioEl.src
-        btnRecord.disabled = running || !audioEl.src
-        speedInput.disabled = running || !audioEl.src
-        setPaintButtonVisual()
-        btnPaintAll.classList.toggle('audio-player__btn--active', running)
+    container.addEventListener('player:mute-state', (e) => {
+        const muted = !!e?.detail?.muted
+        setMuteButtonVisual(muted)
     })
 
     container.addEventListener('player:recordvideo-state', (e) => {
         const running = !!e?.detail?.running
         setRecordButtonVisual(running)
         btnRecord.classList.toggle('audio-player__btn--active', running)
-        btnPaintAll.disabled = running || !audioEl.src
-        if (!running && !btnPaintAll.disabled && audioEl.src) btnRecord.disabled = false
-        speedInput.disabled = running || !audioEl.src
+        btnMute.disabled = running || !audioEl.src
+        if (!running && audioEl.src) btnRecord.disabled = false
+        btnSpeed.disabled = running || !audioEl.src
+        speedSlider.disabled = running || !audioEl.src
+        for (const entry of speedPresetButtons) entry.btn.disabled = running || !audioEl.src
+        if (running) speedPopover.hidden = true
     })
 
-    speedInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return
-        e.preventDefault()
-        _applyPlaybackRate(speedInput.value)
-        speedInput.blur()
+    btnSpeed.addEventListener('click', (event) => {
+        event.stopPropagation()
+        if (btnSpeed.disabled) return
+        speedPopover.hidden = !speedPopover.hidden
     })
+
+    speedSlider.addEventListener('input', () => {
+        _applyPlaybackRate(speedSlider.value)
+    })
+
+    for (const entry of speedPresetButtons) {
+        entry.btn.addEventListener('click', () => {
+            _applyPlaybackRate(entry.value)
+        })
+    }
+
+    document.addEventListener('click', (event) => {
+        if (speedPopover.hidden) return
+        const target = event.target
+        if (target instanceof Node && speedWrap.contains(target)) return
+        speedPopover.hidden = true
+    })
+
+    container.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') speedPopover.hidden = true
+    })
+
+    _applyPlaybackRate(1)
+    setMuteButtonVisual(false)
 
     // ── Seek bar (user interaction) ───────────────────────────────────────
     let _seeking = false
@@ -427,6 +496,7 @@ export function initAudioPlayer(container) {
         collapsed = !collapsed
         container.classList.toggle('audio-player--collapsed', collapsed)
         setCollapseButtonVisual(collapsed)
+        if (collapsed) speedPopover.hidden = true
     })
 
     function loadFile(file, labelText = file?.name || 'Audio loaded') {

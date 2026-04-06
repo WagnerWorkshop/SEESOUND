@@ -1030,6 +1030,7 @@ window.addEventListener('seesound:particle-size-apply-all', (e) => {
 class AudioEngine {
     constructor() {
         this.ctx = null; this.analyser = null; this.source = null
+        this.outputGain = null
         this.streamSource = null; this.streamNode = null
         this.audioEl = null; this.splitter = null
         this.analyserL = null; this.analyserR = null
@@ -1096,6 +1097,7 @@ class AudioEngine {
         this.spectralSkewness = 0
         this.chromagram = 0
         this.ctxState = 'none'
+        this.monitorMuted = false
     }
 
     _createBinAnalysisNode() {
@@ -1220,7 +1222,10 @@ class AudioEngine {
             this.analyser = this.ctx.createAnalyser()
             this.analyser.fftSize = this.FFT_SIZE
             this.analyser.smoothingTimeConstant = 0
-            this.analyser.connect(this.ctx.destination)
+            this.outputGain = this.ctx.createGain()
+            this.outputGain.gain.value = this.monitorMuted ? 0 : 1
+            this.analyser.connect(this.outputGain)
+            this.outputGain.connect(this.ctx.destination)
             this._ensureWorkletLoaded()
         }
         if (this.audioEl !== el || (!this.source && !this.streamSource)) {
@@ -1267,6 +1272,17 @@ class AudioEngine {
         }
         if (this.ctx.state === 'suspended') this.ctx.resume()
         this.ctxState = this.ctx.state
+    }
+
+    setMonitorMuted(muted) {
+        this.monitorMuted = !!muted
+        if (!this.outputGain) return
+        const next = this.monitorMuted ? 0 : 1
+        try {
+            this.outputGain.gain.setValueAtTime(next, this.ctx?.currentTime ?? 0)
+        } catch {
+            this.outputGain.gain.value = next
+        }
     }
 
     update() {
@@ -1501,7 +1517,7 @@ setCameraHudEnabled(false)
 
 let isPlaying = false
 let frameN = 0
-let paintAllRunId = 0
+let monitorMuted = false
 let _currentAudioFileName = ''
 let _mediaRecorder = null
 let _recordingStream = null
@@ -1585,14 +1601,6 @@ function _currentAudioTitle() {
         // ignore parse failures and use fallback below
     }
     return 'audio'
-}
-
-async function _audioBlobFromElement(audioEl) {
-    const src = audioEl?.src
-    if (!src) return null
-    const res = await fetch(src)
-    if (!res.ok) return null
-    return res.blob()
 }
 
 function _defaultProjectName() {
@@ -1700,9 +1708,9 @@ async function saveCanvasPng() {
     }
 }
 
-function emitPaintAllState(playerEl, running) {
-    playerEl.dispatchEvent(new CustomEvent('player:paintall-state', {
-        detail: { running }, bubbles: false,
+function emitMuteState(playerEl, muted) {
+    playerEl.dispatchEvent(new CustomEvent('player:mute-state', {
+        detail: { muted: !!muted }, bubbles: false,
     }))
 }
 
@@ -1837,168 +1845,6 @@ function stopVideoRecording(playerEl) {
     } catch {
         _mediaRecorder = null
         emitRecordState(playerEl, false)
-    }
-}
-
-async function runPaintAll(playerEl, audioEl) {
-    if (!audioEl) return
-
-    if (!(audioEl.duration > 0)) {
-        await new Promise((resolve) => {
-            if (audioEl.duration > 0) {
-                resolve()
-                return
-            }
-            const done = () => {
-                cleanup()
-                resolve()
-            }
-            const cleanup = () => {
-                audioEl.removeEventListener('loadedmetadata', done)
-                audioEl.removeEventListener('canplay', done)
-                audioEl.removeEventListener('error', done)
-            }
-            audioEl.addEventListener('loadedmetadata', done, { once: true })
-            audioEl.addEventListener('canplay', done, { once: true })
-            audioEl.addEventListener('error', done, { once: true })
-        })
-        if (!(audioEl.duration > 0)) return
-    }
-
-    const liveWasPlaying = !!(!audioEl.paused && !audioEl.ended)
-    if (liveWasPlaying) audioEl.pause()
-
-    const runId = ++paintAllRunId
-    const srcBlob = await _audioBlobFromElement(audioEl)
-    const srcUrl = srcBlob ? URL.createObjectURL(srcBlob) : (audioEl.currentSrc || audioEl.src)
-    if (!srcUrl) return
-
-    const paintAudio = new Audio()
-    paintAudio.crossOrigin = 'anonymous'
-    paintAudio.src = srcUrl
-    paintAudio.preload = 'auto'
-    paintAudio.currentTime = 0
-    paintAudio.muted = true
-    paintAudio.volume = 0
-    if (typeof paintAudio.preservesPitch === 'boolean') paintAudio.preservesPitch = false
-    paintAudio.playbackRate = 16
-    paintAudio.style.display = 'none'
-    document.body.appendChild(paintAudio)
-
-    const paintAe = new AudioEngine()
-    paintAe.setRuleInputUsage(ps.getRuleCompileState()?.requiredInputsByTarget)
-
-    emitPaintAllState(playerEl, true)
-
-    try {
-        ps.clear()
-
-        await new Promise((resolve, reject) => {
-            const done = () => {
-                cleanup()
-                resolve()
-            }
-            const fail = () => {
-                cleanup()
-                reject(new Error('Paint-all audio metadata failed to load.'))
-            }
-            const cleanup = () => {
-                paintAudio.removeEventListener('loadedmetadata', done)
-                paintAudio.removeEventListener('canplay', done)
-                paintAudio.removeEventListener('error', fail)
-            }
-            paintAudio.addEventListener('loadedmetadata', done, { once: true })
-            paintAudio.addEventListener('canplay', done, { once: true })
-            paintAudio.addEventListener('error', fail, { once: true })
-            paintAudio.load()
-        })
-
-        paintAe.init(paintAudio)
-        if (paintAe.ctx?.state === 'suspended') await paintAe.ctx.resume()
-
-        await paintAudio.play()
-
-        const startedAt = performance.now()
-        const hardTimeoutMs = 3 * 60 * 1000
-        let lastTime = -1
-        let stalledFrames = 0
-        let stallRecoveries = 0
-        while (runId === paintAllRunId && !paintAudio.ended) {
-            if ((performance.now() - startedAt) > hardTimeoutMs) {
-                console.warn('[PaintAll] Aborting due to timeout.')
-                break
-            }
-
-            await new Promise((resolve) => requestAnimationFrame(resolve))
-
-            paintAe.update()
-
-            const w = renderer.domElement.width / window.devicePixelRatio
-            const h = renderer.domElement.height / window.devicePixelRatio
-            const cameraUnits = getCameraCanvasUnits()
-            const paintParams = {
-                ...params,
-                // Paint-all must accumulate by design, regardless of current live mode.
-                persistMode: 1,
-                cameraState: {
-                    x: camera.position.x,
-                    y: camera.position.y,
-                    z: camera.position.z,
-                    zoom: camera.zoom,
-                },
-                cameraCanvasWidthUnits: cameraUnits.w,
-                cameraCanvasHeightUnits: cameraUnits.h,
-            }
-            ps.update(paintAe, paintParams, w, h)
-            applyRuleCameraOutput(ps.getCameraOutput())
-
-            const nowTime = Number(paintAudio.currentTime) || 0
-            if (nowTime > lastTime + 1e-4) {
-                lastTime = nowTime
-                stalledFrames = 0
-            } else {
-                stalledFrames++
-            }
-
-            if (paintAudio.paused && !paintAudio.ended) {
-                try { await paintAudio.play() } catch { break }
-            }
-
-            if (stalledFrames > 120) {
-                const dur = Number(paintAudio.duration) || 0
-                if (dur > 0 && nowTime >= Math.max(0, dur - 0.25)) {
-                    paintAudio.currentTime = dur
-                    break
-                }
-
-                if (dur > 0 && stallRecoveries < 12) {
-                    const step = Math.max(0.15, dur / 240)
-                    paintAudio.currentTime = Math.min(dur, nowTime + step)
-                    stallRecoveries++
-                    stalledFrames = 0
-                    continue
-                }
-
-                console.warn('[PaintAll] Aborting due to persistent playback stall.')
-                break
-            }
-        }
-    } finally {
-        paintAudio.pause()
-        paintAudio.src = ''
-        paintAudio.remove()
-        if (srcBlob) URL.revokeObjectURL(srcUrl)
-        try { paintAe.source?.disconnect() } catch { }
-        try { paintAe.streamSource?.disconnect() } catch { }
-        try { paintAe.splitter?.disconnect() } catch { }
-        try { paintAe.analyserL?.disconnect() } catch { }
-        try { paintAe.analyserR?.disconnect() } catch { }
-        try { paintAe.analyser?.disconnect() } catch { }
-        try { await paintAe.ctx?.close() } catch { }
-        emitPaintAllState(playerEl, false)
-        if (liveWasPlaying && runId === paintAllRunId) {
-            try { await audioEl.play() } catch { }
-        }
     }
 }
 
@@ -2195,22 +2041,23 @@ animate()
     audioEl.addEventListener('ended', () => { isPlaying = false })
 
     playerEl.addEventListener('player:playpause', async () => {
-        paintAllRunId++
         ae.init(audioEl)
+        ae.setMonitorMuted(monitorMuted)
         if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
     })
-    playerEl.addEventListener('player:play', () => { paintAllRunId++; isPlaying = true })
-    playerEl.addEventListener('player:pause', () => { paintAllRunId++; isPlaying = false })
-    playerEl.addEventListener('player:stop', () => { paintAllRunId++; isPlaying = false })
+    playerEl.addEventListener('player:play', () => { isPlaying = true })
+    playerEl.addEventListener('player:pause', () => { isPlaying = false })
+    playerEl.addEventListener('player:stop', () => { isPlaying = false })
     playerEl.addEventListener('player:savepng', async () => {
         await saveCanvasPng()
     })
-    playerEl.addEventListener('player:paintall', async () => {
-        try {
-            await runPaintAll(playerEl, audioEl)
-        } catch (err) {
-            console.warn('[PaintAll] failed:', err)
-            alert('Paint-all failed before completion. Check console for details.')
+    playerEl.addEventListener('player:mute-toggle', async () => {
+        monitorMuted = !monitorMuted
+        ae.setMonitorMuted(monitorMuted)
+        emitMuteState(playerEl, monitorMuted)
+        if (!audioEl.paused) {
+            ae.init(audioEl)
+            if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
         }
     })
     playerEl.addEventListener('player:recordvideo-toggle', async () => {
@@ -2229,7 +2076,7 @@ animate()
     playerEl.addEventListener('player:playbackrate', (e) => {
         const next = Number(e?.detail?.rate)
         if (!Number.isFinite(next)) return
-        audioEl.playbackRate = Math.max(0.1, Math.min(16, next))
+        audioEl.playbackRate = Math.max(0.25, Math.min(4, next))
     })
     playerEl.addEventListener('player:fileloaded', (e) => {
         const file = e?.detail?.file
@@ -2240,6 +2087,7 @@ animate()
         }
         _scheduleLocalProjectDraftSave()
     })
+    emitMuteState(playerEl, monitorMuted)
 
     let projectFileHandle = null
     let projectFileName = ''
