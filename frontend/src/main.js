@@ -1146,7 +1146,6 @@ cameraReadout.style.pointerEvents = 'none'
 cameraReadout.textContent = 'cam p(0.00,0.00,10.00) r(0.00,0.00,0.00) pts 0 fft 0 amp 0.000 sc 0.000 sf 0.000 sfl 0.000 inh 0.000 canv 0 × 0'
 
 cameraHud.append(resetCameraBtn, fitCameraBtn, clearCanvasBtn, cameraReadout)
-document.body.appendChild(cameraHud)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  ANIMATION LOOP
@@ -2000,10 +1999,7 @@ animate()
     }
 
     const _replacePresetLibrary = async (presetLibrary) => {
-        const names = await listPresets()
-        for (const name of names) {
-            await deletePreset(name)
-        }
+        // Keep factory presets visible; import project presets additively.
         await _restorePresetLibrary(presetLibrary)
     }
 

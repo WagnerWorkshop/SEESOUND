@@ -32,6 +32,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { decodeAudioFileInBrowser } from '../engine/audio/AudioImport.js'
+import audioIcon from '../icons/audio.svg?raw'
+import playIcon from '../icons/play.svg?raw'
+import pauseIcon from '../icons/pause.svg?raw'
+import stopIcon from '../icons/stop.svg?raw'
+import rewindIcon from '../icons/rewind.svg?raw'
+import rewindForwardIcon from '../icons/rewind-forward.svg?raw'
+import imageIcon from '../icons/image.svg?raw'
+import recordIcon from '../icons/record.svg?raw'
+import paintIcon from '../icons/paint.svg?raw'
 
 /** Format seconds → "M:SS" */
 function fmtTime(sec) {
@@ -51,6 +60,13 @@ function el(tag, cls, attrs = {}) {
         else e.setAttribute(k, v)
     }
     return e
+}
+
+function applyIcon(node, svgMarkup, ariaLabel) {
+    if (!node || !svgMarkup) return
+    node.innerHTML = ''
+    node.append(el('span', 'audio-player__icon', { html: svgMarkup }))
+    if (ariaLabel) node.setAttribute('aria-label', ariaLabel)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +101,23 @@ export function initAudioPlayer(container) {
     })
     collapseBtn.textContent = '«'
 
+    const appRoot = document.getElementById('app')
+
+    function setCollapseButtonVisual(isCollapsed) {
+        collapseBtn.classList.toggle('audio-player__collapse-btn--icon', isCollapsed)
+        if (isCollapsed) {
+            applyIcon(collapseBtn, audioIcon, 'Expand player')
+            collapseBtn.title = 'Expand player'
+        } else {
+            collapseBtn.textContent = '«'
+            collapseBtn.setAttribute('aria-label', 'Collapse audio player')
+            collapseBtn.title = 'Collapse player'
+        }
+        if (appRoot) appRoot.classList.toggle('audio-player-collapsed', isCollapsed)
+    }
+
+    setCollapseButtonVisual(false)
+
     // Body
     const body = el('div', 'audio-player__body')
 
@@ -95,7 +128,7 @@ export function initAudioPlayer(container) {
     const fileLabel = el('label', 'audio-player__file-label', {
         'for': 'audio-file-input', 'title': 'Open audio file'
     })
-    fileLabel.textContent = '♫'
+    applyIcon(fileLabel, audioIcon, 'Open audio file')
     const fileName = el('span', 'audio-player__file-name', { text: 'No file loaded' })
     fileRow.append(fileInput, fileLabel)
 
@@ -105,37 +138,37 @@ export function initAudioPlayer(container) {
     const btnPlayPause = el('button', 'audio-player__btn audio-player__btn--play', {
         id: 'btn-play-pause', 'aria-label': 'Play', disabled: 'true'
     })
-    btnPlayPause.textContent = '▶'
+    applyIcon(btnPlayPause, playIcon, 'Play')
 
     const btnStop = el('button', 'audio-player__btn', {
         id: 'btn-stop', 'aria-label': 'Stop', disabled: 'true', title: 'Stop (return to start)'
     })
-    btnStop.textContent = '■'
+    applyIcon(btnStop, stopIcon, 'Stop')
 
     const btnBack = el('button', 'audio-player__btn', {
         id: 'btn-back', 'aria-label': '−10 seconds', disabled: 'true', title: '−10 s'
     })
-    btnBack.textContent = '<<'
+    applyIcon(btnBack, rewindIcon, '−10 seconds')
 
     const btnFwd = el('button', 'audio-player__btn', {
         id: 'btn-fwd', 'aria-label': '+10 seconds', disabled: 'true', title: '+10 s'
     })
-    btnFwd.textContent = '>>'
+    applyIcon(btnFwd, rewindForwardIcon, '+10 seconds')
 
     const btnPng = el('button', 'audio-player__btn', {
         id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
     })
-    btnPng.textContent = '⎙'
+    applyIcon(btnPng, imageIcon, 'Save PNG')
 
     const btnRecord = el('button', 'audio-player__btn', {
         id: 'btn-record', 'aria-label': 'Record video', disabled: 'true', title: 'Record canvas and audio'
     })
-    btnRecord.textContent = '⏺'
+    applyIcon(btnRecord, recordIcon, 'Record video')
 
     const btnPaintAll = el('button', 'audio-player__btn', {
         id: 'btn-paint-all', 'aria-label': 'Paint all', disabled: 'true', title: 'Run through full audio and stop'
     })
-    btnPaintAll.textContent = '🖌'
+    applyIcon(btnPaintAll, paintIcon, 'Paint all')
 
     const speedWrap = el('div', 'audio-player__speed-wrap')
     const speedInput = el('input', 'audio-player__speed-input', {
@@ -173,6 +206,18 @@ export function initAudioPlayer(container) {
     body.append(fileRow, transport, progressRow)
     container.append(collapseBtn, body)
 
+    function setPlayButtonVisual(playing) {
+        applyIcon(btnPlayPause, playing ? pauseIcon : playIcon, playing ? 'Pause' : 'Play')
+    }
+
+    function setRecordButtonVisual(running) {
+        applyIcon(btnRecord, running ? stopIcon : recordIcon, running ? 'Stop recording' : 'Record video')
+    }
+
+    function setPaintButtonVisual() {
+        applyIcon(btnPaintAll, paintIcon, 'Paint all')
+    }
+
     function _setBusy(busy, text = '') {
         fileInput.disabled = busy
         btnPlayPause.disabled = busy || !audioEl.src
@@ -202,7 +247,7 @@ export function initAudioPlayer(container) {
         audioEl.load()
         fileName.textContent = labelText
         isPlaying = false
-        btnPlayPause.textContent = '▶'
+        setPlayButtonVisual(false)
         btnPlayPause.classList.remove('audio-player__btn--active')
         seekBar.value = '0'
         _updateSeekTrack(0)
@@ -258,21 +303,21 @@ export function initAudioPlayer(container) {
 
     audioEl.addEventListener('play', () => {
         isPlaying = true
-        btnPlayPause.textContent = '⏸︎'
+        setPlayButtonVisual(true)
         btnPlayPause.classList.add('audio-player__btn--active')
         container.dispatchEvent(new CustomEvent('player:play', { detail: { audioEl }, bubbles: true }))
     })
 
     audioEl.addEventListener('pause', () => {
         isPlaying = false
-        btnPlayPause.textContent = '▶'
+        setPlayButtonVisual(false)
         btnPlayPause.classList.remove('audio-player__btn--active')
         container.dispatchEvent(new CustomEvent('player:pause', { detail: { audioEl }, bubbles: true }))
     })
 
     audioEl.addEventListener('ended', () => {
         isPlaying = false
-        btnPlayPause.textContent = '▶'
+        setPlayButtonVisual(false)
         btnPlayPause.classList.remove('audio-player__btn--active')
     })
 
@@ -319,12 +364,13 @@ export function initAudioPlayer(container) {
         btnPaintAll.disabled = running || !audioEl.src
         btnRecord.disabled = running || !audioEl.src
         speedInput.disabled = running || !audioEl.src
-        btnPaintAll.textContent = running ? 'PAINTING...' : '🖌'
+        setPaintButtonVisual()
+        btnPaintAll.classList.toggle('audio-player__btn--active', running)
     })
 
     container.addEventListener('player:recordvideo-state', (e) => {
         const running = !!e?.detail?.running
-        btnRecord.textContent = running ? '⏹' : '⏺'
+        setRecordButtonVisual(running)
         btnRecord.classList.toggle('audio-player__btn--active', running)
         btnPaintAll.disabled = running || !audioEl.src
         if (!running && !btnPaintAll.disabled && audioEl.src) btnRecord.disabled = false
@@ -380,8 +426,7 @@ export function initAudioPlayer(container) {
     collapseBtn.addEventListener('click', () => {
         collapsed = !collapsed
         container.classList.toggle('audio-player--collapsed', collapsed)
-        collapseBtn.textContent = collapsed ? '»' : '«'
-        collapseBtn.title = collapsed ? 'Expand player' : 'Collapse player'
+        setCollapseButtonVisual(collapsed)
     })
 
     function loadFile(file, labelText = file?.name || 'Audio loaded') {
