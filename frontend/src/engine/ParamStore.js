@@ -152,7 +152,7 @@ export const PARAMS = [
         min: -120,
         max: 0,
         step: 1,
-        def: -70,
+        def: -105,
         unit: 'dBFS',
         desc: 'Normalization lower bound for per-bin volume.',
     }),

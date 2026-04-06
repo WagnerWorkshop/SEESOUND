@@ -1154,6 +1154,7 @@ class AudioEngine {
         if (this.analyser) {
             this.analyser.fftSize = this.FFT_SIZE
             this.analyser.smoothingTimeConstant = 0
+            this.analyser.minDecibels = -140
         }
 
         if (this.binAnalysisNode) {
@@ -1183,6 +1184,7 @@ class AudioEngine {
             this.analyser = this.ctx.createAnalyser()
             this.analyser.fftSize = this.FFT_SIZE
             this.analyser.smoothingTimeConstant = 0
+            this.analyser.minDecibels = -140
             this.outputGain = this.ctx.createGain()
             this.outputGain.gain.value = this.monitorMuted ? 0 : 1
             this.analyser.connect(this.outputGain)
@@ -1219,8 +1221,10 @@ class AudioEngine {
                 this.splitter = this.ctx.createChannelSplitter(2)
                 this.analyserL = this.ctx.createAnalyser()
                 this.analyserR = this.ctx.createAnalyser()
-                for (const a of [this.analyserL, this.analyserR])
+                for (const a of [this.analyserL, this.analyserR]) {
                     a.fftSize = 256
+                    a.minDecibels = -140
+                }
                 const srcNode = this.source || this.streamSource
                 srcNode?.connect(this.splitter)
                 this.splitter.connect(this.analyserL, 0)
