@@ -230,7 +230,22 @@ const pointerState = {
     pinchDistance: 0,
 }
 
-col.addEventListener('contextmenu', (e) => e.preventDefault())
+const canvasWrapper = document.getElementById('canvas-wrapper')
+const wrapperState = {
+    active: false,
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+    lastX: 0,
+    lastY: 0,
+    pinchDistance: 0
+}
+
+function updateWrapperTransform() {
+    canvasWrapper.style.transform = `translate(${wrapperState.offsetX}px, ${wrapperState.offsetY}px) scale(${wrapperState.scale})`
+}
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault())
 
 function handlePointerMove(dx, dy, button) {
     if (button === 0) {
@@ -290,6 +305,29 @@ function handleZoom(deltaY) {
 }
 
 col.addEventListener('mousedown', (e) => {
+    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    if (e.button !== 0) return
+    wrapperState.active = true
+    wrapperState.lastX = e.clientX
+    wrapperState.lastY = e.clientY
+    e.preventDefault()
+})
+
+col.addEventListener('touchstart', (e) => {
+    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    if (e.touches.length === 1) {
+        wrapperState.active = true
+        wrapperState.lastX = e.touches[0].clientX
+        wrapperState.lastY = e.touches[0].clientY
+    } else if (e.touches.length === 2) {
+        wrapperState.active = true
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        wrapperState.pinchDistance = Math.sqrt(dx * dx + dy * dy)
+    }
+}, { passive: false })
+
+canvas.addEventListener('mousedown', (e) => {
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
     pointerState.active = true
     pointerState.button = e.button
@@ -298,7 +336,7 @@ col.addEventListener('mousedown', (e) => {
     e.preventDefault()
 })
 
-col.addEventListener('touchstart', (e) => {
+canvas.addEventListener('touchstart', (e) => {
     if (e.touches.length === 1) {
         pointerState.active = true
         pointerState.button = 0 // Orbit
@@ -320,12 +358,14 @@ col.addEventListener('touchstart', (e) => {
 window.addEventListener('mouseup', () => {
     pointerState.active = false
     pointerState.button = -1
+    wrapperState.active = false
 })
 
 window.addEventListener('touchend', (e) => {
     if (e.touches.length === 0) {
         pointerState.active = false
         pointerState.button = -1
+        wrapperState.active = false
     } else if (e.touches.length === 1) {
         pointerState.button = 0
         pointerState.lastX = e.touches[0].clientX
@@ -334,6 +374,17 @@ window.addEventListener('touchend', (e) => {
 })
 
 window.addEventListener('mousemove', (e) => {
+    if (wrapperState.active) {
+        const dx = e.clientX - wrapperState.lastX
+        const dy = e.clientY - wrapperState.lastY
+        wrapperState.lastX = e.clientX
+        wrapperState.lastY = e.clientY
+        wrapperState.offsetX += dx
+        wrapperState.offsetY += dy
+        updateWrapperTransform()
+        return
+    }
+
     if (!pointerState.active) return
     const dx = e.clientX - pointerState.lastX
     const dy = e.clientY - pointerState.lastY
@@ -343,6 +394,32 @@ window.addEventListener('mousemove', (e) => {
 })
 
 window.addEventListener('touchmove', (e) => {
+    if (wrapperState.active) {
+        if (e.cancelable) e.preventDefault()
+        
+        if (e.touches.length === 1) {
+            const dx = e.touches[0].clientX - wrapperState.lastX
+            const dy = e.touches[0].clientY - wrapperState.lastY
+            wrapperState.lastX = e.touches[0].clientX
+            wrapperState.lastY = e.touches[0].clientY
+            wrapperState.offsetX += dx
+            wrapperState.offsetY += dy
+            updateWrapperTransform()
+        } else if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX
+            const dy = e.touches[0].clientY - e.touches[1].clientY
+            const distance = Math.sqrt(dx * dx + dy * dy)
+            
+            if (wrapperState.pinchDistance > 0) {
+                const scaleDiff = (distance - wrapperState.pinchDistance) * 0.005
+                wrapperState.scale = Math.max(0.1, Math.min(10, wrapperState.scale + scaleDiff))
+                updateWrapperTransform()
+            }
+            wrapperState.pinchDistance = distance
+        }
+        return
+    }
+
     if (!pointerState.active) return
     if (e.cancelable) e.preventDefault()
 
@@ -375,9 +452,18 @@ window.addEventListener('touchmove', (e) => {
     }
 }, { passive: false })
 
-col.addEventListener('wheel', (e) => {
+canvas.addEventListener('wheel', (e) => {
     e.preventDefault()
     handleZoom(e.deltaY)
+}, { passive: false })
+
+col.addEventListener('wheel', (e) => {
+    if (e.target === canvas || canvasWrapper.contains(e.target) && e.target !== col) return
+    e.preventDefault()
+    const scaleSpeed = 0.001
+    const delta = -e.deltaY * scaleSpeed
+    wrapperState.scale = Math.max(0.05, Math.min(20, wrapperState.scale + delta))
+    updateWrapperTransform()
 }, { passive: false })
 
 function applyRuleCameraOutput(output) {
