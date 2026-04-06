@@ -227,39 +227,20 @@ const pointerState = {
     button: -1,
     lastX: 0,
     lastY: 0,
+    pinchDistance: 0,
 }
 
-canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+col.addEventListener('contextmenu', (e) => e.preventDefault())
 
-canvas.addEventListener('mousedown', (e) => {
-    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
-    pointerState.active = true
-    pointerState.button = e.button
-    pointerState.lastX = e.clientX
-    pointerState.lastY = e.clientY
-    e.preventDefault()
-})
-
-window.addEventListener('mouseup', () => {
-    pointerState.active = false
-    pointerState.button = -1
-})
-
-window.addEventListener('mousemove', (e) => {
-    if (!pointerState.active) return
-    const dx = e.clientX - pointerState.lastX
-    const dy = e.clientY - pointerState.lastY
-    pointerState.lastX = e.clientX
-    pointerState.lastY = e.clientY
-
-    if (pointerState.button === 0) {
+function handlePointerMove(dx, dy, button) {
+    if (button === 0) {
         orbitState.azimuth -= dx * 0.006
         orbitState.elevation = Math.max(
             -Math.PI * 0.49,
             Math.min(Math.PI * 0.49, orbitState.elevation - dy * 0.005),
         )
         applyOrbitToCamera()
-    } else if (pointerState.button === 1) {
+    } else if (button === 1) {
         const viewH = Math.max(1, renderer.domElement.clientHeight || col.clientHeight || window.innerHeight)
         const right = new THREE.Vector3()
         const up = new THREE.Vector3()
@@ -285,28 +266,118 @@ window.addEventListener('mousemove', (e) => {
         camera.position.add(delta)
         orbitTarget.add(delta)
         syncOrbitFromCamera()
-    } else if (pointerState.button === 2) {
+    } else if (button === 2) {
         const yaw = -dx * 0.004
         const pitch = -dy * 0.004
         camera.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), yaw)
         camera.rotateX(pitch)
     }
-})
+}
 
-canvas.addEventListener('wheel', (e) => {
-    e.preventDefault()
+function handleZoom(deltaY) {
     if (camera.isPerspectiveCamera) {
         const dir = new THREE.Vector3()
         camera.getWorldDirection(dir)
         const speed = Math.max(2, orbitState.radius * 0.08)
-        const step = (e.deltaY > 0 ? 1 : -1) * speed
+        const step = (deltaY > 0 ? 1 : -1) * speed
         camera.position.addScaledVector(dir, step)
         syncOrbitFromCamera()
     } else {
-        const factor = e.deltaY > 0 ? 0.92 : 1.08
+        const factor = deltaY > 0 ? 0.92 : 1.08
         camera.zoom = Math.max(0.05, Math.min(64, camera.zoom * factor))
         camera.updateProjectionMatrix()
     }
+}
+
+col.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
+    pointerState.active = true
+    pointerState.button = e.button
+    pointerState.lastX = e.clientX
+    pointerState.lastY = e.clientY
+    e.preventDefault()
+})
+
+col.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+        pointerState.active = true
+        pointerState.button = 0 // Orbit
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+    } else if (e.touches.length === 2) {
+        pointerState.active = true
+        pointerState.button = 1 // Pan + Zoom
+        pointerState.lastX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        pointerState.lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        pointerState.pinchDistance = Math.sqrt(dx * dx + dy * dy)
+    }
+    if (e.cancelable) e.preventDefault()
+}, { passive: false })
+
+window.addEventListener('mouseup', () => {
+    pointerState.active = false
+    pointerState.button = -1
+})
+
+window.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+        pointerState.active = false
+        pointerState.button = -1
+    } else if (e.touches.length === 1) {
+        pointerState.button = 0
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+    }
+})
+
+window.addEventListener('mousemove', (e) => {
+    if (!pointerState.active) return
+    const dx = e.clientX - pointerState.lastX
+    const dy = e.clientY - pointerState.lastY
+    pointerState.lastX = e.clientX
+    pointerState.lastY = e.clientY
+    handlePointerMove(dx, dy, pointerState.button)
+})
+
+window.addEventListener('touchmove', (e) => {
+    if (!pointerState.active) return
+    if (e.cancelable) e.preventDefault()
+
+    if (e.touches.length === 1 && pointerState.button === 0) {
+        const dx = e.touches[0].clientX - pointerState.lastX
+        const dy = e.touches[0].clientY - pointerState.lastY
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+        handlePointerMove(dx, dy, 0)
+    } else if (e.touches.length === 2 && pointerState.button === 1) {
+        const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+
+        const dxPinch = e.touches[0].clientX - e.touches[1].clientX
+        const dyPinch = e.touches[0].clientY - e.touches[1].clientY
+        const currentPinch = Math.sqrt(dxPinch * dxPinch + dyPinch * dyPinch)
+
+        const dxPan = currentX - pointerState.lastX
+        const dyPan = currentY - pointerState.lastY
+        handlePointerMove(dxPan, dyPan, 1)
+
+        const pinchDelta = pointerState.pinchDistance - currentPinch
+        if (Math.abs(pinchDelta) > 1) {
+            handleZoom(pinchDelta * 0.75) // Apply zoom step mapped from pinch
+            pointerState.pinchDistance = currentPinch
+        }
+
+        pointerState.lastX = currentX
+        pointerState.lastY = currentY
+    }
+}, { passive: false })
+
+col.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    handleZoom(e.deltaY)
 }, { passive: false })
 
 function applyRuleCameraOutput(output) {
