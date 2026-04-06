@@ -17,6 +17,17 @@ Current product direction:
 - Presets and projects are handled locally in-browser.
 - Backend remains available for legacy workflows, migration, and offline preset corpus authoring.
 
+Current UX/runtime status (April 2026):
+
+- Post-processing is bloom-only. Bokeh has been removed from UI, params, and runtime.
+- Audio transport now uses play/pause/stop, seek +/-10s, mute toggle, and a speed popover (0.25x-4.0x slider with quick presets).
+- Paint-all has been removed from UI and runtime.
+- Rule duplication now creates independent rule cards (editable conditions/expressions, independent collapse state).
+- Rule-card contradiction highlighting is active, while runtime execution resolves conflicts as first-rule-wins.
+- Line rules use midpoint + length + axis direction semantics; default line spawning no longer silently fails.
+- Canvas width/height aliases used by rules are pixel-based (`canvasWidthPx` / `canvasHeightPx`).
+- Fit-to-canvas camera behavior is tight framing with no intentional margin.
+
 ## 2. Runtime Architecture
 
 At runtime, the app runs as a single orchestrated loop in frontend/src/main.js.
@@ -40,7 +51,7 @@ High-level modules:
 - frontend/src/engine/ControlPanel.js: control panel and rule-builder UI.
 - frontend/src/engine/rules/RuleCompiler.js: compiles rule blocks into executable functions.
 - frontend/src/engine/rules/RuleDictionary.js: schema and allowed inputs/outputs/operators.
-- frontend/src/components/AudioPlayer.js: bottom transport and export controls.
+- frontend/src/components/AudioPlayer.js: bottom transport and export controls (mute + speed popover).
 - frontend/src/engine/project/ProjectIO.js: project payload build/parse/download utilities.
 
 ## 3. Data Model
@@ -150,6 +161,18 @@ Key project/preset events:
 - seesound:project-autosaved
 - seesound:project-loaded
 
+Player module events used between `AudioPlayer` and `main`:
+
+- player:playpause
+- player:play
+- player:pause
+- player:stop
+- player:playbackrate
+- player:mute-toggle
+- player:mute-state
+- player:recordvideo-toggle
+- player:recordvideo-state
+
 When extending UI:
 
 - Reuse existing event names where possible.
@@ -243,12 +266,18 @@ Backend folders of interest:
 Minimum smoke tests before merge:
 
 1. Launch app and load an audio file.
-2. Verify play/pause/stop and paint-all paths.
+2. Verify play/pause/stop, mute toggle, speed popover slider, and speed presets.
 3. Change key params and observe live render updates.
 4. Save preset, reload preset, verify parity.
 5. Save project, modify state, reload project, verify full restoration.
 6. Attach file handle and verify autosave triggers after edits.
 7. Export PNG and verify file output.
+
+Post-processing checks:
+
+1. Enable post-processing and bloom; confirm bloom is applied.
+2. Disable post-processing; confirm bloom is not applied.
+3. Save preset with post-processing off, reload preset, confirm post-processing and bloom checkboxes reflect saved state.
 
 Rule engine checks:
 
@@ -309,7 +338,7 @@ Potential next milestones:
 1. Add automated unit tests for rule compilation and project payload migration.
 2. Add end-to-end browser tests for project save/load/autosave behavior.
 3. Separate render pipeline stages into testable micro-modules.
-4. Add optional worker/off-main-thread processing for heavy paint-all flows.
+4. Add optional worker/off-main-thread processing for heavy analysis/rule-evaluation flows.
 5. Introduce explicit schema migration registry for project payload versions.
 
 ## 15. Quick Start for New Developers

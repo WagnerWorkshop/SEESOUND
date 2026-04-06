@@ -472,30 +472,6 @@ export const PARAMS = [
         canDisable: false,
     },
     {
-        key: 'bokehEnabled', group: 'mixing', label: 'Bokeh Enabled',
-        min: 0, max: 1, step: 1, default: 1, unit: '',
-        desc: 'Enable Bokeh depth-of-field pass.',
-        isToggle: true, toggleLabels: ['Off', 'On'],
-    },
-    {
-        key: 'bokehFocus', group: 'mixing', label: 'Bokeh Focus',
-        min: 1, max: 5000, step: 1, default: 380, unit: 'u',
-        desc: 'Bokeh focus distance.',
-        canDisable: false,
-    },
-    {
-        key: 'bokehAperture', group: 'mixing', label: 'Bokeh Aperture',
-        min: 0, max: 0.001, step: 0.00001, default: 0.00012, unit: '',
-        desc: 'Bokeh aperture value.',
-        canDisable: false,
-    },
-    {
-        key: 'bokehMaxBlur', group: 'mixing', label: 'Bokeh Max Blur',
-        min: 0, max: 0.1, step: 0.0005, default: 0.01, unit: '',
-        desc: 'Maximum blur amount for bokeh pass.',
-        canDisable: false,
-    },
-    {
         key: 'persistMode', group: 'mixing', label: 'Persistence',
         min: 0, max: 1, step: 1, default: 0, unit: '',
         desc: 'Momentary: canvas fades each frame. Painting: marks accumulate.',

@@ -18,7 +18,6 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
-import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js'
 import {
     params,
     set,
@@ -122,15 +121,9 @@ const bloomPass = new UnrealBloomPass(
     Number(params.bloomRadius ?? 0.7),
     Number(params.bloomThreshold ?? 0.18),
 )
-const bokehPass = new BokehPass(scene, camera, {
-    focus: Number(params.bokehFocus ?? 380),
-    aperture: Number(params.bokehAperture ?? 0.00012),
-    maxblur: Number(params.bokehMaxBlur ?? 0.01),
-})
 
 composer.addPass(renderPass)
 composer.addPass(bloomPass)
-composer.addPass(bokehPass)
 
 for (const c of [cameraOrtho, cameraPerspective]) {
     c.position.copy(DEFAULT_CAMERA_POS)
@@ -152,50 +145,25 @@ function applyProjectionFromParams() {
 
     camera = nextCamera
     renderPass.camera = camera
-    bokehPass.camera = camera
-    const wantPerspectiveDefine = camera.isPerspectiveCamera ? 1 : 0
-    if (bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA !== wantPerspectiveDefine) {
-        bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA = wantPerspectiveDefine
-        bokehPass.materialBokeh.needsUpdate = true
-    }
     syncOrbitFromCamera()
-}
-
-function _setBokehUniform(name, value) {
-    const v = Number(value)
-    if (!Number.isFinite(v)) return
-    if (bokehPass?.uniforms?.[name]) {
-        bokehPass.uniforms[name].value = v
-        return
-    }
-    if (bokehPass?.materialBokeh?.uniforms?.[name]) {
-        bokehPass.materialBokeh.uniforms[name].value = v
-    }
 }
 
 function syncPostProcessingFromParams() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
-    const bokehEnabled = Number(params.bokehEnabled ?? 1) >= 0.5
 
     bloomPass.enabled = postEnabled && bloomEnabled
-    bokehPass.enabled = postEnabled && bokehEnabled
 
     bloomPass.strength = Math.max(0, Number(params.bloomStrength ?? 1.15) || 0)
     bloomPass.radius = Math.max(0, Number(params.bloomRadius ?? 0.7) || 0)
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
-
-    _setBokehUniform('focus', Math.max(1, Number(params.bokehFocus ?? 380) || 380))
-    _setBokehUniform('aperture', Math.max(0, Number(params.bokehAperture ?? 0.00012) || 0))
-    _setBokehUniform('maxblur', Math.max(0, Number(params.bokehMaxBlur ?? 0.01) || 0))
 }
 
 function shouldUsePostProcessing() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     if (!postEnabled) return false
     const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
-    const bokehEnabled = Number(params.bokehEnabled ?? 1) >= 0.5
-    return bloomEnabled || bokehEnabled
+    return bloomEnabled
 }
 
 // Mouse camera controls:
@@ -782,13 +750,6 @@ const initH = col.clientHeight || window.innerHeight
 resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
-{
-    const wantPerspectiveDefine = camera.isPerspectiveCamera ? 1 : 0
-    if (bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA !== wantPerspectiveDefine) {
-        bokehPass.materialBokeh.defines.PERSPECTIVE_CAMERA = wantPerspectiveDefine
-        bokehPass.materialBokeh.needsUpdate = true
-    }
-}
 syncPostProcessingFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1646,6 +1607,7 @@ async function saveCanvasPng() {
         antialias: true,
         preserveDrawingBuffer: true,
     })
+    let exportComposer = null
 
     try {
         const maxTex = exportRenderer.capabilities.maxTextureSize || 8192
@@ -1680,7 +1642,23 @@ async function saveCanvasPng() {
 
         exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
         ps.setViewportHeight(exportRenderer.domElement.height)
-        exportRenderer.render(scene, exportCamera)
+        if (shouldUsePostProcessing()) {
+            const exportRenderPass = new RenderPass(scene, exportCamera)
+            const exportBloomPass = new UnrealBloomPass(
+                new THREE.Vector2(1, 1),
+                Math.max(0, Number(params.bloomStrength ?? 1.15) || 0),
+                Math.max(0, Number(params.bloomRadius ?? 0.7) || 0),
+                Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0)),
+            )
+            exportComposer = new EffectComposer(exportRenderer)
+            exportComposer.addPass(exportRenderPass)
+            exportComposer.addPass(exportBloomPass)
+            exportComposer.setPixelRatio(exportDpr)
+            exportComposer.setSize(logicalW, logicalH)
+            exportComposer.render()
+        } else {
+            exportRenderer.render(scene, exportCamera)
+        }
 
         for (const obj of hiddenForExport) obj.visible = true
 
@@ -1704,6 +1682,7 @@ async function saveCanvasPng() {
         }
     } finally {
         ps.setViewportHeight(renderer.domElement.height)
+        try { exportComposer?.dispose?.() } catch { }
         exportRenderer.dispose()
     }
 }
@@ -1769,7 +1748,9 @@ async function startVideoRecording(playerEl, audioEl) {
         return
     }
 
-    const canvasStream = canvas.captureStream(60)
+    // Capture the renderer output surface so recorded video includes post-processing passes.
+    const captureSourceCanvas = renderer?.domElement || canvas
+    const canvasStream = captureSourceCanvas.captureStream(60)
     const outputStream = new MediaStream()
     for (const track of canvasStream.getVideoTracks()) outputStream.addTrack(track)
 
@@ -2595,13 +2576,9 @@ subscribe((_, key) => {
     if (
         key === 'postProcessEnabled' ||
         key === 'bloomEnabled' ||
-        key === 'bokehEnabled' ||
         key === 'bloomStrength' ||
         key === 'bloomRadius' ||
-        key === 'bloomThreshold' ||
-        key === 'bokehFocus' ||
-        key === 'bokehAperture' ||
-        key === 'bokehMaxBlur'
+        key === 'bloomThreshold'
     ) syncPostProcessingFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()

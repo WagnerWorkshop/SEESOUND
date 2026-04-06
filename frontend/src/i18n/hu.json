@@ -1,0 +1,359 @@
+{
+    "uiText": {
+        "menu": {
+            "file": "Fájl",
+            "view": "Nézet",
+            "settings": "Beállítások",
+            "rules": "Szabályok",
+            "collapse": "Összecsukás"
+        },
+        "file": {
+            "project": "Projekt",
+            "projectNew": "Új Projekt",
+            "projectLoad": "Betöltés",
+            "projectSave": "Mentés",
+            "projectSaveAs": "Mentés Másként",
+            "presets": "Előbeállítások",
+            "presetLoad": "Betöltés",
+            "presetUpload": "Feltöltés",
+            "presetSave": "Mentés",
+            "presetSaveProject": "Mentés",
+            "presetSaveLocal": "Helyi Mentés",
+            "presetRemove": "Eltávolítás",
+            "presetSelectPlaceholder": "Előbeállítás kiválasztása",
+            "presetNamePlaceholder": "Előbeállítás neve",
+            "export": "Exportálás",
+            "exportImage": "PNG",
+            "exportImageNoBg": "Átlátszó PNG",
+            "exportVideo": "Videó",
+            "exportObj": "OBJ"
+        },
+        "view": {
+            "canvasSize": "Vászon Mérete",
+            "width": "Szélesség",
+            "height": "Magasság",
+            "canvasZoom": "Vászon Nagyítás %",
+            "backgroundColor": "Háttérszín",
+            "cameraPosition": "Kamera Pozíció",
+            "cameraTarget": "Kamera Célpont",
+            "cameraReset": "Kamera Visszaállítása",
+            "cameraFit": "Képernyőhöz",
+            "cameraClean": "Tiszta",
+            "projection": "Projekció",
+            "projectionAxo": "Axonometria",
+            "projectionPerspective": "Perspektíva",
+            "axoPreset": "Axo Előbeállítás",
+            "axoIsometric": "Izometria",
+            "axoOrthoXY": "Ortogonális XY",
+            "axoOrthoXZ": "Ortogonális XZ",
+            "axoOrthoYZ": "Ortogonális YZ",
+            "angleOfView": "Látószög",
+            "blending": "Keverés",
+            "postProcessing": "Utófeldolgozás",
+            "postProcessingEnabled": "Utófeldolgozás engedélyezése",
+            "bloomEnabled": "Ragyogás engedélyezve",
+            "bloomStrength": "Ragyogás Erőssége",
+            "bloomRadius": "Ragyogás Sugara",
+            "bloomThreshold": "Ragyogás Küszöbértéke",
+            "guides": "Segédvonalak",
+            "guideAxes": "Középponti Tengelyek",
+            "guideCoordinates": "Koordináta Segédvonalak",
+            "cameraHud": "Kamera HUD"
+        },
+        "settings": {
+            "sensitivity": "Érzékenység",
+            "audioResolution": "Hangfelbontás",
+            "particleDefaultSize": "Alapértelmezett Méret",
+            "particleCapacity": "Kapacitás",
+            "spawnRate": "Megjelenési Gyakoriság",
+            "activityInterval": "Tevékenység Intervallum",
+            "frequencyRange": "Frekvenciatartomány",
+            "volume": "Hangerő",
+            "instability": "Instabilitás",
+            "attackSharpness": "Támadás Élessége",
+            "energy": "Energia",
+            "sharpness": "Élesség",
+            "activity": "Aktivitás",
+            "noisiness": "Zajosság",
+            "sliders": "Csúszkák",
+            "processing": "Feldolgozás",
+            "system": "Rendszer",
+            "normalizationRanges": "Normalizációs Tartományok",
+            "resetDefaults": "Alapértékek Visszaállítása"
+        },
+        "rules": {
+            "title": "Szabályok",
+            "condition": "Feltétel",
+            "addCondition": "Ha",
+            "when": "Amikor",
+            "selectValue": "Érték kiválasztása",
+            "removeCondition": "Feltétel eltávolítása",
+            "always": "mindig",
+            "expression": "Kifejezés",
+            "detailVariable": "Részletes Változó",
+            "overallVariable": "Általános Változó",
+            "targetParticles": "Részecskék",
+            "targetLines": "Vonalak",
+            "targetBackground": "Háttér",
+            "targetCamera": "Kamera",
+            "undefined": "nem meghatározott",
+            "insertVariable": "Változó beszúrása...",
+            "detailVariables": "Részletes Változók",
+            "overallVariables": "Átfogó Változók",
+            "mathPlaceholder": "Írjon be matekot vagy számot",
+            "addMath": "Matek Hozzáadása",
+            "clearTokens": "Törlés",
+            "tokenEditorPlaceholder": "Kifejezés építése",
+            "insertHere": "Beszúrás",
+            "insertToken": "Jelölő beszúrása...",
+            "number": "Szám",
+            "mathActions": "Matek Műveletek",
+            "mathValue": "Érték",
+            "mathAdd": "Hozzáadás",
+            "mathSubtract": "Kivonás",
+            "mathMultiply": "Szorzás",
+            "mathDivide": "Osztás",
+            "mathParentheses": "Zárójelek"
+        }
+    },
+    "ruleVariables": [
+        {
+            "id": "binMagnitude",
+            "group": "detail",
+            "label": "Részletes Hangerő",
+            "legacyName": "binMagnitude",
+            "description": "Az aktuális sáv frekvenciánkénti hangereje."
+        },
+        {
+            "id": "binRMSEnergy",
+            "group": "detail",
+            "label": "Részletes Energia",
+            "legacyName": "binRMSEnergy",
+            "description": "Frekvenciánkénti RMS energia az aktuális sávhoz."
+        },
+        {
+            "id": "frequencyHz",
+            "group": "detail",
+            "label": "Frekvencia Hz",
+            "legacyName": "frequencyHz",
+            "description": "Hz-ben mért fizikai frekvencia."
+        },
+        {
+            "id": "normFreq",
+            "group": "detail",
+            "label": "Normalizált Frekvencia",
+            "legacyName": "normFreq",
+            "description": "0 és 1 közötti tartományba normalizált frekvencia."
+        },
+        {
+            "id": "notePitchClass",
+            "group": "detail",
+            "label": "Zenei Hang",
+            "legacyName": "notePitchClass",
+            "description": "A magas érték magasabb hangot jelent a kromatikus skálán belül."
+        },
+        {
+            "id": "pan",
+            "group": "detail",
+            "label": "Pan",
+            "legacyName": "pan",
+            "description": "Bal-jobb sztereó érték."
+        },
+        {
+            "id": "octave",
+            "group": "detail",
+            "label": "Oktáv",
+            "legacyName": "octave",
+            "description": "A magas érték magasabb regisztert jelent."
+        },
+        {
+            "id": "binAttackTime",
+            "group": "detail",
+            "label": "Támadás Élessége",
+            "legacyName": "binAttackTime",
+            "description": "Magas érték: nagyon gyors kezdés."
+        },
+        {
+            "id": "binEnvelope",
+            "group": "detail",
+            "label": "Burkológörbe",
+            "legacyName": "binEnvelope",
+            "description": "Magas érték: a hang éppen a ciklusának leghangosabb pontján van."
+        },
+        {
+            "id": "binEnvelopeState",
+            "group": "detail",
+            "label": "Burkológörbe Állapota",
+            "legacyName": "binEnvelopeState",
+            "description": "Egy adott frekvenciasáv aktuális ADSR fázisa."
+        },
+        {
+            "id": "binFlux",
+            "group": "detail",
+            "label": "Aktivitás",
+            "legacyName": "binFlux",
+            "description": "A hang vagy tónus gyorsan változik."
+        },
+        {
+            "id": "binPhase",
+            "group": "detail",
+            "label": "Fázis",
+            "legacyName": "binPhase",
+            "description": "A hullám a ciklusának a csúcsán van."
+        },
+        {
+            "id": "binPhaseDeviation",
+            "group": "detail",
+            "label": "Instabilitás",
+            "legacyName": "binPhaseDeviation",
+            "description": "A fázis kiszámíthatatlanul tolódik."
+        },
+        {
+            "id": "amplitude",
+            "group": "overall",
+            "label": "Hangerő",
+            "legacyName": "amplitude",
+            "description": "Az aktuális keret hangereje."
+        },
+        {
+            "id": "high",
+            "group": "overall",
+            "label": "Magas Hangok",
+            "legacyName": "high",
+            "description": "A magas frekvenciatartomány hangereje."
+        },
+        {
+            "id": "mid",
+            "group": "overall",
+            "label": "Középső Hangok",
+            "legacyName": "mid",
+            "description": "A középfrekvencia-tartomány hangereje."
+        },
+        {
+            "id": "bass",
+            "group": "overall",
+            "label": "Mély Hangok",
+            "legacyName": "bass",
+            "description": "A basszus frekvenciatartomány hangereje."
+        },
+        {
+            "id": "deltaTime",
+            "group": "overall",
+            "label": "Delta Idő",
+            "legacyName": "deltaTime",
+            "description": "Eltelt idő az aktuális és az előző keret között."
+        },
+        {
+            "id": "peakFreq",
+            "group": "overall",
+            "label": "Csúcsfrekvencia",
+            "legacyName": "peakFreq",
+            "description": "Milyen magas a legangosabb észlelt frekvencia."
+        },
+        {
+            "id": "time",
+            "group": "overall",
+            "label": "Jelenlegi Idő",
+            "legacyName": "time",
+            "description": "Az audiofájl időbélyege."
+        },
+        {
+            "id": "chromagram",
+            "group": "overall",
+            "label": "Komplexitás",
+            "legacyName": "chromagram",
+            "description": "Gazdag többhangú harmonikus profil."
+        },
+        {
+            "id": "globalRmsEnergy",
+            "group": "overall",
+            "label": "Energia",
+            "legacyName": "globalRmsEnergy",
+            "description": "Az aktuális keret átlagos hangereje."
+        },
+        {
+            "id": "inharmonicity",
+            "group": "overall",
+            "label": "Disszonancia",
+            "legacyName": "inharmonicity",
+            "description": "A felhangok nincsenek összhangban az alap frekvenciával."
+        },
+        {
+            "id": "peakAmplitude",
+            "group": "overall",
+            "label": "Csúcshangerő",
+            "legacyName": "peakAmplitude",
+            "description": "A leghangosabb pont közelít a maximumhoz."
+        },
+        {
+            "id": "spectralCentroid",
+            "group": "overall",
+            "label": "Élesség",
+            "legacyName": "spectralCentroid",
+            "description": "Magas frekvenciájú domináns hang."
+        },
+        {
+            "id": "spectralFlatness",
+            "group": "overall",
+            "label": "Zajosság",
+            "legacyName": "spectralFlatness",
+            "description": "Magas érték: zajos; alacsony érték: tiszta tónus."
+        },
+        {
+            "id": "spectralFlux",
+            "group": "overall",
+            "label": "Aktivitás",
+            "legacyName": "spectralFlux",
+            "description": "A hang gyorsan változik."
+        },
+        {
+            "id": "spectralRolloff",
+            "group": "overall",
+            "label": "Fényesség",
+            "legacyName": "spectralRolloff",
+            "description": "Sok magas frekvencia van jelen."
+        },
+        {
+            "id": "spectralSkewness",
+            "group": "overall",
+            "label": "Kiegyensúlyozatlanság",
+            "legacyName": "spectralSkewness",
+            "description": "Az energia a spektrum egyik vége felé koncentrálódik."
+        },
+        {
+            "id": "spectralSpread",
+            "group": "overall",
+            "label": "Kiterjedés",
+            "legacyName": "spectralSpread",
+            "description": "A hang széles frekvenciatartományt fed le."
+        },
+        {
+            "id": "zeroCrossingRate",
+            "group": "overall",
+            "label": "Zörgés",
+            "legacyName": "zeroCrossingRate",
+            "description": "Éles, magas frekvenciájú csörgés."
+        },
+        {
+            "id": "canvasHeightPx",
+            "group": "overall",
+            "label": "Vászon Magassága",
+            "legacyName": "canvasHeightPx",
+            "description": "Vászon magassága pixelben kifejezve."
+        },
+        {
+            "id": "canvasWidthPx",
+            "group": "overall",
+            "label": "Vászon Szélessége",
+            "legacyName": "canvasWidthPx",
+            "description": "Vászon szélessége pixelben kifejezve."
+        },
+        {
+            "id": "audioLengthSec",
+            "group": "overall",
+            "label": "Hang Fájl Hossza",
+            "legacyName": "audioLengthSec",
+            "description": "Hangfájl hossza másodpercben kifejezve."
+        }
+    ]
+}

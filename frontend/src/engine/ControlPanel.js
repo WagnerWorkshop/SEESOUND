@@ -1411,14 +1411,11 @@ function buildViewMenu(body, syncRegistry) {
 
     const postEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const bloomEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
-    const bokehEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
 
     const postEnabledRow = el('label', 'cp-toggle-row')
     postEnabledRow.append(postEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.postProcessingEnabled }))
     const bloomEnabledRow = el('label', 'cp-toggle-row')
     bloomEnabledRow.append(bloomEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bloomEnabled }))
-    const bokehEnabledRow = el('label', 'cp-toggle-row')
-    bokehEnabledRow.append(bokehEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bokehEnabled }))
 
     const bloomStrengthSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 4, step: 0.01 })
     const bloomStrengthNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 4, step: 0.01 })
@@ -1456,52 +1453,12 @@ function buildViewMenu(body, syncRegistry) {
         })(),
     )
 
-    const bokehFocusSlider = el('input', 'cp-input-range', { type: 'range', min: 1, max: 5000, step: 1 })
-    const bokehFocusNumber = el('input', 'cp-input-number', { type: 'number', min: 1, max: 5000, step: 1 })
-    const bokehFocusRow = el('div', 'cp-setting-row')
-    bokehFocusRow.append(
-        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehFocus }),
-        (() => {
-            const controls = el('div', 'cp-setting-controls')
-            controls.append(bokehFocusSlider, bokehFocusNumber)
-            return controls
-        })(),
-    )
-
-    const bokehApertureSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.001, step: 0.00001 })
-    const bokehApertureNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.001, step: 0.00001 })
-    const bokehApertureRow = el('div', 'cp-setting-row')
-    bokehApertureRow.append(
-        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehAperture }),
-        (() => {
-            const controls = el('div', 'cp-setting-controls')
-            controls.append(bokehApertureSlider, bokehApertureNumber)
-            return controls
-        })(),
-    )
-
-    const bokehMaxBlurSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.1, step: 0.0005 })
-    const bokehMaxBlurNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.1, step: 0.0005 })
-    const bokehMaxBlurRow = el('div', 'cp-setting-row')
-    bokehMaxBlurRow.append(
-        el('label', 'cp-setting-label', { text: UI_TEXT.view.bokehMaxBlur }),
-        (() => {
-            const controls = el('div', 'cp-setting-controls')
-            controls.append(bokehMaxBlurSlider, bokehMaxBlurNumber)
-            return controls
-        })(),
-    )
-
     postSection.append(
         postEnabledRow,
         bloomEnabledRow,
         bloomStrengthRow,
         bloomRadiusRow,
         bloomThresholdRow,
-        bokehEnabledRow,
-        bokehFocusRow,
-        bokehApertureRow,
-        bokehMaxBlurRow,
     )
 
     const guideSection = el('section', 'cp-section')
@@ -1590,7 +1547,6 @@ function buildViewMenu(body, syncRegistry) {
 
     postEnabled.addEventListener('change', () => set('postProcessEnabled', postEnabled.checked ? 1 : 0))
     bloomEnabled.addEventListener('change', () => set('bloomEnabled', bloomEnabled.checked ? 1 : 0))
-    bokehEnabled.addEventListener('change', () => set('bokehEnabled', bokehEnabled.checked ? 1 : 0))
 
     const bindSliderAndNumber = ({ slider, number, key, min, max }) => {
         const applyFromSlider = (raw) => {
@@ -1609,9 +1565,6 @@ function buildViewMenu(body, syncRegistry) {
     bindSliderAndNumber({ slider: bloomStrengthSlider, number: bloomStrengthNumber, key: 'bloomStrength', min: 0, max: 4 })
     bindSliderAndNumber({ slider: bloomRadiusSlider, number: bloomRadiusNumber, key: 'bloomRadius', min: 0, max: 2 })
     bindSliderAndNumber({ slider: bloomThresholdSlider, number: bloomThresholdNumber, key: 'bloomThreshold', min: 0, max: 1 })
-    bindSliderAndNumber({ slider: bokehFocusSlider, number: bokehFocusNumber, key: 'bokehFocus', min: 1, max: 5000 })
-    bindSliderAndNumber({ slider: bokehApertureSlider, number: bokehApertureNumber, key: 'bokehAperture', min: 0, max: 0.001 })
-    bindSliderAndNumber({ slider: bokehMaxBlurSlider, number: bokehMaxBlurNumber, key: 'bokehMaxBlur', min: 0, max: 0.1 })
 
     const applyFovFromSlider = (value) => {
         set('cameraAngleOfView', clamp(value, 20, 120))
@@ -1693,7 +1646,6 @@ function buildViewMenu(body, syncRegistry) {
     const syncPostEnabled = () => {
         postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
-        bokehEnabled.checked = Number(params.bokehEnabled ?? 1) >= 0.5
     }
 
     const syncGuideToggles = () => {
@@ -1719,24 +1671,6 @@ function buildViewMenu(body, syncRegistry) {
         bloomThresholdNumber.value = String(bloomThreshold)
     }
 
-    const syncBokehFocus = () => {
-        const bokehFocus = Number(params.bokehFocus ?? 380)
-        bokehFocusSlider.value = String(bokehFocus)
-        bokehFocusNumber.value = String(bokehFocus)
-    }
-
-    const syncBokehAperture = () => {
-        const bokehAperture = Number(params.bokehAperture ?? 0.00012)
-        bokehApertureSlider.value = String(bokehAperture)
-        bokehApertureNumber.value = String(bokehAperture)
-    }
-
-    const syncBokehMaxBlur = () => {
-        const bokehMaxBlur = Number(params.bokehMaxBlur ?? 0.01)
-        bokehMaxBlurSlider.value = String(bokehMaxBlur)
-        bokehMaxBlurNumber.value = String(bokehMaxBlur)
-    }
-
     const syncCameraFields = () => {
         syncCameraNumbers()
     }
@@ -1747,14 +1681,11 @@ function buildViewMenu(body, syncRegistry) {
     registerSync(syncRegistry, syncProjectionControls, ['cameraProjection', 'cameraAxoPreset'])
     registerSync(syncRegistry, syncBlendMode, ['blendMode'])
     registerSync(syncRegistry, syncFov, ['cameraAngleOfView'])
-    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled', 'bokehEnabled'])
+    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled'])
     registerSync(syncRegistry, syncGuideToggles, ['originSignEnabled', 'coordinateGuidesEnabled'])
     registerSync(syncRegistry, syncBloomStrength, ['bloomStrength'])
     registerSync(syncRegistry, syncBloomRadius, ['bloomRadius'])
     registerSync(syncRegistry, syncBloomThreshold, ['bloomThreshold'])
-    registerSync(syncRegistry, syncBokehFocus, ['bokehFocus'])
-    registerSync(syncRegistry, syncBokehAperture, ['bokehAperture'])
-    registerSync(syncRegistry, syncBokehMaxBlur, ['bokehMaxBlur'])
     registerSync(syncRegistry, syncCameraFields, ['cameraPosX', 'cameraPosY', 'cameraPosZ', 'cameraTargetX', 'cameraTargetY', 'cameraTargetZ'])
 
     window.addEventListener('seesound:camera-state', (event) => {
@@ -1794,9 +1725,6 @@ function buildViewMenu(body, syncRegistry) {
     syncBloomStrength()
     syncBloomRadius()
     syncBloomThreshold()
-    syncBokehFocus()
-    syncBokehAperture()
-    syncBokehMaxBlur()
     syncCameraFields()
     cameraHudToggle.checked = false
 

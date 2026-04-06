@@ -1,0 +1,359 @@
+{
+    "uiText": {
+        "menu": {
+            "file": "Datei",
+            "view": "Ansicht",
+            "settings": "Einstellungen",
+            "rules": "Regeln",
+            "collapse": "Einklappen"
+        },
+        "file": {
+            "project": "Projekt",
+            "projectNew": "Neues Projekt",
+            "projectLoad": "Laden",
+            "projectSave": "Speichern",
+            "projectSaveAs": "Speichern Unter",
+            "presets": "Voreinstellungen",
+            "presetLoad": "Laden",
+            "presetUpload": "Hochladen",
+            "presetSave": "Speichern",
+            "presetSaveProject": "Speichern",
+            "presetSaveLocal": "Lokal Speichern",
+            "presetRemove": "Entfernen",
+            "presetSelectPlaceholder": "Voreinstellung auswählen",
+            "presetNamePlaceholder": "Voreinstellungsname",
+            "export": "Exportieren",
+            "exportImage": "PNG",
+            "exportImageNoBg": "Transparente PNG",
+            "exportVideo": "Video",
+            "exportObj": "OBJ"
+        },
+        "view": {
+            "canvasSize": "Leinwandgröße",
+            "width": "Breite",
+            "height": "Höhe",
+            "canvasZoom": "Leinwand Zoom %",
+            "backgroundColor": "Hintergrundfarbe",
+            "cameraPosition": "Kameraposition",
+            "cameraTarget": "Kameraziel",
+            "cameraReset": "Kamera Zurücksetzen",
+            "cameraFit": "Anpassen",
+            "cameraClean": "Aufräumen",
+            "projection": "Projektion",
+            "projectionAxo": "Axonometrie",
+            "projectionPerspective": "Perspektive",
+            "axoPreset": "Axo-Voreinstellung",
+            "axoIsometric": "Isometrie",
+            "axoOrthoXY": "Orthogonal XY",
+            "axoOrthoXZ": "Orthogonal XZ",
+            "axoOrthoYZ": "Orthogonal YZ",
+            "angleOfView": "Sichtwinkel",
+            "blending": "Mischen",
+            "postProcessing": "Nachbearbeitung",
+            "postProcessingEnabled": "Nachbearbeitung aktivieren",
+            "bloomEnabled": "Glühen aktiviert",
+            "bloomStrength": "Glühen-Stärke",
+            "bloomRadius": "Glühen-Radius",
+            "bloomThreshold": "Glühen-Schwellenwert",
+            "guides": "Hilfslinien",
+            "guideAxes": "Ursprungsachsen",
+            "guideCoordinates": "Koordinaten-Hilfslinien",
+            "cameraHud": "Kamera HUD"
+        },
+        "settings": {
+            "sensitivity": "Empfindlichkeit",
+            "audioResolution": "Audioauflösung",
+            "particleDefaultSize": "Standardgröße",
+            "particleCapacity": "Kapazität",
+            "spawnRate": "Spawnrate",
+            "activityInterval": "Aktivitätsintervall",
+            "frequencyRange": "Frequenzbereich",
+            "volume": "Lautstärke",
+            "instability": "Instabilität",
+            "attackSharpness": "Angriffsschärfe",
+            "energy": "Energie",
+            "sharpness": "Schärfe",
+            "activity": "Aktivität",
+            "noisiness": "Rauschen",
+            "sliders": "Schieberegler",
+            "processing": "Verarbeitung",
+            "system": "System",
+            "normalizationRanges": "Normalisierungsbereiche",
+            "resetDefaults": "Standardwerte Zurücksetzen"
+        },
+        "rules": {
+            "title": "Regeln",
+            "condition": "Bedingung",
+            "addCondition": "Wenn",
+            "when": "Sobald",
+            "selectValue": "Wert auswählen",
+            "removeCondition": "Bedingung entfernen",
+            "always": "immer",
+            "expression": "Ausdruck",
+            "detailVariable": "Detailvariable",
+            "overallVariable": "Gesamtvariable",
+            "targetParticles": "Partikel",
+            "targetLines": "Linien",
+            "targetBackground": "Hintergrund",
+            "targetCamera": "Kamera",
+            "undefined": "nicht definiert",
+            "insertVariable": "Variable einfügen...",
+            "detailVariables": "Detailvariablen",
+            "overallVariables": "Allgemeine Variablen",
+            "mathPlaceholder": "Mathe oder Zahl eingeben und hinzufügen",
+            "addMath": "Mathe hinzufügen",
+            "clearTokens": "Löschen",
+            "tokenEditorPlaceholder": "Ausdruck erstellen",
+            "insertHere": "Einfügen",
+            "insertToken": "Token einfügen...",
+            "number": "Nummer",
+            "mathActions": "Mathematische Aktionen",
+            "mathValue": "Wert",
+            "mathAdd": "Hinzufügen",
+            "mathSubtract": "Subtrahieren",
+            "mathMultiply": "Multiplizieren",
+            "mathDivide": "Dividieren",
+            "mathParentheses": "Klammern"
+        }
+    },
+    "ruleVariables": [
+        {
+            "id": "binMagnitude",
+            "group": "detail",
+            "label": "Detail-Lautstärke",
+            "legacyName": "binMagnitude",
+            "description": "Lautstärke pro Frequenz für den aktuellen Bin."
+        },
+        {
+            "id": "binRMSEnergy",
+            "group": "detail",
+            "label": "Detail-Energie",
+            "legacyName": "binRMSEnergy",
+            "description": "RMS-Energie pro Frequenz für den aktuellen Bin."
+        },
+        {
+            "id": "frequencyHz",
+            "group": "detail",
+            "label": "Frequenz Hz",
+            "legacyName": "frequencyHz",
+            "description": "Physikalische Frequenz, gemessen in Hz."
+        },
+        {
+            "id": "normFreq",
+            "group": "detail",
+            "label": "Normalisierte Frequenz",
+            "legacyName": "normFreq",
+            "description": "Auf einen Bereich von 0-1 normalisierte physikalische Frequenz."
+        },
+        {
+            "id": "notePitchClass",
+            "group": "detail",
+            "label": "Musiknote",
+            "legacyName": "notePitchClass",
+            "description": "Ein hoher Wert bedeutet eine höhere Note auf der chromatischen Tonleiter."
+        },
+        {
+            "id": "pan",
+            "group": "detail",
+            "label": "Panorama",
+            "legacyName": "pan",
+            "description": "Stereowert von links nach rechts."
+        },
+        {
+            "id": "octave",
+            "group": "detail",
+            "label": "Oktave",
+            "legacyName": "octave",
+            "description": "Ein hoher Wert bedeutet ein höheres Register."
+        },
+        {
+            "id": "binAttackTime",
+            "group": "detail",
+            "label": "Angriffsschärfe",
+            "legacyName": "binAttackTime",
+            "description": "Ein hoher Wert bedeutet einen sehr schnellen Start."
+        },
+        {
+            "id": "binEnvelope",
+            "group": "detail",
+            "label": "Hüllkurve",
+            "legacyName": "binEnvelope",
+            "description": "Ein hoher Wert bedeutet, dass der Klang seinen lautesten Punkt im Zyklus erreicht hat."
+        },
+        {
+            "id": "binEnvelopeState",
+            "group": "detail",
+            "label": "Hüllkurvenzustand",
+            "legacyName": "binEnvelopeState",
+            "description": "Aktuelle ADSR-Phase eines bestimmten Frequenz-Bins."
+        },
+        {
+            "id": "binFlux",
+            "group": "detail",
+            "label": "Aktivität",
+            "legacyName": "binFlux",
+            "description": "Klang oder Ton ändert sich schnell."
+        },
+        {
+            "id": "binPhase",
+            "group": "detail",
+            "label": "Phase",
+            "legacyName": "binPhase",
+            "description": "Die Welle ist am höchsten Punkt ihres Zyklus."
+        },
+        {
+            "id": "binPhaseDeviation",
+            "group": "detail",
+            "label": "Instabilität",
+            "legacyName": "binPhaseDeviation",
+            "description": "Die Phase verschiebt sich unvorhersehbar."
+        },
+        {
+            "id": "amplitude",
+            "group": "overall",
+            "label": "Lautstärke",
+            "legacyName": "amplitude",
+            "description": "Lautstärke des aktuellen Frames."
+        },
+        {
+            "id": "high",
+            "group": "overall",
+            "label": "Hohe Töne",
+            "legacyName": "high",
+            "description": "Lautstärke des Hochfrequenzbereichs."
+        },
+        {
+            "id": "mid",
+            "group": "overall",
+            "label": "Mitteltöne",
+            "legacyName": "mid",
+            "description": "Lautstärke des Mittelfrequenzbereichs."
+        },
+        {
+            "id": "bass",
+            "group": "overall",
+            "label": "Tiefe Töne",
+            "legacyName": "bass",
+            "description": "Lautstärke des niedrigen Frequenzbereichs."
+        },
+        {
+            "id": "deltaTime",
+            "group": "overall",
+            "label": "Delta-Zeit",
+            "legacyName": "deltaTime",
+            "description": "Verstrichene Zeit zwischen aktuellem und vorherigem Frame."
+        },
+        {
+            "id": "peakFreq",
+            "group": "overall",
+            "label": "Spitzenfrequenz",
+            "legacyName": "peakFreq",
+            "description": "Wie hoch die lauteste erkannte Frequenz ist."
+        },
+        {
+            "id": "time",
+            "group": "overall",
+            "label": "Aktuelle Zeit",
+            "legacyName": "time",
+            "description": "Zeitstempel der Audiodatei."
+        },
+        {
+            "id": "chromagram",
+            "group": "overall",
+            "label": "Komplexität",
+            "legacyName": "chromagram",
+            "description": "Reiches, vieltöniges harmonisches Profil."
+        },
+        {
+            "id": "globalRmsEnergy",
+            "group": "overall",
+            "label": "Energie",
+            "legacyName": "globalRmsEnergy",
+            "description": "Durchschnittliche Lautstärke des aktuellen Frames."
+        },
+        {
+            "id": "inharmonicity",
+            "group": "overall",
+            "label": "Dissonanz",
+            "legacyName": "inharmonicity",
+            "description": "Obertöne sind im Vergleich zum Grundton verstimmt."
+        },
+        {
+            "id": "peakAmplitude",
+            "group": "overall",
+            "label": "Spitzenlautstärke",
+            "legacyName": "peakAmplitude",
+            "description": "Der lauteste Punkt ist nahe am Maximum."
+        },
+        {
+            "id": "spectralCentroid",
+            "group": "overall",
+            "label": "Schärfe",
+            "legacyName": "spectralCentroid",
+            "description": "Ein hochfrequenzdominanter Klang."
+        },
+        {
+            "id": "spectralFlatness",
+            "group": "overall",
+            "label": "Rauschen",
+            "legacyName": "spectralFlatness",
+            "description": "Verrauscht bei hohem Wert; reiner Ton bei niedrigem."
+        },
+        {
+            "id": "spectralFlux",
+            "group": "overall",
+            "label": "Aktivität",
+            "legacyName": "spectralFlux",
+            "description": "Der Klang ändert sich sehr schnell."
+        },
+        {
+            "id": "spectralRolloff",
+            "group": "overall",
+            "label": "Helligkeit",
+            "legacyName": "spectralRolloff",
+            "description": "Viele hohe Frequenzen enthalten."
+        },
+        {
+            "id": "spectralSkewness",
+            "group": "overall",
+            "label": "Ungleichgewicht",
+            "legacyName": "spectralSkewness",
+            "description": "Energie ist auf ein Ende des Spektrums konzentriert."
+        },
+        {
+            "id": "spectralSpread",
+            "group": "overall",
+            "label": "Ausbreitung",
+            "legacyName": "spectralSpread",
+            "description": "Der Klang deckt eine weite Frequenzbreite ab."
+        },
+        {
+            "id": "zeroCrossingRate",
+            "group": "overall",
+            "label": "Rasseln",
+            "legacyName": "zeroCrossingRate",
+            "description": "Scharfes Hochfrequenzklappern."
+        },
+        {
+            "id": "canvasHeightPx",
+            "group": "overall",
+            "label": "Leinwandhöhe",
+            "legacyName": "canvasHeightPx",
+            "description": "Leinwandhöhe in Pixeln."
+        },
+        {
+            "id": "canvasWidthPx",
+            "group": "overall",
+            "label": "Leinwandbreite",
+            "legacyName": "canvasWidthPx",
+            "description": "Leinwandbreite in Pixeln."
+        },
+        {
+            "id": "audioLengthSec",
+            "group": "overall",
+            "label": "Audiolänge",
+            "legacyName": "audioLengthSec",
+            "description": "Audiolänge in Sekunden."
+        }
+    ]
+}
