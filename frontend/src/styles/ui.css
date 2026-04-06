@@ -1731,3 +1731,7 @@ input[type=number]::-webkit-inner-spin-button {
 .cp-btn-icon svg [stroke] {
     stroke: currentColor;
 }
+
+#camera-hud {
+    display: none !important;
+}
