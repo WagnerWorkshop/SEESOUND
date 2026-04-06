@@ -443,7 +443,7 @@ export const PARAMS = [
     },
     {
         key: 'postProcessEnabled', group: 'mixing', label: 'Post-Processing',
-        min: 0, max: 1, step: 1, default: 1, unit: '',
+        min: 0, max: 1, step: 1, default: 0, unit: '',
         desc: 'Master switch for all post-processing effects.',
         isToggle: true, toggleLabels: ['Off', 'On'],
     },
@@ -509,7 +509,7 @@ export const PARAMS = [
     },
     {
         key: 'coordinateGuidesEnabled', group: 'mixing', label: 'Coordinate Guides',
-        min: 0, max: 1, step: 1, default: 1, unit: '',
+        min: 0, max: 1, step: 1, default: 0, unit: '',
         desc: 'Show/hide coordinate guide grids.',
         isToggle: true, toggleLabels: ['Off', 'On'],
     },

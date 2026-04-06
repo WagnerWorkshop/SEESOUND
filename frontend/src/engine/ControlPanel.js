@@ -287,14 +287,16 @@ const BUTTON_ICON_MAP = Object.freeze({
 })
 
 const MATH_ACTIONS = Object.freeze([
-    { value: 'math:add', label: UI_TEXT.rules.mathAdd },
-    { value: 'math:subtract', label: UI_TEXT.rules.mathSubtract },
-    { value: 'math:multiply', label: UI_TEXT.rules.mathMultiply },
-    { value: 'math:divide', label: UI_TEXT.rules.mathDivide },
-    { value: 'math:parentheses', label: UI_TEXT.rules.mathParentheses },
-    { value: 'math:power', label: 'Power' },
-    { value: 'math:clamp', label: 'Clamp' },
-    { value: 'math:average', label: 'Average' },
+    { value: 'math:add', label: '+' },
+    { value: 'math:subtract', label: '-' },
+    { value: 'math:multiply', label: 'x' },
+    { value: 'math:divide', label: '÷' },
+    { value: 'math:openParen', label: '(' },
+    { value: 'math:closeParen', label: ')' },
+    { value: 'math:parentheses', label: '()' },
+    { value: 'math:power', label: 'power' },
+    { value: 'math:clamp', label: 'clamp' },
+    { value: 'math:average', label: 'average' },
 ])
 
 function createSyncRegistry() {
@@ -472,6 +474,8 @@ function mathTemplateTokens(actionId) {
     if (actionId === 'math:subtract') return [createOpToken(' - ')]
     if (actionId === 'math:multiply') return [createOpToken(' * ')]
     if (actionId === 'math:divide') return [createOpToken(' / ')]
+    if (actionId === 'math:openParen') return [createOpToken('(')]
+    if (actionId === 'math:closeParen') return [createOpToken(')')]
     if (actionId === 'math:parentheses') return [createOpToken('('), createSlotToken(), createOpToken(')')]
     if (actionId === 'math:power') return [createOpToken('pow('), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(')')]
     if (actionId === 'math:clamp') return [createOpToken('clamp('), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(', '), createSlotToken(), createOpToken(')')]
@@ -587,7 +591,7 @@ function createRuleTokenValueSelect(selected = '') {
     numberGroup.label = UI_TEXT.rules.number
     numberGroup.appendChild(el('option', '', { value: 'number', text: UI_TEXT.rules.number }))
 
-    select.append(detailGroup, overallGroup, numberGroup)
+    select.append(numberGroup, detailGroup, overallGroup)
     if (selected) select.value = selected
     return select
 }
@@ -1616,14 +1620,14 @@ function buildViewMenu(body, syncRegistry) {
     }
 
     const syncPostEnabled = () => {
-        postEnabled.checked = Number(params.postProcessEnabled ?? 1) >= 0.5
+        postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
         bokehEnabled.checked = Number(params.bokehEnabled ?? 1) >= 0.5
     }
 
     const syncGuideToggles = () => {
         originToggle.checked = Number(params.originSignEnabled ?? 1) >= 0.5
-        guideToggle.checked = Number(params.coordinateGuidesEnabled ?? 1) >= 0.5
+        guideToggle.checked = Number(params.coordinateGuidesEnabled ?? 0) >= 0.5
     }
 
     const syncBloomStrength = () => {
@@ -1868,8 +1872,10 @@ function buildRulesMenu(body, syncRegistry) {
 
         for (const row of rgbRows) {
             if (row.toggle) row.toggle.checked = row.enabled
+            if (row.card) row.card.classList.toggle('is-disabled', !row.enabled)
         }
         if (hueRow.toggle) hueRow.toggle.checked = hueRow.enabled
+        if (hueRow.card) hueRow.card.classList.toggle('is-disabled', !hueRow.enabled)
     }
 
     function buildCondition(rowState) {
@@ -2002,6 +2008,7 @@ function buildRulesMenu(body, syncRegistry) {
 
             for (const rowState of orderedRows) {
                 if (rowState.toggle) rowState.toggle.checked = rowState.enabled
+                if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
                 rowState.syncConditionUi?.()
                 if (rowState.enumSelect) rowState.enumSelect.value = rowState.enumValue
                 renderTokenEditor(rowState)
@@ -2042,6 +2049,7 @@ function buildRulesMenu(body, syncRegistry) {
             dragTokenIndex: null,
             enumValue: definition.options?.[0] || 'square',
             toggle: null,
+            card: null,
             conditionRow: null,
             syncConditionUi: null,
             tokenEditor: null,
@@ -2111,6 +2119,7 @@ function buildRulesMenu(body, syncRegistry) {
                 if (rowState.enabled && !String(rowState.expression || '').trim()) {
                     rowState.enabled = false
                     if (rowState.toggle) rowState.toggle.checked = false
+                    if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
                     commitRuleBlocks()
                     return
                 }
@@ -2123,11 +2132,10 @@ function buildRulesMenu(body, syncRegistry) {
             const insertSelection = (selected, control) => {
                 const next = tokensForInsertSelection(selected)
                 if (!next.length) return
-                if (!Number.isInteger(rowState.pendingInsertIndex)) {
-                    if (control) control.value = ''
-                    return
-                }
-                rowState.tokens.splice(rowState.pendingInsertIndex, 0, ...next)
+                const insertIndex = Number.isInteger(rowState.pendingInsertIndex)
+                    ? rowState.pendingInsertIndex
+                    : rowState.tokens.length
+                rowState.tokens.splice(insertIndex, 0, ...next)
                 rowState.pendingInsertIndex = null
                 if (control) control.value = ''
                 renderTokenEditor(rowState)
@@ -2147,10 +2155,12 @@ function buildRulesMenu(body, syncRegistry) {
         wrapper.appendChild(card)
 
         rowState.toggle = toggle
+        rowState.card = card
         rowState.conditionRow = conditionRow
         rowState.tokenEditor = tokenEditor
         rowState.enumSelect = enumSelect
         rowState.actionSelect = actionSelect
+        card.classList.toggle('is-disabled', !rowState.enabled)
 
         rowState.syncConditionUi = () => {
             addConditionButton.style.display = rowState.conditionEnabled ? 'none' : ''
@@ -2169,6 +2179,7 @@ function buildRulesMenu(body, syncRegistry) {
 
         toggle.addEventListener('change', () => {
             rowState.enabled = toggle.checked
+            if (rowState.card) rowState.card.classList.toggle('is-disabled', !rowState.enabled)
             if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
                 syncColorMode(definition.target, definition.output)
             }

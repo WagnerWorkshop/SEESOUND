@@ -1428,6 +1428,11 @@ input[type=number]::-webkit-inner-spin-button {
     gap: 8px;
 }
 
+.cp-rule-card.is-disabled .cp-rule-card-condition-builder,
+.cp-rule-card.is-disabled .cp-rule-card-expression {
+    display: none;
+}
+
 @media (max-width: 1180px) {
     .cp-shell-root {
         left: 10px;

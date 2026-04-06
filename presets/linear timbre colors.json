@@ -1,0 +1,628 @@
+{
+  "name": "linear timbre colors",
+  "params": {
+    "inputGain": 1.37,
+    "freqNormMin": 16,
+    "freqNormMax": 10000,
+    "fftSize": 16384,
+    "binMagnitudeNormMin": -90,
+    "binMagnitudeNormMax": 0,
+    "binFluxNormMin": 0,
+    "binFluxNormMax": 0.5,
+    "binPhaseDeviationNormMin": 0,
+    "binPhaseDeviationNormMax": 3.14,
+    "binAttackTimeNormMin": 70,
+    "binAttackTimeNormMax": 748,
+    "globalRmsNormMin": -63,
+    "globalRmsNormMax": 0,
+    "spectralCentroidNormMin": 150,
+    "spectralCentroidNormMax": 8000,
+    "globalSpectralFluxNormMin": 0,
+    "globalSpectralFluxNormMax": 100,
+    "spectralFlatnessNormMin": 0,
+    "spectralFlatnessNormMax": 1,
+    "defaultParticleSize": 1,
+    "canvasWidth": 2000,
+    "canvasHeight": 1000,
+    "canvasScale": 55,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
+    "maxParticles": 2751488,
+    "particlesByFrame": 5000,
+    "blendMode": "source-over",
+    "cameraProjection": "axonometric",
+    "cameraAxoPreset": "topXZ",
+    "persistMode": 1,
+    "ruleBlocks": [
+      {
+        "id": "z-set-norm-frequency",
+        "group": "SPACING",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "z",
+            "expression": "-(normFreq*1.4-0.9)*canvasHeightPx"
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "bass z norm freq",
+        "group": "SPACING",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "z",
+            "expression": "(normFreq*3.5-0.5)*canvasHeightPx"
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "x-set-time",
+        "group": "SPACING",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "x",
+            "expression": "((time)/audioLengthSec-0.5)*canvasWidthPx"
+          }
+        ],
+        "order": 2
+      },
+      {
+        "id": "y magnitude",
+        "group": "SPACING",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "expression": "binMagnitude*canvasHeightPx*0.5"
+          }
+        ],
+        "order": 3
+      },
+      {
+        "id": "bass z norm freq-2",
+        "group": "SPACING",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "expression": "-binMagnitude*canvasHeightPx*0.5"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "hue",
+        "group": "color",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "red",
+            "expression": "binAttackTime*10"
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "hue-3",
+        "group": "color",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "green",
+            "expression": "binFlux*10"
+          }
+        ],
+        "order": 6
+      },
+      {
+        "id": "hue-2",
+        "group": "color",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "blue",
+            "input": "binPhaseDeviation"
+          }
+        ],
+        "order": 7
+      },
+      {
+        "id": "bass red",
+        "group": "color",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "input": "binFlux"
+          }
+        ],
+        "order": 8
+      },
+      {
+        "id": "red",
+        "group": "color",
+        "subgroup": "",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "red",
+            "input": "spectralCentroid"
+          }
+        ],
+        "order": 9
+      },
+      {
+        "id": "green",
+        "group": "color",
+        "subgroup": "",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "blue",
+            "expression": "1-pow(binPhaseDeviation, 0.3)"
+          }
+        ],
+        "order": 10
+      },
+      {
+        "id": "blue",
+        "group": "color",
+        "subgroup": "",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "green",
+            "expression": "pow(binPhaseDeviation, 0.3)"
+          }
+        ],
+        "order": 11
+      },
+      {
+        "id": "luma",
+        "group": "color",
+        "subgroup": "",
+        "enabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "luma",
+            "value": 255
+          }
+        ],
+        "order": 12
+      },
+      {
+        "id": "size",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": ">",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "size",
+            "expression": "(binMagnitude) *2"
+          }
+        ],
+        "order": 13
+      },
+      {
+        "id": "bass bigger",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "size",
+            "expression": "pow((binMagnitude+1), 6)"
+          }
+        ],
+        "order": 14
+      },
+      {
+        "id": "bass transparent",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "opacity",
+            "expression": "pow(binMagnitude, 3)"
+          }
+        ],
+        "order": 15
+      },
+      {
+        "id": "shape",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "shapeType",
+            "value": "circle"
+          }
+        ],
+        "order": 16
+      },
+      {
+        "id": "amplitude brightness",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": ">",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "expression": "(binRMSEnergy)*(1+binPhaseDeviation*3)"
+          }
+        ],
+        "order": 17
+      },
+      {
+        "id": "brightness bass",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<=",
+          "input": "frequencyHz",
+          "value": 100
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "expression": "(binRMSEnergy)*(1+binPhaseDeviation*3)*0.25"
+          }
+        ],
+        "order": 18
+      },
+      {
+        "id": "thinning",
+        "group": "count",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "particleCount",
+            "expression": "0.2*binMagnitude"
+          }
+        ],
+        "order": 19
+      },
+      {
+        "id": "saturation",
+        "group": "Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "expression": "pow((binPhaseDeviation+1-spectralRolloff)*0.5, 1.4)"
+          }
+        ],
+        "order": 20
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "palettes": [
+      {
+        "id": "palette-1",
+        "name": "Palette 1",
+        "type": "discrete",
+        "colors": [
+          [
+            254,
+            0,
+            0
+          ],
+          [
+            255,
+            120,
+            1
+          ],
+          [
+            255,
+            220,
+            0
+          ],
+          [
+            151,
+            255,
+            2
+          ],
+          [
+            1,
+            255,
+            80
+          ],
+          [
+            1,
+            255,
+            220
+          ],
+          [
+            0,
+            160,
+            255
+          ],
+          [
+            40,
+            80,
+            255
+          ],
+          [
+            120,
+            0,
+            255
+          ],
+          [
+            220,
+            0,
+            255
+          ],
+          [
+            254,
+            0,
+            149
+          ],
+          [
+            255,
+            0,
+            60
+          ]
+        ]
+      },
+      {
+        "id": "palette-4",
+        "name": "Palette 4",
+        "type": "discrete",
+        "colors": [
+          [
+            254,
+            0,
+            0
+          ],
+          [
+            255,
+            120,
+            1
+          ],
+          [
+            255,
+            220,
+            0
+          ],
+          [
+            151,
+            255,
+            2
+          ],
+          [
+            1,
+            255,
+            80
+          ],
+          [
+            1,
+            255,
+            220
+          ],
+          [
+            0,
+            160,
+            255
+          ],
+          [
+            40,
+            80,
+            255
+          ],
+          [
+            120,
+            0,
+            255
+          ],
+          [
+            220,
+            0,
+            255
+          ],
+          [
+            254,
+            0,
+            149
+          ],
+          [
+            255,
+            0,
+            60
+          ]
+        ]
+      }
+    ],
+    "ruleUiState": {
+      "collapsedGroups": [
+        "spawnedParticles::Appearance / brightness",
+        "spawnedParticles::Appearance / size",
+        "spawnedParticles::Default",
+        "spawnedParticles::count",
+        "spawnedParticles::Appearance",
+        "spawnedParticles::SPACING"
+      ],
+      "collapsedSubgroups": [],
+      "collapsedRules": [],
+      "selectedContextGroup": "spawnedParticles",
+      "selectedGroupPath": "",
+      "selectedGroupName": "",
+      "selectedSubgroup": "",
+      "standaloneGroups": []
+    },
+    "_disabled": [],
+    "cameraAngleOfView": 104,
+    "fluxWindowFrames": 10,
+    "cameraPosX": 0,
+    "cameraPosY": 0,
+    "cameraPosZ": 420,
+    "cameraTargetX": 0,
+    "cameraTargetY": 0,
+    "cameraTargetZ": 0,
+    "postProcessEnabled": 1,
+    "bloomEnabled": 1,
+    "bloomStrength": 1.15,
+    "bloomRadius": 0.7,
+    "bloomThreshold": 0.18,
+    "bokehEnabled": 1,
+    "bokehFocus": 380,
+    "bokehAperture": 0.00012,
+    "bokehMaxBlur": 0.01
+  }
+}
