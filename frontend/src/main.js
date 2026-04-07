@@ -107,8 +107,10 @@ window.addEventListener('seesound:origin-sign-toggle', (e) => {
     emitOriginSignState()
 })
 emitOriginSignState()
-const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 5000)
-const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, 5000)
+const MIN_CAMERA_CLIP_EXTENT = 10000
+const MIN_CAMERA_CLIP_FAR = MIN_CAMERA_CLIP_EXTENT * 2
+const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, MIN_CAMERA_CLIP_FAR)
+const cameraPerspective = new THREE.PerspectiveCamera(55, 1, 0.001, MIN_CAMERA_CLIP_FAR)
 let camera = cameraOrtho
 const orbitTarget = new THREE.Vector3(0, 0, 0)
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 0, 420)
@@ -675,8 +677,8 @@ function fitCameraToVisible() {
         cameraOrtho.top = halfH
         cameraOrtho.bottom = -halfH
         cameraOrtho.zoom = 1
-        cameraOrtho.near = -Math.max(5000, radius * 6)
-        cameraOrtho.far = Math.max(5000, radius * 6)
+        cameraOrtho.near = -Math.max(MIN_CAMERA_CLIP_EXTENT, radius * 6)
+        cameraOrtho.far = Math.max(MIN_CAMERA_CLIP_EXTENT, radius * 6)
         cameraOrtho.updateProjectionMatrix()
     } else {
         // Preserve current view direction and solve exact camera distance needed
@@ -723,7 +725,7 @@ function fitCameraToVisible() {
         orbitState.radius = Math.max(requiredDistance + EPS, maxDepthTowardCamera + EPS)
         applyOrbitToCamera()
         cameraPerspective.near = Math.max(0.001, orbitState.radius - radius * 3)
-        cameraPerspective.far = Math.max(cameraPerspective.near + 1, orbitState.radius + radius * 6)
+        cameraPerspective.far = Math.max(MIN_CAMERA_CLIP_FAR, cameraPerspective.near + 1, orbitState.radius + radius * 6)
         cameraPerspective.updateProjectionMatrix()
     }
 
