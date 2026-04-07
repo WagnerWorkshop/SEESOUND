@@ -176,6 +176,7 @@ function _normalizeExpressionSyntax(expr) {
     out = out.replace(/\band\b/gi, '&&')
     out = out.replace(/\bor\b/gi, '||')
     out = out.replace(/\bnot\b/gi, '!')
+    out = out.replace(/\bif\s*\(/gi, 'iif(')
     return out
 }
 
@@ -196,6 +197,11 @@ function _validateExpression(expr, inMap) {
         'lerp',
         'smoothstep',
         'pow',
+        'mod',
+        'sin',
+        'cos',
+        'step',
+        'iif',
         'min',
         'max',
         'abs',

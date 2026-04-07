@@ -7,6 +7,7 @@
  */
 
 import { sanitizeRuleBlocks } from './rules/RuleDictionary.js'
+import { UI_TEXT } from './ui/UiText.js'
 
 const STORAGE_KEY = 'seesound_user_defaults_v4'
 const DISABLED_KEY = 'seesound_disabled_v4'
@@ -77,7 +78,7 @@ function _sanitizePalettes(rawPalettes) {
 // § 1  PARAMETER GROUP DEFINITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PARAM_GROUPS = [
+const PARAM_GROUPS_BASE = [
     { id: 'inputGain', label: 'Input' },
     { id: 'inputProcessing', label: 'Input Processing' },
     { id: 'geometry', label: 'Geometry' },
@@ -104,7 +105,7 @@ function normRangeParam({ key, label, min, max, step, def, unit, desc }) {
 // Only settings that are actively used in the render pipeline are listed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PARAMS = [
+const PARAMS_BASE = [
     // ── Input ──────────────────────────────────────────────────────────────
     {
         key: 'inputGain', group: 'inputGain', label: 'Sensitivity',
@@ -490,6 +491,31 @@ export const PARAMS = [
         isToggle: true, toggleLabels: ['Off', 'On'],
     },
 ]
+
+function getLocalizedSettingText(bucket, key, fallback = '') {
+    const value = UI_TEXT?.settings?.[bucket]?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
+}
+
+function localizeParamGroup(definition) {
+    return {
+        ...definition,
+        label: getLocalizedSettingText('paramGroups', definition.id, definition.label),
+    }
+}
+
+function localizeParamDefinition(definition) {
+    const key = String(definition?.key || '')
+    return {
+        ...definition,
+        label: getLocalizedSettingText('paramLabels', key, definition.label),
+        desc: getLocalizedSettingText('paramDescriptions', key, definition.desc),
+    }
+}
+
+export const PARAM_GROUPS = PARAM_GROUPS_BASE.map(localizeParamGroup)
+export const PARAMS = PARAMS_BASE.map(localizeParamDefinition)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 3  STATE

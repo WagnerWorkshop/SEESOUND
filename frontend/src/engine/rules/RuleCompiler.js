@@ -175,6 +175,16 @@ const _helpers = Object.freeze({
         return t * t * (3 - 2 * t)
     },
     pow: Math.pow,
+    mod: (value, max) => {
+        const v = Number(value)
+        const m = Number(max)
+        if (!Number.isFinite(v) || !Number.isFinite(m) || Math.abs(m) < 1e-9) return 0
+        return ((v % m) + m) % m
+    },
+    sin: Math.sin,
+    cos: Math.cos,
+    step: (edge, value) => (value < edge ? 0 : 1),
+    iif: (condition, trueVal, falseVal) => (condition ? trueVal : falseVal),
     min: Math.min,
     max: Math.max,
     abs: Math.abs,
@@ -201,6 +211,7 @@ function _normalizeExpressionSyntax(expr) {
     out = out.replace(/\band\b/gi, '&&')
     out = out.replace(/\bor\b/gi, '||')
     out = out.replace(/\bnot\b/gi, '!')
+    out = out.replace(/\bif\s*\(/gi, 'iif(')
     return out
 }
 
@@ -637,7 +648,7 @@ export function compileRules(ruleBlocks, dictionaries) {
 
     const source = [
         `'use strict';`,
-        'const { clamp, lerp, smoothstep, pow, min, max, abs } = helpers;',
+        'const { clamp, lerp, smoothstep, pow, mod, sin, cos, step, iif, min, max, abs } = helpers;',
         spawnBuild.source,
         livingBuild.source,
         physicalBuild.source,

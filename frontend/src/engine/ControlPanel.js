@@ -35,6 +35,7 @@ import videoIcon from '../icons/video.svg?raw'
 import objIcon from '../icons/obj.svg?raw'
 import refreshIcon from '../icons/refresh.svg?raw'
 import addIcon from '../icons/add.svg?raw'
+import conditionIcon from '../icons/condition.svg?raw'
 import clearIcon from '../icons/clear.svg?raw'
 import resetIcon from '../icons/reset.svg?raw'
 import fitIcon from '../icons/fit.svg?raw'
@@ -53,6 +54,12 @@ const MENU_ITEMS = Object.freeze([
 
 const FFT_OPTIONS = Object.freeze([512, 1024, 2048, 4096, 8192, 16384])
 
+function getSettingsTooltip(key, fallback = '') {
+    const value = UI_TEXT?.settings?.tooltips?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
+}
+
 const SETTINGS_SLIDERS = Object.freeze([
     {
         key: 'inputGain',
@@ -60,7 +67,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 0,
         max: 3,
         step: 0.01,
-        tooltip: 'Technical term: Input Gain. Scales all amplitude before analysis.',
+        tooltip: getSettingsTooltip('inputGain', 'Technical term: Input Gain. Scales all amplitude before analysis.'),
     },
     {
         key: 'defaultParticleSize',
@@ -68,7 +75,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 1,
         max: 40,
         step: 0.5,
-        tooltip: 'Technical term: Default Size. Base object size before rule outputs.',
+        tooltip: getSettingsTooltip('defaultParticleSize', 'Technical term: Default Size. Base object size before rule outputs.'),
     },
     {
         key: 'maxParticles',
@@ -76,7 +83,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100000,
         max: 5000000,
         step: 50000,
-        tooltip: 'Technical term: Capacity. Total GPU object slots.',
+        tooltip: getSettingsTooltip('maxParticles', 'Technical term: Capacity. Total GPU object slots.'),
     },
     {
         key: 'particlesByFrame',
@@ -84,7 +91,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100,
         max: 5000,
         step: 1,
-        tooltip: 'Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.',
+        tooltip: getSettingsTooltip('particlesByFrame', 'Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.'),
     },
     {
         key: 'fluxWindowFrames',
@@ -92,7 +99,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 1,
         max: 64,
         step: 1,
-        tooltip: 'Technical term: Flux Window Frames. Rolling frame window for activity averaging.',
+        tooltip: getSettingsTooltip('fluxWindowFrames', 'Technical term: Flux Window Frames. Rolling frame window for activity averaging.'),
     },
 ])
 
@@ -105,7 +112,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 20000,
         step: 1,
         unit: 'Hz',
-        tooltip: 'Technical terms: Freq Norm Min / Freq Norm Max. Physical frequency normalization range.',
+        tooltip: getSettingsTooltip('frequencyRange', 'Technical terms: Freq Norm Min / Freq Norm Max. Physical frequency normalization range.'),
         get: () => ({ min: Number(params.freqNormMin ?? 40), max: Number(params.freqNormMax ?? 12000) }),
         set: (minValue, maxValue) => setMany({ freqNormMin: minValue, freqNormMax: maxValue }),
     },
@@ -117,7 +124,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 0,
         step: 1,
         unit: 'dBFS',
-        tooltip: 'Technical terms: Per-Bin Magnitude Min / Max. Per-frequency volume normalization.',
+        tooltip: getSettingsTooltip('volumeRange', 'Technical terms: Per-Bin Magnitude Min / Max. Per-frequency volume normalization.'),
         get: () => ({ min: Number(params.binMagnitudeNormMin ?? -70), max: Number(params.binMagnitudeNormMax ?? 0) }),
         set: (minValue, maxValue) => setMany({ binMagnitudeNormMin: minValue, binMagnitudeNormMax: maxValue }),
     },
@@ -129,7 +136,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: Math.PI,
         step: 0.001,
         unit: 'rad',
-        tooltip: 'Technical terms: Per-Bin Phase Deviation Min / Max. Phase instability normalization.',
+        tooltip: getSettingsTooltip('instabilityRange', 'Technical terms: Per-Bin Phase Deviation Min / Max. Phase instability normalization.'),
         get: () => ({ min: Number(params.binPhaseDeviationNormMin ?? 0), max: Number(params.binPhaseDeviationNormMax ?? Math.PI) }),
         set: (minValue, maxValue) => setMany({ binPhaseDeviationNormMin: minValue, binPhaseDeviationNormMax: maxValue }),
     },
@@ -141,7 +148,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 2000,
         step: 1,
         unit: 'ms',
-        tooltip: 'Technical terms: Per-Bin Attack Time Min / Max. Attack-time normalization.',
+        tooltip: getSettingsTooltip('attackSharpnessRange', 'Technical terms: Per-Bin Attack Time Min / Max. Attack-time normalization.'),
         get: () => ({ min: Number(params.binAttackTimeNormMin ?? 5), max: Number(params.binAttackTimeNormMax ?? 500) }),
         set: (minValue, maxValue) => setMany({ binAttackTimeNormMin: minValue, binAttackTimeNormMax: maxValue }),
     },
@@ -153,7 +160,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 0,
         step: 1,
         unit: 'dBFS',
-        tooltip: 'Technical terms: Global RMS Energy Min / Max. Frame-wide RMS normalization.',
+        tooltip: getSettingsTooltip('energyRange', 'Technical terms: Global RMS Energy Min / Max. Frame-wide RMS normalization.'),
         get: () => ({ min: Number(params.globalRmsNormMin ?? -60), max: Number(params.globalRmsNormMax ?? 0) }),
         set: (minValue, maxValue) => setMany({ globalRmsNormMin: minValue, globalRmsNormMax: maxValue }),
     },
@@ -165,7 +172,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 22050,
         step: 1,
         unit: 'Hz',
-        tooltip: 'Technical terms: Spectral Centroid Min / Max. Spectral sharpness normalization.',
+        tooltip: getSettingsTooltip('sharpnessRange', 'Technical terms: Spectral Centroid Min / Max. Spectral sharpness normalization.'),
         get: () => ({ min: Number(params.spectralCentroidNormMin ?? 150), max: Number(params.spectralCentroidNormMax ?? 8000) }),
         set: (minValue, maxValue) => setMany({ spectralCentroidNormMin: minValue, spectralCentroidNormMax: maxValue }),
     },
@@ -177,7 +184,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 200,
         step: 0.1,
         unit: 'AU',
-        tooltip: 'Technical terms: Per-Bin Spectral Flux Min / Max and Global Spectral Flux Min / Max. Controls both detail and global activity ranges.',
+        tooltip: getSettingsTooltip('activityRange', 'Technical terms: Per-Bin Spectral Flux Min / Max and Global Spectral Flux Min / Max. Controls both detail and global activity ranges.'),
         get: () => ({
             min: Number(params.globalSpectralFluxNormMin ?? 0),
             max: Number(params.globalSpectralFluxNormMax ?? 100),
@@ -199,7 +206,7 @@ const SETTINGS_RANGES = Object.freeze([
         max: 1,
         step: 0.001,
         unit: 'ratio',
-        tooltip: 'Technical terms: Spectral Flatness Min / Max. Noise-vs-tone normalization.',
+        tooltip: getSettingsTooltip('noisinessRange', 'Technical terms: Spectral Flatness Min / Max. Noise-vs-tone normalization.'),
         get: () => ({ min: Number(params.spectralFlatnessNormMin ?? 0), max: Number(params.spectralFlatnessNormMax ?? 1) }),
         set: (minValue, maxValue) => setMany({ spectralFlatnessNormMin: minValue, spectralFlatnessNormMax: maxValue }),
     },
@@ -276,7 +283,11 @@ const FIXED_RULE_ROWS = Object.freeze([
 ])
 
 const RULE_VARIABLE_ID_SET = new Set(RULE_VARIABLES.map((entry) => entry.id))
-const RULE_VARIABLE_REGEX = new RegExp(`\\b(${RULE_VARIABLES.map((entry) => entry.id.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length).join('|')})\\b`, 'g')
+const RULE_VARIABLE_PATTERN = RULE_VARIABLES
+    .map((entry) => entry.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length)
+    .join('|')
+const RULE_VARIABLE_REGEX = new RegExp(`\\b(${RULE_VARIABLE_PATTERN})\\b`, 'g')
 
 const MENU_ICON_MAP = Object.freeze({
     file: menuFileIcon,
@@ -299,6 +310,7 @@ const BUTTON_ICON_MAP = Object.freeze({
     reset: resetIcon,
     fit: fitIcon,
     add: addIcon,
+    condition: conditionIcon,
     duplicate: copyIcon,
     clear: clearIcon,
     clean: clearIcon,
@@ -317,6 +329,224 @@ const MATH_ACTIONS = Object.freeze([
     { value: 'math:clamp', label: 'clamp' },
     { value: 'math:average', label: 'average' },
 ])
+
+const RULE_FUNCTION_GROUPS = Object.freeze([
+    {
+        groupKey: 'shapers',
+        items: [
+            { id: 'clamp', hint: 'Math.max(min, Math.min(max, value))' },
+            { id: 'pow', hint: 'Math.pow(value, exponent)' },
+            { id: 'abs', hint: 'Math.abs(value)' },
+        ],
+    },
+    {
+        groupKey: 'interpolators',
+        items: [
+            { id: 'lerp', hint: 'start + (end - start) * amount' },
+            { id: 'smoothstep', hint: 'Smoothed threshold blend.' },
+        ],
+    },
+    {
+        groupKey: 'oscillators',
+        items: [
+            { id: 'mod', hint: '((value % max) + max) % max' },
+            { id: 'sin', hint: 'Math.sin(value)' },
+            { id: 'cos', hint: 'Math.cos(value)' },
+        ],
+    },
+    {
+        groupKey: 'logic',
+        items: [
+            { id: 'step', hint: 'value < edge ? 0.0 : 1.0' },
+            { id: 'if', hint: 'condition ? true_val : false_val' },
+        ],
+    },
+])
+
+const RULE_FUNCTION_TEMPLATES = Object.freeze({
+    clamp: ['clamp(', { slot: 'value' }, ', ', { slot: 'min' }, ', ', { slot: 'max' }, ')'],
+    pow: ['pow(', { slot: 'value' }, ', ', { slot: 'exponent' }, ')'],
+    abs: ['abs(', { slot: 'value' }, ')'],
+    lerp: ['lerp(', { slot: 'start' }, ', ', { slot: 'end' }, ', ', { slot: 'amount' }, ')'],
+    smoothstep: ['smoothstep(', { slot: 'edge0' }, ', ', { slot: 'edge1' }, ', ', { slot: 'value' }, ')'],
+    mod: ['mod(', { slot: 'value' }, ', ', { slot: 'max' }, ')'],
+    sin: ['sin(', { slot: 'value' }, ')'],
+    cos: ['cos(', { slot: 'value' }, ')'],
+    step: ['step(', { slot: 'edge' }, ', ', { slot: 'value' }, ')'],
+    if: ['if(', { slot: 'condition' }, ', ', { slot: 'true_val' }, ', ', { slot: 'false_val' }, ')'],
+})
+
+const RULE_SLOT_MARKER = '__slot__'
+const RULE_SLOT_MARKER_PATTERN = RULE_SLOT_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const RULE_SLOT_TOKEN_PATTERN = `${RULE_SLOT_MARKER_PATTERN}([A-Za-z_][A-Za-z0-9_]*)?`
+const RULE_SLOT_MARKER_REGEX = new RegExp(`${RULE_SLOT_MARKER_PATTERN}[A-Za-z0-9_]*`, 'g')
+const RULE_RENDER_TOKEN_REGEX = new RegExp(`${RULE_SLOT_TOKEN_PATTERN}|\\b(${RULE_VARIABLE_PATTERN})\\b`, 'g')
+
+function getRuleText(key, fallback = '') {
+    const value = UI_TEXT?.rules?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
+}
+
+function getRuleFunctionGroupLabel(groupKey) {
+    const value = UI_TEXT?.rules?.functionGroups?.[groupKey]
+    if (typeof value === 'string' && value.trim()) return value
+    return groupKey
+}
+
+function getRuleFunctionName(functionId) {
+    const value = UI_TEXT?.rules?.functionNames?.[functionId]
+    if (typeof value === 'string' && value.trim()) return value
+    return functionId
+}
+
+function getRuleFunctionHint(functionId, fallback = '') {
+    const value = UI_TEXT?.rules?.functionHints?.[functionId]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
+}
+
+function getRuleFunctionSlotLabel(slotId) {
+    const value = UI_TEXT?.rules?.functionSlotLabels?.[slotId]
+    if (typeof value === 'string' && value.trim()) return value
+    return slotId
+}
+
+function formatTechnicalTerm(term) {
+    const source = String(term || '').trim()
+    if (!source) return ''
+    const spaced = source
+        .replace(/_/g, ' ')
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/\s+/g, ' ')
+        .trim()
+    return spaced.replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function formatRuleVariableDropdownLabel(entry) {
+    const label = String(entry?.label || '').trim()
+    const technical = formatTechnicalTerm(entry?.legacyName || entry?.id)
+    if (!label) return technical
+    if (!technical || technical.toLowerCase() === label.toLowerCase()) return label
+    return `${label} (${technical})`
+}
+
+function appendExpressionPartsFromNode(node, parts) {
+    if (!node) return
+    if (node.nodeType === Node.TEXT_NODE) {
+        parts.push(node.textContent || '')
+        return
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return
+
+    const element = node
+    if (element.classList?.contains('cp-rule-inline-pill')) {
+        const id = String(element.getAttribute('data-rule-var-id') || '')
+        if (id) parts.push(id)
+        return
+    }
+    if (element.classList?.contains('cp-rule-inline-slot')) {
+        const slotLabel = String(element.getAttribute('data-slot-label') || 'value').trim() || 'value'
+        parts.push(`${RULE_SLOT_MARKER}${slotLabel}`)
+        return
+    }
+    if (element.tagName === 'BR') {
+        parts.push(' ')
+        return
+    }
+    for (const child of element.childNodes) appendExpressionPartsFromNode(child, parts)
+}
+
+function readExpressionFromFragment(fragment) {
+    if (!fragment) return ''
+    const parts = []
+    for (const child of fragment.childNodes) appendExpressionPartsFromNode(child, parts)
+    return parts.join('').replace(/\u00A0/g, ' ')
+}
+
+function splitTopLevelArgs(value) {
+    const args = []
+    let current = ''
+    let depth = 0
+    for (const char of String(value || '')) {
+        if (char === '(') depth += 1
+        if (char === ')') depth = Math.max(0, depth - 1)
+        if (char === ',' && depth === 0) {
+            args.push(current)
+            current = ''
+            continue
+        }
+        current += char
+    }
+    args.push(current)
+    return args
+}
+
+function normalizeFunctionCallSlots(source, functionId, slotKeys) {
+    if (!source || !functionId || !Array.isArray(slotKeys) || !slotKeys.length) return source
+    const token = `${functionId}(`
+    let cursor = 0
+    let output = ''
+
+    while (cursor < source.length) {
+        const start = source.indexOf(token, cursor)
+        if (start === -1) {
+            output += source.slice(cursor)
+            break
+        }
+
+        const prevChar = source[start - 1]
+        if (prevChar && /[A-Za-z0-9_]/.test(prevChar)) {
+            output += source.slice(cursor, start + token.length)
+            cursor = start + token.length
+            continue
+        }
+
+        let depth = 1
+        let index = start + token.length
+        while (index < source.length && depth > 0) {
+            const char = source[index]
+            if (char === '(') depth += 1
+            else if (char === ')') depth -= 1
+            index += 1
+        }
+        if (depth !== 0) {
+            output += source.slice(cursor)
+            break
+        }
+
+        const argsSource = source.slice(start + token.length, index - 1)
+        const args = splitTopLevelArgs(argsSource)
+        const normalizedArgs = []
+        for (let i = 0; i < slotKeys.length; i += 1) {
+            const raw = args[i]
+            if (typeof raw === 'string' && raw.trim()) {
+                normalizedArgs.push(raw)
+            } else {
+                normalizedArgs.push(`${RULE_SLOT_MARKER}${slotKeys[i]}`)
+            }
+        }
+        if (args.length > slotKeys.length) {
+            normalizedArgs.push(...args.slice(slotKeys.length))
+        }
+
+        output += source.slice(cursor, start)
+        output += `${functionId}(${normalizedArgs.join(', ')})`
+        cursor = index
+    }
+
+    return output
+}
+
+function normalizeExpressionSlotGaps(expression) {
+    let normalized = String(expression || '')
+    for (const [functionId, template] of Object.entries(RULE_FUNCTION_TEMPLATES)) {
+        const slotKeys = template.filter((part) => part && typeof part === 'object' && part.slot).map((part) => part.slot)
+        if (!slotKeys.length) continue
+        normalized = normalizeFunctionCallSlots(normalized, functionId, slotKeys)
+    }
+    return normalized
+}
 
 function createSyncRegistry() {
     return {
@@ -457,6 +687,18 @@ function applyButtonIcon(button, svgMarkup, label) {
     button.setAttribute('aria-label', caption)
 }
 
+function applyIconOnlyButton(button, svgMarkup, label) {
+    if (!button || !svgMarkup) return null
+    button.textContent = ''
+    const icon = el('span', 'cp-btn-icon', { html: svgMarkup })
+    button.appendChild(icon)
+    if (label) {
+        button.setAttribute('aria-label', label)
+        button.title = label
+    }
+    return icon
+}
+
 function createPillToken(variableId) {
     const id = String(variableId || '')
     const variable = getRuleVariableById(id)
@@ -592,25 +834,41 @@ function createTokenInsertSelect(selected = '') {
 
 function createRuleTokenValueSelect(selected = '') {
     const select = el('select', 'cp-input-select cp-rule-token-action-select cp-rule-token-value-select')
-    select.appendChild(el('option', '', { value: '', text: UI_TEXT.rules.insertVariable }))
+    select.appendChild(el('option', '', { value: '', text: getRuleText('ruleAudioData', 'Audio data') }))
 
     const detailGroup = document.createElement('optgroup')
     detailGroup.label = UI_TEXT.rules.detailVariables
     for (const entry of getRuleVariablesByGroup('detail')) {
-        detailGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+        detailGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) }))
     }
 
     const overallGroup = document.createElement('optgroup')
     overallGroup.label = UI_TEXT.rules.overallVariables
     for (const entry of getRuleVariablesByGroup('overall')) {
-        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) }))
     }
 
-    const numberGroup = document.createElement('optgroup')
-    numberGroup.label = UI_TEXT.rules.number
-    numberGroup.appendChild(el('option', '', { value: 'number', text: UI_TEXT.rules.number }))
+    select.append(detailGroup, overallGroup)
+    if (selected) select.value = selected
+    return select
+}
 
-    select.append(numberGroup, detailGroup, overallGroup)
+function createRuleFunctionSelect(selected = '') {
+    const select = el('select', 'cp-input-select cp-rule-token-action-select cp-rule-token-function-select')
+    select.appendChild(el('option', '', { value: '', text: getRuleText('ruleFunctions', 'Functions') }))
+
+    for (const group of RULE_FUNCTION_GROUPS) {
+        const optgroup = document.createElement('optgroup')
+        optgroup.label = getRuleFunctionGroupLabel(group.groupKey)
+        for (const item of group.items) {
+            const option = el('option', '', { value: item.id, text: getRuleFunctionName(item.id) })
+            const hint = getRuleFunctionHint(item.id, item.hint)
+            if (hint) option.title = hint
+            optgroup.appendChild(option)
+        }
+        select.appendChild(optgroup)
+    }
+
     if (selected) select.value = selected
     return select
 }
@@ -638,178 +896,357 @@ function hasUnresolvedSlots(tokens) {
     return (Array.isArray(tokens) ? tokens : []).some((token) => token?.type === 'slot')
 }
 
-function renderTokenEditor(rowState) {
-    if (!rowState?.tokenEditor) return
-    const editor = rowState.tokenEditor
-    editor.innerHTML = ''
+function createRuleExpressionPill(variableId) {
+    const id = String(variableId || '')
+    const variable = getRuleVariableById(id)
+    const pill = el('span', 'cp-rule-inline-pill', {
+        'data-rule-var-id': id,
+        contenteditable: 'false',
+        title: id,
+    })
+    pill.textContent = variable?.label || id
+    return pill
+}
 
-    const tokens = Array.isArray(rowState.tokens) ? rowState.tokens : []
-    if (!Number.isInteger(rowState.pendingInsertIndex) || rowState.pendingInsertIndex < 0 || rowState.pendingInsertIndex > tokens.length) {
-        rowState.pendingInsertIndex = null
+function createRuleExpressionSlot(label = 'value') {
+    const slotLabel = String(label || 'value')
+    return el('span', 'cp-rule-inline-slot', {
+        contenteditable: 'false',
+        'data-slot-label': slotLabel,
+        text: getRuleFunctionSlotLabel(slotLabel),
+        title: getRuleText('slotInsertHint', 'Insert audio data or type a value'),
+    })
+}
+
+function getActiveSlotFromSelection(root, selection) {
+    if (!root || !selection || selection.rangeCount === 0) return null
+    const range = selection.getRangeAt(0)
+
+    const resolveSlot = (node) => {
+        if (!node) return null
+        let current = node
+        if (current.nodeType === Node.TEXT_NODE) current = current.parentElement
+        if (!(current instanceof Element)) return null
+        const slot = current.closest('.cp-rule-inline-slot')
+        if (!slot) return null
+        return root.contains(slot) ? slot : null
     }
 
-    const moveTokenToGap = (fromIndex, gapIndex) => {
-        const from = Number(fromIndex)
-        const toGap = Number(gapIndex)
-        if (!Number.isInteger(from) || !Number.isInteger(toGap)) return
-        if (from < 0 || from >= rowState.tokens.length) return
-        if (toGap < 0 || toGap > rowState.tokens.length) return
-
-        const [moved] = rowState.tokens.splice(from, 1)
-        let target = toGap
-        if (from < toGap) target -= 1
-        rowState.tokens.splice(target, 0, moved)
-        rowState.dragTokenIndex = null
-        renderTokenEditor(rowState)
-        rowState.onExpressionChanged?.()
+    const directCandidates = [range.startContainer, range.endContainer, selection.anchorNode, selection.focusNode]
+    for (const candidate of directCandidates) {
+        const slot = resolveSlot(candidate)
+        if (slot) return slot
     }
 
-    const renderGap = (index) => {
-        const gap = el('div', 'cp-rule-token-gap')
-        const add = el('button', 'cp-rule-token-gap-btn', { type: 'button' })
-        applyButtonIcon(add, BUTTON_ICON_MAP.add, UI_TEXT.rules.insertHere)
-        add.classList.toggle('is-armed', rowState.pendingInsertIndex === index)
-        add.addEventListener('click', () => {
-            rowState.pendingInsertIndex = index
-            renderTokenEditor(rowState)
-        })
-
-        gap.addEventListener('dragover', (event) => {
-            if (!Number.isInteger(rowState.dragTokenIndex)) return
-            event.preventDefault()
-        })
-        gap.addEventListener('drop', (event) => {
-            if (!Number.isInteger(rowState.dragTokenIndex)) return
-            event.preventDefault()
-            moveTokenToGap(rowState.dragTokenIndex, index)
-        })
-
-        gap.appendChild(add)
-
-        editor.appendChild(gap)
+    if (range.startContainer instanceof Element) {
+        const { childNodes } = range.startContainer
+        const nextNode = childNodes[range.startOffset]
+        const prevNode = childNodes[Math.max(0, range.startOffset - 1)]
+        for (const candidate of [nextNode, prevNode]) {
+            const slot = resolveSlot(candidate)
+            if (slot) return slot
+        }
     }
 
-    renderGap(0)
-    if (tokens.length === 0) {
-        editor.appendChild(el('span', 'cp-rule-token-placeholder', { text: UI_TEXT.rules.tokenEditorPlaceholder }))
+    return null
+}
+
+function readExpressionFromEditor(editor) {
+    if (!editor) return ''
+    return readExpressionFromFragment(editor)
+}
+
+function placeCaretAtEnd(node) {
+    if (!node) return
+    const selection = window.getSelection?.()
+    if (!selection) return
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    range.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(range)
+}
+
+function isSelectionInside(root, selection) {
+    if (!root || !selection || selection.rangeCount === 0) return false
+    const range = selection.getRangeAt(0)
+    const container = range.commonAncestorContainer
+    return root === container || root.contains(container)
+}
+
+function openSelectPicker(select) {
+    if (!select) return
+    select.focus()
+    if (typeof select.showPicker === 'function') {
+        try {
+            select.showPicker()
+            return
+        } catch {
+            // ignore and fallback to click
+        }
+    }
+    try {
+        select.click()
+    } catch {
+        // no-op
+    }
+}
+
+function caretRangeFromPoint(x, y) {
+    if (typeof document.caretRangeFromPoint === 'function') {
+        return document.caretRangeFromPoint(x, y)
+    }
+    if (typeof document.caretPositionFromPoint === 'function') {
+        const pos = document.caretPositionFromPoint(x, y)
+        if (!pos) return null
+        const range = document.createRange()
+        range.setStart(pos.offsetNode, pos.offset)
+        range.collapse(true)
+        return range
+    }
+    return null
+}
+
+function insertVariablePillAtCursor(editor, variableId) {
+    if (!editor || !variableId) return
+    const selection = window.getSelection?.()
+    if (!selection) return
+
+    editor.focus()
+    if (!isSelectionInside(editor, selection)) {
+        placeCaretAtEnd(editor)
     }
 
-    for (let i = 0; i < tokens.length; i++) {
-        const token = normalizeToken(tokens[i])
-        if (!token) continue
-        rowState.tokens[i] = token
+    const activeSlot = getActiveSlotFromSelection(editor, selection)
+    if (activeSlot) {
+        const pill = createRuleExpressionPill(variableId)
+        activeSlot.replaceWith(pill)
+        const range = document.createRange()
+        range.setStartAfter(pill)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+    }
 
-        if (token.type === 'slot') {
-            const slot = el('button', 'cp-rule-token-slot', { type: 'button', text: UI_TEXT.rules.selectValue })
-            slot.draggable = true
-            slot.addEventListener('dragstart', (event) => {
-                rowState.dragTokenIndex = i
-                event.dataTransfer?.setData('text/plain', String(i))
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-            })
-            slot.addEventListener('dragend', () => {
-                rowState.dragTokenIndex = null
-            })
-            slot.addEventListener('click', () => {
-                rowState.insertContext = { mode: 'replace', index: i }
-                renderTokenEditor(rowState)
-            })
-            editor.appendChild(slot)
-            if (rowState.insertContext?.mode === 'replace' && rowState.insertContext?.index === i) {
-                const picker = createTokenInsertSelect()
-                picker.classList.add('cp-rule-token-picker')
-                picker.addEventListener('change', () => {
-                    const replaceTokens = tokensForInsertSelection(picker.value).map(normalizeToken).filter(Boolean)
-                    if (!replaceTokens.length) return
-                    rowState.tokens.splice(i, 1, ...replaceTokens)
-                    rowState.insertContext = null
-                    renderTokenEditor(rowState)
-                    rowState.onExpressionChanged?.()
-                })
-                editor.appendChild(picker)
-                requestAnimationFrame(() => picker.focus())
+    if (selection.rangeCount === 0) return
+    const range = selection.getRangeAt(0)
+    range.deleteContents()
+
+    const pill = createRuleExpressionPill(variableId)
+    range.insertNode(pill)
+
+    const spacer = document.createTextNode(' ')
+    pill.after(spacer)
+
+    range.setStartAfter(spacer)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+}
+
+function insertTextAtCursor(editor, text) {
+    if (!editor) return
+    const value = String(text || '')
+    if (!value) return
+    const selection = window.getSelection?.()
+    if (!selection) return
+
+    editor.focus()
+    if (!isSelectionInside(editor, selection)) {
+        placeCaretAtEnd(editor)
+    }
+
+    const activeSlot = getActiveSlotFromSelection(editor, selection)
+    if (activeSlot) {
+        const textNode = document.createTextNode(value)
+        activeSlot.replaceWith(textNode)
+        const range = document.createRange()
+        range.setStart(textNode, textNode.textContent?.length || 0)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+    }
+    if (selection.rangeCount === 0) return
+
+    const range = selection.getRangeAt(0)
+    range.deleteContents()
+
+    const textNode = document.createTextNode(value)
+    range.insertNode(textNode)
+    range.setStartAfter(textNode)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+}
+
+function insertFunctionTemplateAtCursor(editor, functionId) {
+    const template = RULE_FUNCTION_TEMPLATES[String(functionId || '')]
+    if (!editor || !Array.isArray(template) || template.length === 0) return
+    const selection = window.getSelection?.()
+    if (!selection) return
+
+    editor.focus()
+    if (!isSelectionInside(editor, selection)) {
+        placeCaretAtEnd(editor)
+    }
+    if (selection.rangeCount === 0) return
+
+    const range = selection.getRangeAt(0)
+    let wrappedSelection = ''
+    if (!range.collapsed) {
+        wrappedSelection = readExpressionFromFragment(range.cloneContents()).trim()
+    }
+    range.deleteContents()
+
+    const fragment = document.createDocumentFragment()
+    const slots = []
+    let isFirstSlot = true
+    for (const part of template) {
+        if (typeof part === 'string') {
+            fragment.appendChild(document.createTextNode(part))
+            continue
+        }
+        if (part && typeof part === 'object' && part.slot) {
+            if (isFirstSlot && wrappedSelection) {
+                fragment.appendChild(document.createTextNode(wrappedSelection))
+                isFirstSlot = false
+                continue
             }
-            renderGap(i + 1)
-            continue
+            const slot = createRuleExpressionSlot(part.slot)
+            slots.push(slot)
+            fragment.appendChild(slot)
+            isFirstSlot = false
         }
+    }
+    fragment.appendChild(document.createTextNode(' '))
 
-        if (token.type === 'pill') {
-            const pill = el('button', 'cp-rule-token-pill', { type: 'button', title: token.code })
-            pill.draggable = true
-            pill.addEventListener('dragstart', (event) => {
-                rowState.dragTokenIndex = i
-                event.dataTransfer?.setData('text/plain', String(i))
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-            })
-            pill.addEventListener('dragend', () => {
-                rowState.dragTokenIndex = null
-            })
-            pill.append(
-                el('span', 'cp-rule-token-pill-label', { text: token.label }),
-                el('span', 'cp-rule-token-pill-remove', { html: closeIcon }),
-            )
-            pill.addEventListener('click', () => {
-                rowState.tokens.splice(i, 1)
-                renderTokenEditor(rowState)
-                rowState.onExpressionChanged?.()
-            })
-            editor.appendChild(pill)
-            renderGap(i + 1)
-            continue
+    range.insertNode(fragment)
+
+    const firstSlot = slots[0]
+    if (firstSlot) {
+        const slotRange = document.createRange()
+        slotRange.selectNode(firstSlot)
+        selection.removeAllRanges()
+        selection.addRange(slotRange)
+        return
+    }
+
+    placeCaretAtEnd(editor)
+}
+
+function renderTokenEditor(rowState) {
+    if (!rowState?.expressionInput) return
+    const editor = rowState.expressionInput
+    editor.innerHTML = ''
+    rowState.activePill = null
+
+    const ensureDropMarker = () => {
+        if (rowState.dropMarker?.isConnected) return rowState.dropMarker
+        rowState.dropMarker = el('span', 'cp-rule-drop-marker')
+        return rowState.dropMarker
+    }
+
+    const clearDropMarker = () => {
+        rowState.dropMarker?.remove()
+    }
+
+    const placeDropMarkerAtPoint = (clientX, clientY) => {
+        const marker = ensureDropMarker()
+        const range = caretRangeFromPoint(clientX, clientY)
+        if (!range || !editor.contains(range.commonAncestorContainer)) {
+            editor.appendChild(marker)
+            return
         }
+        range.insertNode(marker)
+    }
 
-        if (token.type === 'number') {
-            const numberWrap = el('div', 'cp-rule-token-number-wrap')
-            numberWrap.draggable = true
-            numberWrap.addEventListener('dragstart', (event) => {
-                rowState.dragTokenIndex = i
-                event.dataTransfer?.setData('text/plain', String(i))
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-            })
-            numberWrap.addEventListener('dragend', () => {
-                rowState.dragTokenIndex = null
-            })
-            const number = el('input', 'cp-input-number cp-rule-token-number', {
-                type: 'number',
-                step: 0.001,
-                value: String(token.value ?? 0),
-            })
-            number.addEventListener('change', () => {
-                token.value = Number(number.value)
-                rowState.onExpressionChanged?.()
-            })
-            const remove = el('button', 'cp-rule-token-number-remove', { type: 'button', title: 'Remove token' })
-            remove.appendChild(el('span', 'cp-rule-token-pill-remove', { html: closeIcon }))
-            remove.addEventListener('click', (event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                rowState.tokens.splice(i, 1)
-                renderTokenEditor(rowState)
-                rowState.onExpressionChanged?.()
-            })
-            numberWrap.append(number, remove)
-            editor.appendChild(numberWrap)
-            renderGap(i + 1)
-            continue
-        }
-
-        const op = el('button', 'cp-rule-token-math', { type: 'button', text: token.code.trim() || token.code })
-        op.draggable = true
-        op.addEventListener('dragstart', (event) => {
-            rowState.dragTokenIndex = i
-            event.dataTransfer?.setData('text/plain', String(i))
-            if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+    const wirePillInteractions = (pill) => {
+        if (!pill) return
+        pill.draggable = true
+        pill.addEventListener('click', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            rowState.activePill = pill
+            const id = String(pill.getAttribute('data-rule-var-id') || '')
+            if (rowState.valueActionSelect && id) {
+                rowState.valueActionSelect.value = `var:${id}`
+                openSelectPicker(rowState.valueActionSelect)
+            }
         })
-        op.addEventListener('dragend', () => {
-            rowState.dragTokenIndex = null
+        pill.addEventListener('dragstart', (event) => {
+            rowState.draggingPill = pill
+            pill.classList.add('is-dragging')
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', String(pill.getAttribute('data-rule-var-id') || ''))
+            }
         })
-        op.addEventListener('click', () => {
-            rowState.tokens.splice(i, 1)
-            renderTokenEditor(rowState)
+        pill.addEventListener('dragend', () => {
+            pill.classList.remove('is-dragging')
+            rowState.draggingPill = null
+            clearDropMarker()
             rowState.onExpressionChanged?.()
         })
-        editor.appendChild(op)
-        renderGap(i + 1)
+    }
+
+    if (!rowState.editorEventsBound) {
+        editor.addEventListener('dragover', (event) => {
+            if (!rowState.draggingPill) return
+            event.preventDefault()
+            placeDropMarkerAtPoint(event.clientX, event.clientY)
+        })
+
+        editor.addEventListener('drop', (event) => {
+            if (!rowState.draggingPill) return
+            event.preventDefault()
+            const dragging = rowState.draggingPill
+            const marker = rowState.dropMarker
+            if (marker?.isConnected && dragging !== marker && dragging.parentNode === editor) {
+                marker.replaceWith(dragging)
+            } else {
+                placeDropMarkerAtPoint(event.clientX, event.clientY)
+                rowState.dropMarker?.replaceWith(dragging)
+            }
+            clearDropMarker()
+            rowState.onExpressionChanged?.()
+        })
+
+        editor.addEventListener('dragleave', (event) => {
+            if (!rowState.draggingPill) return
+            const nextTarget = event.relatedTarget
+            if (nextTarget instanceof Node && editor.contains(nextTarget)) return
+            clearDropMarker()
+        })
+
+        rowState.editorEventsBound = true
+    }
+
+    const source = String(rowState.expression || '')
+    if (!source) return
+
+    RULE_RENDER_TOKEN_REGEX.lastIndex = 0
+    let lastIndex = 0
+    for (const match of source.matchAll(RULE_RENDER_TOKEN_REGEX)) {
+        const tokenText = String(match[0] || '')
+        const index = Number(match.index)
+        if (index > lastIndex) {
+            editor.appendChild(document.createTextNode(source.slice(lastIndex, index)))
+        }
+        if (tokenText.startsWith(RULE_SLOT_MARKER)) {
+            const slotLabel = tokenText.slice(RULE_SLOT_MARKER.length).trim() || 'value'
+            editor.appendChild(createRuleExpressionSlot(slotLabel))
+        } else {
+            const pill = createRuleExpressionPill(tokenText)
+            wirePillInteractions(pill)
+            editor.appendChild(pill)
+        }
+        lastIndex = index + tokenText.length
+    }
+
+    if (lastIndex < source.length) {
+        editor.appendChild(document.createTextNode(source.slice(lastIndex)))
     }
 }
 
@@ -1792,17 +2229,14 @@ function toActionFromState(rowState) {
         }
     }
 
-    const expression = rowState.definition.type === 'enum'
-        ? ''
-        : compileTokens(rowState.tokens)
-    if (rowState.definition.type !== 'enum' && hasUnresolvedSlots(rowState.tokens)) return null
-    rowState.expression = expression
-
-    const text = String(expression || '').trim()
+    const text = String(rowState.expression || '').trim()
+    rowState.expression = text
     if (!text) return null
 
-    const numeric = Number(text)
-    if (Number.isFinite(numeric) && /^[-+]?\d+(\.\d+)?$/.test(text)) {
+    const executableText = text.replace(RULE_SLOT_MARKER_REGEX, '0')
+
+    const numeric = Number(executableText)
+    if (Number.isFinite(numeric) && /^[-+]?\d+(\.\d+)?$/.test(executableText)) {
         return {
             operator: 'set',
             output,
@@ -1810,18 +2244,18 @@ function toActionFromState(rowState) {
         }
     }
 
-    if (RULE_VARIABLE_ID_SET.has(text)) {
+    if (RULE_VARIABLE_ID_SET.has(executableText)) {
         return {
             operator: 'set',
             output,
-            input: text,
+            input: executableText,
         }
     }
 
     return {
         operator: 'set',
         output,
-        expression: text,
+        expression: executableText,
     }
 }
 
@@ -1873,12 +2307,19 @@ function buildRulesMenu(body, syncRegistry) {
             conditionRow: null,
             syncConditionUi: null,
             tokenEditor: null,
+            expressionInput: null,
             onExpressionChanged: null,
             enumSelect: null,
+            valueActionSelect: null,
             actionSelect: null,
             duplicateBtn: null,
             removeBtn: null,
             collapseBtn: null,
+            collapseIcon: null,
+            activePill: null,
+            draggingPill: null,
+            dropMarker: null,
+            editorEventsBound: false,
         }
     }
 
@@ -1896,6 +2337,10 @@ function buildRulesMenu(body, syncRegistry) {
         rowState.insertContext = null
         rowState.pendingInsertIndex = null
         rowState.enumValue = rowState.definition.options?.[0] || 'square'
+        rowState.activePill = null
+        rowState.draggingPill = null
+        rowState.dropMarker?.remove()
+        rowState.dropMarker = null
     }
 
     function normalizeConditionSignature(rowState) {
@@ -1932,7 +2377,7 @@ function buildRulesMenu(body, syncRegistry) {
         row.card.classList.toggle('is-disabled', !row.enabled || !activeSection)
         row.card.classList.toggle('is-collapsed', !!row.collapsed)
         if (row.removeBtn) row.removeBtn.style.display = row.isDuplicate ? '' : 'none'
-        if (row.collapseBtn) row.collapseBtn.textContent = row.collapsed ? '▸' : '▾'
+        if (row.collapseIcon) row.collapseIcon.textContent = row.collapsed ? '▸' : '▾'
     }
 
     function syncColorMode(target, changedOutput = '', changedRow = null) {
@@ -2172,22 +2617,33 @@ function buildRulesMenu(body, syncRegistry) {
         const card = el('article', `cp-rule-card${rowState.isDuplicate ? ' cp-rule-card--duplicate' : ''}`)
         const header = el('div', 'cp-rule-card-header')
         const headerTools = el('div', 'cp-rule-card-tools')
-        const duplicateBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-duplicate', { type: 'button', title: 'Duplicate rule', 'aria-label': 'Duplicate rule' })
-        duplicateBtn.innerHTML = BUTTON_ICON_MAP.duplicate
-        const removeBtn = el('button', 'cp-btn cp-btn-icon cp-btn-danger cp-rule-card-remove', { type: 'button', title: 'Remove duplicate rule', 'aria-label': 'Remove duplicate rule' })
-        removeBtn.innerHTML = BUTTON_ICON_MAP.remove
+        const addConditionButton = el('button', 'cp-btn cp-rule-condition-add', {
+            type: 'button',
+            title: UI_TEXT.rules.addCondition,
+            'aria-label': UI_TEXT.rules.addCondition,
+        })
+        applyIconOnlyButton(addConditionButton, BUTTON_ICON_MAP.condition || BUTTON_ICON_MAP.add, UI_TEXT.rules.addCondition)
+        const clearTokensBtn = el('button', 'cp-btn cp-rule-card-clear', {
+            type: 'button',
+            title: UI_TEXT.rules.clearTokens,
+            'aria-label': UI_TEXT.rules.clearTokens,
+        })
+        applyIconOnlyButton(clearTokensBtn, BUTTON_ICON_MAP.clear, UI_TEXT.rules.clearTokens)
+        const duplicateBtn = el('button', 'cp-btn cp-rule-card-duplicate', { type: 'button', title: 'Duplicate rule', 'aria-label': 'Duplicate rule' })
+        applyIconOnlyButton(duplicateBtn, BUTTON_ICON_MAP.duplicate, 'Duplicate rule')
+        const removeBtn = el('button', 'cp-btn cp-btn-danger cp-rule-card-remove', { type: 'button', title: 'Remove duplicate rule', 'aria-label': 'Remove duplicate rule' })
+        applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, 'Remove duplicate rule')
         removeBtn.style.display = rowState.isDuplicate ? '' : 'none'
-        const collapseBtn = el('button', 'cp-btn cp-btn-icon cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule', text: rowState.collapsed ? '▸' : '▾' })
-        headerTools.append(duplicateBtn, removeBtn, collapseBtn)
+        const collapseBtn = el('button', 'cp-btn cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule' })
+        const collapseIcon = el('span', 'cp-btn-icon', { text: rowState.collapsed ? '▸' : '▾' })
+        collapseBtn.appendChild(collapseIcon)
+        headerTools.append(addConditionButton, clearTokensBtn, duplicateBtn, removeBtn, collapseBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
         const titleSuffix = rowState.isDuplicate ? ' (Duplicate)' : ''
         const title = el('div', 'cp-rule-card-title', { text: `${definition.label}${titleSuffix}` })
         header.append(toggle, title, headerTools)
 
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
-        const addConditionButton = el('button', 'cp-btn cp-rule-condition-add', { type: 'button', text: UI_TEXT.rules.addCondition })
-        applyButtonIcon(addConditionButton, BUTTON_ICON_MAP.add, UI_TEXT.rules.addCondition)
-
         const conditionSentence = el('div', 'cp-rule-condition-sentence')
         const whenLabel = el('span', 'cp-rule-condition-when', { text: UI_TEXT.rules.when })
         const conditionInputSelect = createRuleConditionInputSelect(NONE_VAR)
@@ -2201,13 +2657,14 @@ function buildRulesMenu(body, syncRegistry) {
         conditionValueInputSelect.classList.add('cp-rule-condition-value-input')
         const removeConditionButton = el('button', 'cp-btn cp-btn-danger cp-rule-condition-remove', { type: 'button', text: UI_TEXT.rules.removeCondition })
         applyButtonIcon(removeConditionButton, BUTTON_ICON_MAP.clear, UI_TEXT.rules.removeCondition)
-        conditionSentence.append(whenLabel, conditionInputSelect, conditionOperatorSelect, conditionValueInput, conditionValueInputSelect, removeConditionButton)
-        conditionRow.append(addConditionButton, conditionSentence)
+        conditionSentence.append(whenLabel, conditionInputSelect, conditionOperatorSelect, conditionValueInput, removeConditionButton)
+        conditionRow.append(conditionSentence)
 
         const expressionRow = el('div', 'cp-rule-card-expression')
         let enumSelect = null
         let tokenEditor = null
-        let actionSelect = null
+        let expressionInput = null
+        let valueActionSelect = null
 
         if (definition.type === 'enum') {
             enumSelect = el('select', 'cp-input-select')
@@ -2216,18 +2673,31 @@ function buildRulesMenu(body, syncRegistry) {
                 rowState.enumValue,
             ))
             expressionRow.appendChild(enumSelect)
+            clearTokensBtn.style.display = 'none'
         } else {
             const tokenRow = el('div', 'cp-rule-token-row')
-            const valueActionSelect = createRuleTokenValueSelect('')
-            actionSelect = createRuleTokenMathSelect('')
+            valueActionSelect = createRuleTokenValueSelect('')
+            const functionSelect = createRuleFunctionSelect('')
 
-            tokenEditor = el('div', 'cp-rule-token-editor', { role: 'list', tabindex: '0' })
+            expressionInput = el('div', 'cp-rule-token-editor cp-rule-expression-input', {
+                contenteditable: 'true',
+                role: 'textbox',
+                'aria-multiline': 'false',
+                tabindex: '0',
+                'data-placeholder': UI_TEXT.rules.tokenEditorPlaceholder,
+            })
+            tokenEditor = expressionInput
 
-            tokenRow.append(valueActionSelect, actionSelect)
-            expressionRow.append(tokenRow, tokenEditor)
+            tokenRow.append(valueActionSelect, functionSelect)
+            expressionRow.append(tokenRow, expressionInput)
 
-            const commitExpression = () => {
-                rowState.expression = compileTokens(rowState.tokens)
+            const commitExpression = ({ rerender = false } = {}) => {
+                rowState.expression = normalizeExpressionSlotGaps(readExpressionFromEditor(expressionInput))
+                rowState.tokens = parseExpressionToTokens(rowState.expression)
+
+                if (rerender) {
+                    renderTokenEditor(rowState)
+                }
 
                 if (definition.output === 'red' || definition.output === 'green' || definition.output === 'blue') {
                     syncColorMode(definition.target, definition.output, rowState)
@@ -2236,38 +2706,64 @@ function buildRulesMenu(body, syncRegistry) {
                     syncColorMode(definition.target, 'hue', rowState)
                 }
 
-                if (rowState.enabled && !String(rowState.expression || '').trim()) {
-                    rowState.enabled = false
-                    if (rowState.toggle) rowState.toggle.checked = false
-                    refreshRowCardState(rowState)
-                    commitRuleBlocks()
-                    return
-                }
-
                 commitRowIfReady(rowState)
             }
 
             rowState.onExpressionChanged = commitExpression
 
-            const insertSelection = (selected, control) => {
-                const next = tokensForInsertSelection(selected)
-                if (!next.length) return
-                const insertIndex = Number.isInteger(rowState.pendingInsertIndex)
-                    ? rowState.pendingInsertIndex
-                    : rowState.tokens.length
-                rowState.tokens.splice(insertIndex, 0, ...next)
-                rowState.pendingInsertIndex = null
-                if (control) control.value = ''
-                renderTokenEditor(rowState)
-                commitExpression()
-            }
-
             valueActionSelect.addEventListener('change', () => {
-                insertSelection(String(valueActionSelect.value || ''), valueActionSelect)
+                const selected = String(valueActionSelect.value || '')
+                valueActionSelect.value = ''
+                if (!selected.startsWith('var:')) return
+                const nextVariableId = selected.slice(4)
+                const activePill = rowState.activePill
+                if (activePill && expressionInput.contains(activePill)) {
+                    activePill.replaceWith(createRuleExpressionPill(nextVariableId))
+                    rowState.activePill = null
+                    rowState.expression = readExpressionFromEditor(expressionInput)
+                    renderTokenEditor(rowState)
+                } else {
+                    insertVariablePillAtCursor(expressionInput, nextVariableId)
+                }
+                commitExpression()
             })
 
-            actionSelect.addEventListener('change', () => {
-                insertSelection(String(actionSelect.value || ''), actionSelect)
+            functionSelect.addEventListener('change', () => {
+                const selected = String(functionSelect.value || '')
+                functionSelect.value = ''
+                if (!selected) return
+                insertFunctionTemplateAtCursor(expressionInput, selected)
+                commitExpression()
+            })
+
+            expressionInput.addEventListener('input', commitExpression)
+            expressionInput.addEventListener('blur', () => commitExpression({ rerender: true }))
+            expressionInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') event.preventDefault()
+            })
+            expressionInput.addEventListener('click', (event) => {
+                const clickedPill = event.target instanceof Element ? event.target.closest('.cp-rule-inline-pill') : null
+                if (!clickedPill || !expressionInput.contains(clickedPill)) {
+                    rowState.activePill = null
+                }
+                const slot = event.target instanceof Element ? event.target.closest('.cp-rule-inline-slot') : null
+                if (!slot || !expressionInput.contains(slot)) return
+                const selection = window.getSelection?.()
+                if (!selection) return
+                const range = document.createRange()
+                range.selectNodeContents(slot)
+                selection.removeAllRanges()
+                selection.addRange(range)
+            })
+
+            clearTokensBtn.addEventListener('click', () => {
+                expressionInput.innerHTML = ''
+                rowState.expression = ''
+                rowState.tokens = []
+                rowState.insertContext = null
+                rowState.pendingInsertIndex = null
+                commitExpression()
+                expressionInput.focus()
             })
         }
 
@@ -2283,15 +2779,19 @@ function buildRulesMenu(body, syncRegistry) {
         rowState.duplicateBtn = duplicateBtn
         rowState.removeBtn = removeBtn
         rowState.collapseBtn = collapseBtn
+        rowState.collapseIcon = collapseIcon
         rowState.conditionRow = conditionRow
         rowState.tokenEditor = tokenEditor
+        rowState.expressionInput = expressionInput
         rowState.enumSelect = enumSelect
-        rowState.actionSelect = actionSelect
+        rowState.valueActionSelect = definition.type !== 'enum' ? valueActionSelect : null
+        rowState.actionSelect = null
 
         rowState.syncConditionUi = () => {
-            addConditionButton.style.display = rowState.conditionEnabled ? 'none' : ''
-            conditionSentence.style.display = rowState.conditionEnabled ? '' : 'none'
-            if (!rowState.conditionEnabled) return
+            const showCondition = !!rowState.conditionEnabled
+            addConditionButton.style.display = showCondition ? 'none' : ''
+            conditionRow.style.display = showCondition ? '' : 'none'
+            if (!showCondition) return
             conditionOperatorSelect.value = rowState.conditionOperator === 'always' ? '>' : rowState.conditionOperator
             const activeInput = rowState.conditionDetail !== NONE_VAR ? rowState.conditionDetail : rowState.conditionOverall
             conditionInputSelect.value = activeInput || NONE_VAR
