@@ -1,25 +1,3 @@
-/**
- * SEESOUND v1.0 — ParticleSystem.js
- * ═══════════════════════════════════════════════════════════════════════════
- * Self-contained Three.js point-cloud renderer.
- *
- * One particle per log-frequency bucket. FFT bins are resampled into
- * constant log buckets for octave-uniform visual density.
- *
- *   Linear (1): X = playback time (canvas px = audio seconds)
- *               Y = log₂(16 Hz … 20 000 Hz), bass at bottom, treble at top
- *
- *   Stereo (10): X = stereo pan (−1 … +1 mapped to canvas width)
- *                Y = same log₂ frequency scale as Linear
- *
- * Usage
- * ─────
- *   import { ParticleSystem } from './engine/ParticleSystem.js'
- *   const ps = new ParticleSystem(scene, { maxParticles: 1024 })
- *   // each animation frame:
- *   ps.update(audioEngine, params, canvasW, canvasH)
- */
-
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
 
@@ -194,7 +172,7 @@ export class ParticleSystem {
                 uViewportHeight: { value: 1 },
             },
             transparent: true,
-            depthWrite: false,
+            depthWrite: true,
             blending: THREE.AdditiveBlending,
         })
 
@@ -205,7 +183,7 @@ export class ParticleSystem {
             transparent: true,
             opacity: 0.9,
             blending: THREE.AdditiveBlending,
-            depthWrite: false,
+            depthWrite: true,
         })
         this._lineMesh = new THREE.LineSegments(lineGeo, lineMat)
         this._lineMesh.frustumCulled = false

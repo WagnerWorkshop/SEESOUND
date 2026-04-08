@@ -161,6 +161,26 @@ function syncPostProcessingFromParams() {
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
 }
 
+function syncSceneFogFromParams(backgroundColor = null) {
+    const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
+    const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
+    if (!fogEnabled || fogDensity <= 0) {
+        scene.fog = null
+        return
+    }
+
+    const hue = ((Number(params.defaultBackgroundHue ?? 0) % 360) + 360) % 360
+    const sat = Math.max(0, Math.min(100, Number(params.defaultBackgroundSaturation ?? 0))) / 100
+    const light = Math.max(0, Math.min(100, Number(params.defaultBackgroundLightness ?? 0))) / 100
+    const fogColor = backgroundColor || new THREE.Color().setHSL(hue / 360, sat, light)
+    if (!(scene.fog instanceof THREE.FogExp2)) {
+        scene.fog = new THREE.FogExp2(fogColor, fogDensity)
+        return
+    }
+    scene.fog.color.copy(fogColor)
+    scene.fog.density = fogDensity
+}
+
 function shouldUsePostProcessing() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     if (!postEnabled) return false
@@ -753,6 +773,7 @@ resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
 syncPostProcessingFromParams()
+syncSceneFogFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -1981,6 +2002,7 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
+    syncSceneFogFromParams(bg)
     ps.setViewportHeight(renderer.domElement.height)
 
     if (shouldUsePostProcessing()) {
@@ -2586,6 +2608,13 @@ subscribe((_, key) => {
         key === 'bloomRadius' ||
         key === 'bloomThreshold'
     ) syncPostProcessingFromParams()
+    if (
+        key === 'fogEnabled' ||
+        key === 'fogDensity' ||
+        key === 'defaultBackgroundHue' ||
+        key === 'defaultBackgroundSaturation' ||
+        key === 'defaultBackgroundLightness'
+    ) syncSceneFogFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {

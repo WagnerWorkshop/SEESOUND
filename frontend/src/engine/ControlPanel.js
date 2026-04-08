@@ -426,9 +426,30 @@ function formatTechnicalTerm(term) {
 function formatRuleVariableDropdownLabel(entry) {
     const label = String(entry?.label || '').trim()
     const technical = formatTechnicalTerm(entry?.legacyName || entry?.id)
-    if (!label) return technical
-    if (!technical || technical.toLowerCase() === label.toLowerCase()) return label
-    return `${label} (${technical})`
+    return label || technical
+}
+
+function getRuleVariableTooltip(entry) {
+    const technical = formatTechnicalTerm(entry?.legacyName || entry?.id)
+    const description = String(entry?.description || '').trim()
+    if (technical && description) return `[${technical}] ${description}`
+    if (technical) return `[${technical}]`
+    return description
+}
+
+function applySelectedOptionTooltip(select) {
+    if (!select) return
+    const sync = () => {
+        const selectedOption = select.selectedOptions?.[0]
+        const title = String(selectedOption?.title || '')
+        if (title) select.title = title
+        else select.removeAttribute('title')
+    }
+    select.addEventListener('change', sync)
+    select.addEventListener('input', sync)
+    select.addEventListener('focus', sync)
+    select.addEventListener('mouseover', sync)
+    sync()
 }
 
 function appendExpressionPartsFromNode(node, parts) {
@@ -808,13 +829,17 @@ function createTokenInsertSelect(selected = '') {
     const valueGroup = document.createElement('optgroup')
     valueGroup.label = UI_TEXT.rules.detailVariables
     for (const entry of getRuleVariablesByGroup('detail')) {
-        valueGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+        const option = el('option', '', { value: `var:${entry.id}`, text: entry.label })
+        option.title = getRuleVariableTooltip(entry)
+        valueGroup.appendChild(option)
     }
 
     const overallGroup = document.createElement('optgroup')
     overallGroup.label = UI_TEXT.rules.overallVariables
     for (const entry of getRuleVariablesByGroup('overall')) {
-        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+        const option = el('option', '', { value: `var:${entry.id}`, text: entry.label })
+        option.title = getRuleVariableTooltip(entry)
+        overallGroup.appendChild(option)
     }
 
     const typeGroup = document.createElement('optgroup')
@@ -829,6 +854,7 @@ function createTokenInsertSelect(selected = '') {
 
     select.append(valueGroup, overallGroup, typeGroup, mathGroup)
     if (selected) select.value = selected
+    applySelectedOptionTooltip(select)
     return select
 }
 
@@ -839,17 +865,22 @@ function createRuleTokenValueSelect(selected = '') {
     const detailGroup = document.createElement('optgroup')
     detailGroup.label = UI_TEXT.rules.detailVariables
     for (const entry of getRuleVariablesByGroup('detail')) {
-        detailGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) }))
+        const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
+        option.title = getRuleVariableTooltip(entry)
+        detailGroup.appendChild(option)
     }
 
     const overallGroup = document.createElement('optgroup')
     overallGroup.label = UI_TEXT.rules.overallVariables
     for (const entry of getRuleVariablesByGroup('overall')) {
-        overallGroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) }))
+        const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
+        option.title = getRuleVariableTooltip(entry)
+        overallGroup.appendChild(option)
     }
 
     select.append(detailGroup, overallGroup)
     if (selected) select.value = selected
+    applySelectedOptionTooltip(select)
     return select
 }
 
@@ -902,10 +933,39 @@ function createRuleExpressionPill(variableId) {
     const pill = el('span', 'cp-rule-inline-pill', {
         'data-rule-var-id': id,
         contenteditable: 'false',
-        title: id,
+        title: getRuleVariableTooltip(variable) || id,
     })
     pill.textContent = variable?.label || id
     return pill
+}
+
+function appendExpressionTextTokens(editor, text) {
+    if (!editor) return
+    const source = String(text || '')
+    if (!source) return
+
+    const tokenRegex = /(\d*\.\d+|\d+|[+\-*/]|[()\[\]{}])/g
+    let lastIndex = 0
+
+    for (const match of source.matchAll(tokenRegex)) {
+        const value = String(match[0] || '')
+        const index = Number(match.index)
+        if (index > lastIndex) {
+            editor.appendChild(document.createTextNode(source.slice(lastIndex, index)))
+        }
+
+        let className = ''
+        if (/^(\d*\.\d+|\d+)$/.test(value)) className = 'cp-rule-expression-number'
+        else if (/^[+\-*/]$/.test(value)) className = 'cp-rule-expression-math'
+        else className = 'cp-rule-expression-bracket'
+
+        editor.appendChild(el('span', className, { text: value }))
+        lastIndex = index + value.length
+    }
+
+    if (lastIndex < source.length) {
+        editor.appendChild(document.createTextNode(source.slice(lastIndex)))
+    }
 }
 
 function createRuleExpressionSlot(label = 'value') {
@@ -1232,7 +1292,7 @@ function renderTokenEditor(rowState) {
         const tokenText = String(match[0] || '')
         const index = Number(match.index)
         if (index > lastIndex) {
-            editor.appendChild(document.createTextNode(source.slice(lastIndex, index)))
+            appendExpressionTextTokens(editor, source.slice(lastIndex, index))
         }
         if (tokenText.startsWith(RULE_SLOT_MARKER)) {
             const slotLabel = tokenText.slice(RULE_SLOT_MARKER.length).trim() || 'value'
@@ -1246,7 +1306,7 @@ function renderTokenEditor(rowState) {
     }
 
     if (lastIndex < source.length) {
-        editor.appendChild(document.createTextNode(source.slice(lastIndex)))
+        appendExpressionTextTokens(editor, source.slice(lastIndex))
     }
 }
 
@@ -1258,7 +1318,7 @@ function createRuleInsertionSelect(selected = NONE_VAR) {
     detailGroup.label = UI_TEXT.rules.detailVariables
     for (const entry of getRuleVariablesByGroup('detail')) {
         const option = el('option', '', { value: entry.id, text: entry.label })
-        option.title = `Previously: ${entry.legacyName}. ${entry.description}`
+        option.title = getRuleVariableTooltip(entry)
         detailGroup.appendChild(option)
     }
 
@@ -1266,12 +1326,13 @@ function createRuleInsertionSelect(selected = NONE_VAR) {
     overallGroup.label = UI_TEXT.rules.overallVariables
     for (const entry of getRuleVariablesByGroup('overall')) {
         const option = el('option', '', { value: entry.id, text: entry.label })
-        option.title = `Previously: ${entry.legacyName}. ${entry.description}`
+        option.title = getRuleVariableTooltip(entry)
         overallGroup.appendChild(option)
     }
 
     select.append(detailGroup, overallGroup)
     if (selected && selected !== NONE_VAR) select.value = selected
+    applySelectedOptionTooltip(select)
     return select
 }
 
@@ -1440,10 +1501,11 @@ function createRuleVariableSelect(group, selected = NONE_VAR) {
         getRuleVariablesByGroup(group).map((entry) => ({
             value: entry.id,
             label: entry.label,
-            title: `Previously: ${entry.legacyName}. ${entry.description}`,
+            title: getRuleVariableTooltip(entry),
         }))
     )
     select.appendChild(createSelectOptions(options, selected))
+    applySelectedOptionTooltip(select)
     return select
 }
 
@@ -1454,17 +1516,22 @@ function createRuleConditionInputSelect(selected = NONE_VAR) {
     const detailGroup = document.createElement('optgroup')
     detailGroup.label = UI_TEXT.rules.detailVariables
     for (const entry of getRuleVariablesByGroup('detail')) {
-        detailGroup.appendChild(el('option', '', { value: entry.id, text: entry.label }))
+        const option = el('option', '', { value: entry.id, text: entry.label })
+        option.title = getRuleVariableTooltip(entry)
+        detailGroup.appendChild(option)
     }
 
     const overallGroup = document.createElement('optgroup')
     overallGroup.label = UI_TEXT.rules.overallVariables
     for (const entry of getRuleVariablesByGroup('overall')) {
-        overallGroup.appendChild(el('option', '', { value: entry.id, text: entry.label }))
+        const option = el('option', '', { value: entry.id, text: entry.label })
+        option.title = getRuleVariableTooltip(entry)
+        overallGroup.appendChild(option)
     }
 
     select.append(detailGroup, overallGroup)
     if (selected && selected !== NONE_VAR) select.value = selected
+    applySelectedOptionTooltip(select)
     return select
 }
 
@@ -1848,11 +1915,14 @@ function buildViewMenu(body, syncRegistry) {
 
     const postEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const bloomEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const fogEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
 
     const postEnabledRow = el('label', 'cp-toggle-row')
     postEnabledRow.append(postEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.postProcessingEnabled }))
     const bloomEnabledRow = el('label', 'cp-toggle-row')
     bloomEnabledRow.append(bloomEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bloomEnabled }))
+    const fogEnabledRow = el('label', 'cp-toggle-row')
+    fogEnabledRow.append(fogEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.fogEnabled || 'Fog Enabled' }))
 
     const bloomStrengthSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 4, step: 0.01 })
     const bloomStrengthNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 4, step: 0.01 })
@@ -1890,12 +1960,26 @@ function buildViewMenu(body, syncRegistry) {
         })(),
     )
 
+    const fogDensitySlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.02, step: 0.0001 })
+    const fogDensityNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.02, step: 0.0001 })
+    const fogDensityRow = el('div', 'cp-setting-row')
+    fogDensityRow.append(
+        el('label', 'cp-setting-label', { text: UI_TEXT.view.fogDensity || 'Fog Density' }),
+        (() => {
+            const controls = el('div', 'cp-setting-controls')
+            controls.append(fogDensitySlider, fogDensityNumber)
+            return controls
+        })(),
+    )
+
     postSection.append(
         postEnabledRow,
         bloomEnabledRow,
+        fogEnabledRow,
         bloomStrengthRow,
         bloomRadiusRow,
         bloomThresholdRow,
+        fogDensityRow,
     )
 
     const guideSection = el('section', 'cp-section')
@@ -1984,6 +2068,7 @@ function buildViewMenu(body, syncRegistry) {
 
     postEnabled.addEventListener('change', () => set('postProcessEnabled', postEnabled.checked ? 1 : 0))
     bloomEnabled.addEventListener('change', () => set('bloomEnabled', bloomEnabled.checked ? 1 : 0))
+    fogEnabled.addEventListener('change', () => set('fogEnabled', fogEnabled.checked ? 1 : 0))
 
     const bindSliderAndNumber = ({ slider, number, key, min, max }) => {
         const applyFromSlider = (raw) => {
@@ -2002,6 +2087,7 @@ function buildViewMenu(body, syncRegistry) {
     bindSliderAndNumber({ slider: bloomStrengthSlider, number: bloomStrengthNumber, key: 'bloomStrength', min: 0, max: 4 })
     bindSliderAndNumber({ slider: bloomRadiusSlider, number: bloomRadiusNumber, key: 'bloomRadius', min: 0, max: 2 })
     bindSliderAndNumber({ slider: bloomThresholdSlider, number: bloomThresholdNumber, key: 'bloomThreshold', min: 0, max: 1 })
+    bindSliderAndNumber({ slider: fogDensitySlider, number: fogDensityNumber, key: 'fogDensity', min: 0, max: 0.02 })
 
     const applyFovFromSlider = (value) => {
         set('cameraAngleOfView', clamp(value, 20, 120))
@@ -2083,6 +2169,7 @@ function buildViewMenu(body, syncRegistry) {
     const syncPostEnabled = () => {
         postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
+        fogEnabled.checked = Number(params.fogEnabled ?? 1) >= 0.5
     }
 
     const syncGuideToggles = () => {
@@ -2108,6 +2195,12 @@ function buildViewMenu(body, syncRegistry) {
         bloomThresholdNumber.value = String(bloomThreshold)
     }
 
+    const syncFogDensity = () => {
+        const fogDensity = Number(params.fogDensity ?? 0.002)
+        fogDensitySlider.value = String(fogDensity)
+        fogDensityNumber.value = String(fogDensity)
+    }
+
     const syncCameraFields = () => {
         syncCameraNumbers()
     }
@@ -2118,11 +2211,12 @@ function buildViewMenu(body, syncRegistry) {
     registerSync(syncRegistry, syncProjectionControls, ['cameraProjection', 'cameraAxoPreset'])
     registerSync(syncRegistry, syncBlendMode, ['blendMode'])
     registerSync(syncRegistry, syncFov, ['cameraAngleOfView'])
-    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled'])
+    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled', 'fogEnabled'])
     registerSync(syncRegistry, syncGuideToggles, ['originSignEnabled', 'coordinateGuidesEnabled'])
     registerSync(syncRegistry, syncBloomStrength, ['bloomStrength'])
     registerSync(syncRegistry, syncBloomRadius, ['bloomRadius'])
     registerSync(syncRegistry, syncBloomThreshold, ['bloomThreshold'])
+    registerSync(syncRegistry, syncFogDensity, ['fogDensity'])
     registerSync(syncRegistry, syncCameraFields, ['cameraPosX', 'cameraPosY', 'cameraPosZ', 'cameraTargetX', 'cameraTargetY', 'cameraTargetZ'])
 
     window.addEventListener('seesound:camera-state', (event) => {
@@ -2162,6 +2256,7 @@ function buildViewMenu(body, syncRegistry) {
     syncBloomStrength()
     syncBloomRadius()
     syncBloomThreshold()
+    syncFogDensity()
     syncCameraFields()
     cameraHudToggle.checked = false
 

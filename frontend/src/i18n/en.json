@@ -205,7 +205,7 @@
         "rules": {
             "title": "Rules",
             "condition": "Condition",
-            "addCondition": "If",
+            "addCondition": "Add Condition",
             "when": "When",
             "selectValue": "Select value",
             "removeCondition": "Remove condition",

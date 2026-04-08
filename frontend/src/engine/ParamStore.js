@@ -473,6 +473,18 @@ const PARAMS_BASE = [
         canDisable: false,
     },
     {
+        key: 'fogEnabled', group: 'mixing', label: 'Fog Enabled',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Enable exponential scene fog. Fog color matches background color.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'fogDensity', group: 'mixing', label: 'Fog Density',
+        min: 0, max: 0.02, step: 0.0001, default: 0.002, unit: '',
+        desc: 'Exponential fog density. Higher values produce thicker fog.',
+        canDisable: false,
+    },
+    {
         key: 'persistMode', group: 'mixing', label: 'Persistence',
         min: 0, max: 1, step: 1, default: 0, unit: '',
         desc: 'Momentary: canvas fades each frame. Painting: marks accumulate.',
@@ -715,13 +727,24 @@ export function setMany(updates) {
 
 export function resetToDefaults() {
     _pushUndoSnapshot()
+    const changed = Object.create(null)
     for (const p of PARAMS) params[p.key] = p.default
+    for (const p of PARAMS) changed[p.key] = params[p.key]
     params.ruleBlocks = []
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
     params.palettes = []
     params.ruleUiState = _sanitizeRuleUiState(DEFAULT_RULE_ENGINE_STATE.ruleUiState)
-    _notify('*', null)
+    changed.ruleBlocks = params.ruleBlocks
+    changed.ruleEngineEnabled = params.ruleEngineEnabled
+    changed.ruleSchemaVersion = params.ruleSchemaVersion
+    changed.palettes = params.palettes
+    changed.ruleUiState = params.ruleUiState
+
+    for (const [k, v] of Object.entries(changed)) {
+        _notify(k, v)
+    }
+    _notify('*', changed)
 }
 
 export function saveUserDefault(key, value) {

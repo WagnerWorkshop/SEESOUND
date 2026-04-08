@@ -226,7 +226,7 @@ export function initAudioPlayer(container) {
     // Dynamic track fill via CSS custom property
     function _updateSeekTrack(pct) {
         seekBar.style.background =
-            `linear-gradient(90deg, var(--color-accent) ${pct}%, var(--color-border) ${pct}%)`
+            `linear-gradient(90deg, var(--color-slider-fill) ${pct}%, var(--color-surface-2) ${pct}%)`
     }
     _updateSeekTrack(0)
 
