@@ -43,6 +43,7 @@ import recordIcon from '../icons/record.svg?raw'
 import speedIcon from '../icons/speed.svg?raw'
 import muteIcon from '../icons/mute.svg?raw'
 import loudIcon from '../icons/loud.svg?raw'
+import { UI_TEXT } from '../engine/ui/UiText.js'
 
 /** Format seconds → "M:SS" */
 function fmtTime(sec) {
@@ -69,6 +70,12 @@ function applyIcon(node, svgMarkup, ariaLabel) {
     node.innerHTML = ''
     node.append(el('span', 'audio-player__icon', { html: svgMarkup }))
     if (ariaLabel) node.setAttribute('aria-label', ariaLabel)
+}
+
+function getAudioPlayerText(key, fallback = '') {
+    const value = UI_TEXT?.audioPlayer?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +106,8 @@ export function initAudioPlayer(container) {
     // ── DOM construction ───────────────────────────────────────────────────
 
     const collapseBtn = el('button', 'audio-player__collapse-btn', {
-        'aria-label': 'Collapse audio player', 'title': 'Collapse player'
+        'aria-label': getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'),
+        'title': getAudioPlayerText('collapsePlayerTitle', 'Collapse player'),
     })
     collapseBtn.textContent = '«'
 
@@ -108,12 +116,12 @@ export function initAudioPlayer(container) {
     function setCollapseButtonVisual(isCollapsed) {
         collapseBtn.classList.toggle('audio-player__collapse-btn--icon', isCollapsed)
         if (isCollapsed) {
-            applyIcon(collapseBtn, audioIcon, 'Expand player')
-            collapseBtn.title = 'Expand player'
+            applyIcon(collapseBtn, audioIcon, getAudioPlayerText('expandPlayerAria', 'Expand player'))
+            collapseBtn.title = getAudioPlayerText('expandPlayerTitle', 'Expand player')
         } else {
             collapseBtn.textContent = '«'
-            collapseBtn.setAttribute('aria-label', 'Collapse audio player')
-            collapseBtn.title = 'Collapse player'
+            collapseBtn.setAttribute('aria-label', getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'))
+            collapseBtn.title = getAudioPlayerText('collapsePlayerTitle', 'Collapse player')
         }
         if (appRoot) appRoot.classList.toggle('audio-player-collapsed', isCollapsed)
     }
@@ -128,49 +136,69 @@ export function initAudioPlayer(container) {
     const fileInput = el('input', '', { type: 'file', accept: 'audio/*', id: 'audio-file-input' })
     fileInput.style.display = 'none'
     const fileLabel = el('label', 'audio-player__file-label', {
-        'for': 'audio-file-input', 'title': 'Open audio file'
+        'for': 'audio-file-input',
+        'title': getAudioPlayerText('openAudioFileTitle', 'Open audio file'),
     })
-    applyIcon(fileLabel, audioIcon, 'Open audio file')
-    const fileName = el('span', 'audio-player__file-name', { text: 'No file loaded' })
+    applyIcon(fileLabel, audioIcon, getAudioPlayerText('openAudioFileAria', 'Open audio file'))
+    const fileName = el('span', 'audio-player__file-name', { text: getAudioPlayerText('noFileLoaded', 'No file loaded') })
     fileRow.append(fileInput, fileLabel)
 
     // Transport buttons
     const transport = el('div', 'audio-player__transport')
 
     const btnPlayPause = el('button', 'audio-player__btn audio-player__btn--play cp-btn cp-btn-icon', {
-        id: 'btn-play-pause', 'aria-label': 'Play', disabled: 'true'
+        id: 'btn-play-pause',
+        'aria-label': getAudioPlayerText('playAria', 'Play'),
+        disabled: 'true',
     })
-    applyIcon(btnPlayPause, playIcon, 'Play')
+    applyIcon(btnPlayPause, playIcon, getAudioPlayerText('playAria', 'Play'))
 
     const btnStop = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-stop', 'aria-label': 'Stop', disabled: 'true', title: 'Stop (return to start)'
+        id: 'btn-stop',
+        'aria-label': getAudioPlayerText('stopAria', 'Stop'),
+        disabled: 'true',
+        title: getAudioPlayerText('stopTitle', 'Stop (return to start)'),
     })
-    applyIcon(btnStop, stopIcon, 'Stop')
+    applyIcon(btnStop, stopIcon, getAudioPlayerText('stopAria', 'Stop'))
 
     const btnBack = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-back', 'aria-label': '−10 seconds', disabled: 'true', title: '−10 s'
+        id: 'btn-back',
+        'aria-label': getAudioPlayerText('backAria', '−10 seconds'),
+        disabled: 'true',
+        title: getAudioPlayerText('backTitle', '−10 s'),
     })
-    applyIcon(btnBack, rewindIcon, '−10 seconds')
+    applyIcon(btnBack, rewindIcon, getAudioPlayerText('backAria', '−10 seconds'))
 
     const btnFwd = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-fwd', 'aria-label': '+10 seconds', disabled: 'true', title: '+10 s'
+        id: 'btn-fwd',
+        'aria-label': getAudioPlayerText('forwardAria', '+10 seconds'),
+        disabled: 'true',
+        title: getAudioPlayerText('forwardTitle', '+10 s'),
     })
-    applyIcon(btnFwd, rewindForwardIcon, '+10 seconds')
+    applyIcon(btnFwd, rewindForwardIcon, getAudioPlayerText('forwardAria', '+10 seconds'))
 
     const btnMute = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-mute', 'aria-label': 'Mute output', disabled: 'true', title: 'Mute output'
+        id: 'btn-mute',
+        'aria-label': getAudioPlayerText('muteAria', 'Mute output'),
+        disabled: 'true',
+        title: getAudioPlayerText('muteTitle', 'Mute output'),
     })
-    applyIcon(btnMute, muteIcon, 'Mute output')
+    applyIcon(btnMute, muteIcon, getAudioPlayerText('muteAria', 'Mute output'))
 
     const btnPng = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-png', 'aria-label': 'Save PNG', title: 'Save canvas as PNG'
+        id: 'btn-png',
+        'aria-label': getAudioPlayerText('savePngAria', 'Save PNG'),
+        title: getAudioPlayerText('savePngTitle', 'Save canvas as PNG'),
     })
-    applyIcon(btnPng, imageIcon, 'Save PNG')
+    applyIcon(btnPng, imageIcon, getAudioPlayerText('savePngAria', 'Save PNG'))
 
     const btnRecord = el('button', 'audio-player__btn cp-btn cp-btn-icon', {
-        id: 'btn-record', 'aria-label': 'Record video', disabled: 'true', title: 'Record canvas and audio'
+        id: 'btn-record',
+        'aria-label': getAudioPlayerText('recordVideoAria', 'Record video'),
+        disabled: 'true',
+        title: getAudioPlayerText('recordVideoTitle', 'Record canvas and audio'),
     })
-    applyIcon(btnRecord, recordIcon, 'Record video')
+    applyIcon(btnRecord, recordIcon, getAudioPlayerText('recordVideoAria', 'Record video'))
 
     const SPEED_MIN = 0.25
     const SPEED_MAX = 4
@@ -180,16 +208,16 @@ export function initAudioPlayer(container) {
     const speedWrap = el('div', 'audio-player__speed-wrap')
     const btnSpeed = el('button', 'audio-player__btn cp-btn cp-btn-icon audio-player__speed-btn', {
         id: 'btn-speed',
-        'aria-label': 'Playback speed',
-        title: 'Playback speed',
+        'aria-label': getAudioPlayerText('playbackSpeedAria', 'Playback speed'),
+        title: getAudioPlayerText('playbackSpeedTitle', 'Playback speed'),
         disabled: 'true',
         type: 'button',
     })
-    applyIcon(btnSpeed, speedIcon, 'Playback speed')
+    applyIcon(btnSpeed, speedIcon, getAudioPlayerText('playbackSpeedAria', 'Playback speed'))
 
     const speedPopover = el('div', 'audio-player__speed-popover', {
         role: 'dialog',
-        'aria-label': 'Playback speed controls',
+        'aria-label': getAudioPlayerText('playbackSpeedControlsAria', 'Playback speed controls'),
     })
     speedPopover.hidden = true
     const speedSlider = el('input', 'audio-player__speed-slider cp-input-range', {
@@ -198,7 +226,7 @@ export function initAudioPlayer(container) {
         max: String(SPEED_MAX),
         step: String(SPEED_STEP),
         value: '1',
-        'aria-label': 'Playback speed multiplier',
+        'aria-label': getAudioPlayerText('playbackSpeedMultiplierAria', 'Playback speed multiplier'),
     })
     const speedValue = el('div', 'audio-player__speed-value', { text: '1.00x' })
     const speedPresets = el('div', 'audio-player__speed-presets')
@@ -220,13 +248,13 @@ export function initAudioPlayer(container) {
 
     const seekBar = el('input', 'audio-player__seek', {
         type: 'range', min: '0', max: '100', step: '0.01',
-        value: '0', id: 'audio-seek', 'aria-label': 'Seek position'
+        value: '0', id: 'audio-seek', 'aria-label': getAudioPlayerText('seekPositionAria', 'Seek position')
     })
 
     // Dynamic track fill via CSS custom property
     function _updateSeekTrack(pct) {
         seekBar.style.background =
-            `linear-gradient(90deg, var(--color-slider-fill) ${pct}%, var(--color-surface-2) ${pct}%)`
+            `linear-gradient(90deg, var(--color-slider-fill) ${pct}%, var(--color-bg-2) ${pct}%)`
     }
     _updateSeekTrack(0)
 
@@ -242,17 +270,29 @@ export function initAudioPlayer(container) {
     container.append(collapseBtn, body)
 
     function setPlayButtonVisual(playing) {
-        applyIcon(btnPlayPause, playing ? pauseIcon : playIcon, playing ? 'Pause' : 'Play')
+        applyIcon(
+            btnPlayPause,
+            playing ? pauseIcon : playIcon,
+            playing ? getAudioPlayerText('pauseAria', 'Pause') : getAudioPlayerText('playAria', 'Play'),
+        )
     }
 
     function setRecordButtonVisual(running) {
-        applyIcon(btnRecord, running ? stopIcon : recordIcon, running ? 'Stop recording' : 'Record video')
+        applyIcon(
+            btnRecord,
+            running ? stopIcon : recordIcon,
+            running ? getAudioPlayerText('stopRecordingAria', 'Stop recording') : getAudioPlayerText('recordVideoAria', 'Record video'),
+        )
     }
 
     function setMuteButtonVisual(muted) {
-        applyIcon(btnMute, muted ? loudIcon : muteIcon, muted ? 'Unmute output' : 'Mute output')
+        applyIcon(
+            btnMute,
+            muted ? loudIcon : muteIcon,
+            muted ? getAudioPlayerText('unmuteAria', 'Unmute output') : getAudioPlayerText('muteAria', 'Mute output'),
+        )
         btnMute.classList.toggle('audio-player__btn--active', !!muted)
-        btnMute.title = muted ? 'Unmute output' : 'Mute output'
+        btnMute.title = muted ? getAudioPlayerText('unmuteTitle', 'Unmute output') : getAudioPlayerText('muteTitle', 'Mute output')
     }
 
     function _setBusy(busy, text = '') {
@@ -285,7 +325,7 @@ export function initAudioPlayer(container) {
         }))
     }
 
-    function _loadAudioFile(file, labelText = file?.name || 'Audio loaded') {
+    function _loadAudioFile(file, labelText = file?.name || getAudioPlayerText('audioLoaded', 'Audio loaded')) {
         if (!file) return
         if (audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src)
         audioEl.src = URL.createObjectURL(file)
@@ -296,7 +336,7 @@ export function initAudioPlayer(container) {
         btnPlayPause.classList.remove('audio-player__btn--active')
         seekBar.value = '0'
         _updateSeekTrack(0)
-        timestamp.textContent = '0:00 / –:––'
+        timestamp.textContent = getAudioPlayerText('timestampInitial', '0:00 / –:––')
         _enableControls()
         container.dispatchEvent(new CustomEvent('player:fileloaded', {
             detail: { file, audioEl }, bubbles: true,
@@ -320,14 +360,14 @@ export function initAudioPlayer(container) {
     fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0]
         if (!file) return
-        _setBusy(true, `Loading ${file.name}...`)
+        _setBusy(true, `${getAudioPlayerText('loadingPrefix', 'Loading')} ${file.name}...`)
         try {
-            fileName.textContent = `Decoding ${file.name}...`
+            fileName.textContent = `${getAudioPlayerText('decodingPrefix', 'Decoding')} ${file.name}...`
             const prepared = await decodeAudioFileInBrowser(file)
             _loadAudioFile(prepared, prepared.name)
         } catch (err) {
             console.warn('[AudioPlayer] decode failed:', err)
-            fileName.textContent = 'Decode failed. Try another file.'
+            fileName.textContent = getAudioPlayerText('decodeFailed', 'Decode failed. Try another file.')
         } finally {
             _setBusy(false)
             fileInput.value = ''
@@ -499,7 +539,7 @@ export function initAudioPlayer(container) {
         if (collapsed) speedPopover.hidden = true
     })
 
-    function loadFile(file, labelText = file?.name || 'Audio loaded') {
+    function loadFile(file, labelText = file?.name || getAudioPlayerText('audioLoaded', 'Audio loaded')) {
         if (!(file instanceof File)) return false
         _loadAudioFile(file, labelText)
         return true

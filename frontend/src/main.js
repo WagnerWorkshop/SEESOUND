@@ -44,6 +44,7 @@ import {
     PROJECT_FILE_EXTENSION,
     triggerProjectDownload,
 } from './engine/project/ProjectIO.js'
+import { UI_TEXT } from './engine/ui/UiText.js'
 import {
     computeSpectralCentroid,
     computeSpectralFlux,
@@ -150,6 +151,32 @@ function applyProjectionFromParams() {
     syncOrbitFromCamera()
 }
 
+function syncCameraFromParams() {
+    const px = Number(params.cameraPosX)
+    const py = Number(params.cameraPosY)
+    const pz = Number(params.cameraPosZ)
+    const tx = Number(params.cameraTargetX)
+    const ty = Number(params.cameraTargetY)
+    const tz = Number(params.cameraTargetZ)
+
+    if (Number.isFinite(px)) camera.position.x = px
+    if (Number.isFinite(py)) camera.position.y = py
+    if (Number.isFinite(pz)) camera.position.z = pz
+
+    if (Number.isFinite(tx)) orbitTarget.x = tx
+    if (Number.isFinite(ty)) orbitTarget.y = ty
+    if (Number.isFinite(tz)) orbitTarget.z = tz
+
+    const fov = Math.max(20, Math.min(120, Number(params.cameraAngleOfView ?? 55)))
+    if (Number.isFinite(fov) && cameraPerspective.fov !== fov) {
+        cameraPerspective.fov = fov
+        cameraPerspective.updateProjectionMatrix()
+    }
+
+    camera.lookAt(orbitTarget)
+    syncOrbitFromCamera()
+}
+
 function syncPostProcessingFromParams() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
@@ -159,26 +186,6 @@ function syncPostProcessingFromParams() {
     bloomPass.strength = Math.max(0, Number(params.bloomStrength ?? 1.15) || 0)
     bloomPass.radius = Math.max(0, Number(params.bloomRadius ?? 0.7) || 0)
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
-}
-
-function syncSceneFogFromParams(backgroundColor = null) {
-    const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
-    const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
-    if (!fogEnabled || fogDensity <= 0) {
-        scene.fog = null
-        return
-    }
-
-    const hue = ((Number(params.defaultBackgroundHue ?? 0) % 360) + 360) % 360
-    const sat = Math.max(0, Math.min(100, Number(params.defaultBackgroundSaturation ?? 0))) / 100
-    const light = Math.max(0, Math.min(100, Number(params.defaultBackgroundLightness ?? 0))) / 100
-    const fogColor = backgroundColor || new THREE.Color().setHSL(hue / 360, sat, light)
-    if (!(scene.fog instanceof THREE.FogExp2)) {
-        scene.fog = new THREE.FogExp2(fogColor, fogDensity)
-        return
-    }
-    scene.fog.color.copy(fogColor)
-    scene.fog.density = fogDensity
 }
 
 function shouldUsePostProcessing() {
@@ -321,6 +328,12 @@ function clearSceneElements() {
     ps.clear()
 }
 
+function getCanvasNavText(key, fallback = '') {
+    const value = UI_TEXT?.canvasNav?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return fallback
+}
+
 function applyNavButtonIcon(button, svgMarkup, label) {
     if (!button || !svgMarkup) return
     const caption = String(label || '').trim()
@@ -338,36 +351,36 @@ navActions.className = 'canvas-nav-actions'
 const navResetBtn = document.createElement('button')
 navResetBtn.type = 'button'
 navResetBtn.className = 'canvas-nav-actions__btn cp-btn'
-navResetBtn.title = 'Reset camera'
-applyNavButtonIcon(navResetBtn, resetIcon, 'Reset Camera')
+navResetBtn.title = getCanvasNavText('resetTooltip', 'Reset camera')
+applyNavButtonIcon(navResetBtn, resetIcon, getCanvasNavText('reset', UI_TEXT?.view?.cameraReset || 'Reset Camera'))
 navResetBtn.addEventListener('click', resetViewCamera)
 
 const navFitBtn = document.createElement('button')
 navFitBtn.type = 'button'
 navFitBtn.className = 'canvas-nav-actions__btn cp-btn'
-navFitBtn.title = 'Fit image to canvas bounds'
-applyNavButtonIcon(navFitBtn, fitIcon, 'Fit')
+navFitBtn.title = getCanvasNavText('fitTooltip', 'Fit image to canvas bounds')
+applyNavButtonIcon(navFitBtn, fitIcon, getCanvasNavText('fit', UI_TEXT?.view?.cameraFit || 'Fit'))
 navFitBtn.addEventListener('click', fitViewToCanvas)
 
 const navClearBtn = document.createElement('button')
 navClearBtn.type = 'button'
 navClearBtn.className = 'canvas-nav-actions__btn cp-btn'
-navClearBtn.title = 'Clear particles and scene elements'
-applyNavButtonIcon(navClearBtn, clearIcon, 'Clear')
+navClearBtn.title = getCanvasNavText('clearTooltip', 'Clear particles and scene elements')
+applyNavButtonIcon(navClearBtn, clearIcon, getCanvasNavText('clear', 'Clear'))
 navClearBtn.addEventListener('click', clearSceneElements)
 
 const navZoomInBtn = document.createElement('button')
 navZoomInBtn.type = 'button'
 navZoomInBtn.className = 'canvas-nav-actions__btn cp-btn'
-navZoomInBtn.title = 'Increase canvas zoom'
-applyNavButtonIcon(navZoomInBtn, magnifierPlusIcon, 'Zoom In')
+navZoomInBtn.title = getCanvasNavText('zoomInTooltip', 'Increase canvas zoom')
+applyNavButtonIcon(navZoomInBtn, magnifierPlusIcon, getCanvasNavText('zoomIn', 'Zoom In'))
 navZoomInBtn.addEventListener('click', () => bumpCanvasScale(10))
 
 const navZoomOutBtn = document.createElement('button')
 navZoomOutBtn.type = 'button'
 navZoomOutBtn.className = 'canvas-nav-actions__btn canvas-nav-actions__btn--conditional cp-btn'
-navZoomOutBtn.title = 'Decrease canvas zoom'
-applyNavButtonIcon(navZoomOutBtn, magnifierMinusIcon, 'Zoom Out')
+navZoomOutBtn.title = getCanvasNavText('zoomOutTooltip', 'Decrease canvas zoom')
+applyNavButtonIcon(navZoomOutBtn, magnifierMinusIcon, getCanvasNavText('zoomOut', 'Zoom Out'))
 navZoomOutBtn.addEventListener('click', () => bumpCanvasScale(-10))
 
 navActions.append(navResetBtn, navFitBtn, navClearBtn, navZoomInBtn, navZoomOutBtn)
@@ -772,8 +785,8 @@ const initH = col.clientHeight || window.innerHeight
 resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
+syncCameraFromParams()
 syncPostProcessingFromParams()
-syncSceneFogFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -2002,7 +2015,6 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
-    syncSceneFogFromParams(bg)
     ps.setViewportHeight(renderer.domElement.height)
 
     if (shouldUsePostProcessing()) {
@@ -2533,6 +2545,7 @@ function emitCanvasSize(w, h) {
 function _isTypingTarget(node) {
     const elNode = node instanceof Element ? node : null
     if (!elNode) return false
+    if (elNode.closest('.cp-rule-expression-input')) return false
     return !!elNode.closest('input,textarea,select,[contenteditable="true"]')
 }
 
@@ -2540,7 +2553,6 @@ window.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return
     if (!(e.ctrlKey || e.metaKey)) return
     if (e.altKey) return
-    if (_isTypingTarget(e.target)) return
 
     const key = String(e.key || '').toLowerCase()
     if (key === 'z' && !e.shiftKey) {
@@ -2602,19 +2614,21 @@ subscribe((_, key) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
     if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
     if (
+        key === 'cameraPosX' ||
+        key === 'cameraPosY' ||
+        key === 'cameraPosZ' ||
+        key === 'cameraTargetX' ||
+        key === 'cameraTargetY' ||
+        key === 'cameraTargetZ' ||
+        key === 'cameraAngleOfView'
+    ) syncCameraFromParams()
+    if (
         key === 'postProcessEnabled' ||
         key === 'bloomEnabled' ||
         key === 'bloomStrength' ||
         key === 'bloomRadius' ||
         key === 'bloomThreshold'
     ) syncPostProcessingFromParams()
-    if (
-        key === 'fogEnabled' ||
-        key === 'fogDensity' ||
-        key === 'defaultBackgroundHue' ||
-        key === 'defaultBackgroundSaturation' ||
-        key === 'defaultBackgroundLightness'
-    ) syncSceneFogFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {

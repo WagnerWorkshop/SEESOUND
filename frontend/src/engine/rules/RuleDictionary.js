@@ -50,14 +50,14 @@ const _legacyInputAliases = [
         id: 'canvasWidth',
         group: 'overall',
         label: 'Canvas Width',
-        legacyName: 'canvasWidth',
+        technicalName: 'canvasWidth',
         description: 'Legacy alias of canvasWidthPx.',
     },
     {
         id: 'canvasHeight',
         group: 'overall',
         label: 'Canvas Height',
-        legacyName: 'canvasHeight',
+        technicalName: 'canvasHeight',
         description: 'Legacy alias of canvasHeightPx.',
     },
 ]
@@ -68,7 +68,7 @@ const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => 
     range: _INPUT_RANGES[entry.id] || [0, 1],
     category: entry.group,
     label: entry.label,
-    legacyName: entry.legacyName,
+    technicalName: entry.technicalName,
     description: entry.description,
 }))
 
@@ -85,6 +85,7 @@ const _outputEntries = [
     { id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
     { id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
     { id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
+    { id: 'yellow', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
     { id: 'luma', type: 'number', range: [0, 255], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
     { id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
     { id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },

@@ -310,9 +310,9 @@ const PARAMS_BASE = [
 
     // ── Geometry ────────────────────────────────────────────────────────────
     {
-        key: 'defaultParticleSize', group: 'geometry', label: 'Default Size',
-        min: 1, max: 40, step: 0.5, default: 6, unit: 'px',
-        desc: 'Base diameter of every particle before per-frequency size scaling.',
+        key: 'defaultParticleSize', group: 'geometry', label: 'Size Multiplier',
+        min: 1, max: 40, step: 0.5, default: 1, unit: 'x',
+        desc: 'Global multiplier applied to all particle sizes after rule outputs.',
         canDisable: false,
     },
     {
@@ -365,6 +365,12 @@ const PARAMS_BASE = [
     },
 
     // ── Mixing ──────────────────────────────────────────────────────────────
+    {
+        key: 'blendEnabled', group: 'mixing', label: 'Blending Enabled',
+        min: 0, max: 1, step: 1, default: 0, unit: '',
+        desc: 'Enable additive/alpha blend modes. When off, depthWrite is enabled.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
     {
         key: 'blendMode', group: 'mixing', label: 'Blend Mode',
         default: 'screen', unit: '',
@@ -470,6 +476,30 @@ const PARAMS_BASE = [
         key: 'bloomThreshold', group: 'mixing', label: 'Bloom Threshold',
         min: 0, max: 1, step: 0.01, default: 0.18, unit: '',
         desc: 'Luminance threshold before bloom is applied.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehEnabled', group: 'mixing', label: 'Bokeh Enabled',
+        min: 0, max: 1, step: 1, default: 0, unit: '',
+        desc: 'Enable depth-of-field bokeh blur. Disabled automatically when depthWrite is enabled.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
+    {
+        key: 'bokehFocus', group: 'mixing', label: 'Bokeh Focus',
+        min: 0, max: 5000, step: 1, default: 420, unit: '',
+        desc: 'Focus distance for depth-of-field blur.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehAperture', group: 'mixing', label: 'Bokeh Aperture',
+        min: 0, max: 0.001, step: 0.00001, default: 0.00012, unit: '',
+        desc: 'Aperture strength for bokeh blur amount.',
+        canDisable: false,
+    },
+    {
+        key: 'bokehMaxBlur', group: 'mixing', label: 'Bokeh Max Blur',
+        min: 0, max: 0.1, step: 0.001, default: 0.02, unit: '',
+        desc: 'Maximum blur radius for bokeh effect.',
         canDisable: false,
     },
     {
@@ -725,11 +755,35 @@ export function setMany(updates) {
     _notify('*', changed)
 }
 
+export function resetParamsToDefaults(keys = []) {
+    const keySet = new Set((Array.isArray(keys) ? keys : []).map((key) => String(key || '').trim()).filter(Boolean))
+    if (keySet.size === 0) return
+
+    _pushUndoSnapshot()
+    const changed = Object.create(null)
+    for (const p of PARAMS) {
+        if (!keySet.has(p.key)) continue
+        if (Object.is(params[p.key], p.default)) continue
+        params[p.key] = p.default
+        changed[p.key] = p.default
+    }
+
+    const entries = Object.entries(changed)
+    if (entries.length === 0) return
+    for (const [k, v] of entries) _notify(k, v)
+    _notify('*', changed)
+}
+
 export function resetToDefaults() {
     _pushUndoSnapshot()
     const changed = Object.create(null)
-    for (const p of PARAMS) params[p.key] = p.default
-    for (const p of PARAMS) changed[p.key] = params[p.key]
+
+    for (const p of PARAMS) {
+        if (Object.is(params[p.key], p.default)) continue
+        params[p.key] = p.default
+        changed[p.key] = p.default
+    }
+
     params.ruleBlocks = []
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION

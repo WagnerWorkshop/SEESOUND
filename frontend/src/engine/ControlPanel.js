@@ -3,6 +3,10 @@ import {
     set,
     setMany,
     subscribe,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
     resetToDefaults,
     getSnapshot,
     listPresets,
@@ -40,6 +44,8 @@ import clearIcon from '../icons/clear.svg?raw'
 import resetIcon from '../icons/reset.svg?raw'
 import fitIcon from '../icons/fit.svg?raw'
 import copyIcon from '../icons/copy.svg?raw'
+import undoIcon from '../icons/undo.svg?raw'
+import redoIcon from '../icons/redo.svg?raw'
 
 
 const NONE_VAR = '__none__'
@@ -315,6 +321,8 @@ const BUTTON_ICON_MAP = Object.freeze({
     clear: clearIcon,
     clean: clearIcon,
     close: closeIcon,
+    undo: undoIcon,
+    redo: redoIcon,
 })
 
 const MATH_ACTIONS = Object.freeze([
@@ -386,6 +394,31 @@ function getRuleText(key, fallback = '') {
     const value = UI_TEXT?.rules?.[key]
     if (typeof value === 'string' && value.trim()) return value
     return fallback
+}
+
+function getRuleSectionLabel(definition) {
+    const key = String(definition?.target || '').trim()
+    const value = UI_TEXT?.rules?.sections?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return String(definition?.section || key || '').trim()
+}
+
+function getRuleSubgroupLabel(definition) {
+    const raw = String(definition?.subgroup || '').trim()
+    if (!raw) return raw
+    const key = raw.charAt(0).toLowerCase() + raw.slice(1)
+    const value = UI_TEXT?.rules?.subgroups?.[key]
+    if (typeof value === 'string' && value.trim()) return value
+    return raw
+}
+
+function getRuleRowLabel(definition) {
+    const target = String(definition?.target || '').trim()
+    const output = String(definition?.output || '').trim()
+    const key = target && output ? `${target}.${output}` : ''
+    const value = key ? UI_TEXT?.rules?.rowLabels?.[key] : null
+    if (typeof value === 'string' && value.trim()) return value
+    return String(definition?.label || output || key || '').trim()
 }
 
 function getRuleFunctionGroupLabel(groupKey) {
@@ -1139,6 +1172,23 @@ function insertTextAtCursor(editor, text) {
     range.collapse(true)
     selection.removeAllRanges()
     selection.addRange(range)
+}
+
+function replaceActiveSlotWithText(editor, text = '') {
+    if (!editor) return false
+    const selection = window.getSelection?.()
+    if (!selection || selection.rangeCount === 0) return false
+    const activeSlot = getActiveSlotFromSelection(editor, selection)
+    if (!activeSlot) return false
+
+    const textNode = document.createTextNode(String(text || ''))
+    activeSlot.replaceWith(textNode)
+    const range = document.createRange()
+    range.setStart(textNode, textNode.textContent?.length || 0)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
 }
 
 function insertFunctionTemplateAtCursor(editor, functionId) {
@@ -1899,6 +1949,10 @@ function buildViewMenu(body, syncRegistry) {
     fovRow.append(fovSlider, fovNumber)
     fovSection.appendChild(fovRow)
 
+    const renderModeSection = el('section', 'cp-section')
+    const renderModeButton = el('button', 'cp-btn cp-btn-wide', { type: 'button' })
+    renderModeSection.append(renderModeButton)
+
     const blendingSection = el('section', 'cp-section')
     blendingSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.blending }))
     const blendSelect = el('select', 'cp-input-select')
@@ -1915,14 +1969,11 @@ function buildViewMenu(body, syncRegistry) {
 
     const postEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const bloomEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
-    const fogEnabled = el('input', 'cp-input-toggle', { type: 'checkbox' })
 
     const postEnabledRow = el('label', 'cp-toggle-row')
     postEnabledRow.append(postEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.postProcessingEnabled }))
     const bloomEnabledRow = el('label', 'cp-toggle-row')
     bloomEnabledRow.append(bloomEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.bloomEnabled }))
-    const fogEnabledRow = el('label', 'cp-toggle-row')
-    fogEnabledRow.append(fogEnabled, el('span', 'cp-setting-label', { text: UI_TEXT.view.fogEnabled || 'Fog Enabled' }))
 
     const bloomStrengthSlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 4, step: 0.01 })
     const bloomStrengthNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 4, step: 0.01 })
@@ -1960,26 +2011,13 @@ function buildViewMenu(body, syncRegistry) {
         })(),
     )
 
-    const fogDensitySlider = el('input', 'cp-input-range', { type: 'range', min: 0, max: 0.02, step: 0.0001 })
-    const fogDensityNumber = el('input', 'cp-input-number', { type: 'number', min: 0, max: 0.02, step: 0.0001 })
-    const fogDensityRow = el('div', 'cp-setting-row')
-    fogDensityRow.append(
-        el('label', 'cp-setting-label', { text: UI_TEXT.view.fogDensity || 'Fog Density' }),
-        (() => {
-            const controls = el('div', 'cp-setting-controls')
-            controls.append(fogDensitySlider, fogDensityNumber)
-            return controls
-        })(),
-    )
 
     postSection.append(
         postEnabledRow,
         bloomEnabledRow,
-        fogEnabledRow,
         bloomStrengthRow,
         bloomRadiusRow,
         bloomThresholdRow,
-        fogDensityRow,
     )
 
     const guideSection = el('section', 'cp-section')
@@ -2064,11 +2102,36 @@ function buildViewMenu(body, syncRegistry) {
 
     projectionSelect.addEventListener('change', () => set('cameraProjection', projectionSelect.value))
     axoSelect.addEventListener('change', () => set('cameraAxoPreset', axoSelect.value))
-    blendSelect.addEventListener('change', () => set('blendMode', blendSelect.value))
+    blendSelect.addEventListener('change', () => {
+        setMany({
+            blendEnabled: 1,
+            blendMode: blendSelect.value,
+        })
+    })
+
+    const applyRenderMode = (nextMode) => {
+        const mode = String(nextMode || '')
+        if (mode === 'luminous') {
+            const nextBlendMode = String(params.blendMode || '') === 'source-over' ? 'screen' : String(params.blendMode || 'screen')
+            setMany({
+                blendEnabled: 1,
+                blendMode: nextBlendMode,
+            })
+            return
+        }
+
+        setMany({
+            blendEnabled: 0,
+        })
+    }
+
+    renderModeButton.addEventListener('click', () => {
+        const luminous = Number(params.blendEnabled ?? 0) >= 0.5
+        applyRenderMode(luminous ? 'solid' : 'luminous')
+    })
 
     postEnabled.addEventListener('change', () => set('postProcessEnabled', postEnabled.checked ? 1 : 0))
     bloomEnabled.addEventListener('change', () => set('bloomEnabled', bloomEnabled.checked ? 1 : 0))
-    fogEnabled.addEventListener('change', () => set('fogEnabled', fogEnabled.checked ? 1 : 0))
 
     const bindSliderAndNumber = ({ slider, number, key, min, max }) => {
         const applyFromSlider = (raw) => {
@@ -2087,7 +2150,6 @@ function buildViewMenu(body, syncRegistry) {
     bindSliderAndNumber({ slider: bloomStrengthSlider, number: bloomStrengthNumber, key: 'bloomStrength', min: 0, max: 4 })
     bindSliderAndNumber({ slider: bloomRadiusSlider, number: bloomRadiusNumber, key: 'bloomRadius', min: 0, max: 2 })
     bindSliderAndNumber({ slider: bloomThresholdSlider, number: bloomThresholdNumber, key: 'bloomThreshold', min: 0, max: 1 })
-    bindSliderAndNumber({ slider: fogDensitySlider, number: fogDensityNumber, key: 'fogDensity', min: 0, max: 0.02 })
 
     const applyFovFromSlider = (value) => {
         set('cameraAngleOfView', clamp(value, 20, 120))
@@ -2160,6 +2222,17 @@ function buildViewMenu(body, syncRegistry) {
         blendSelect.value = String(params.blendMode || 'screen')
     }
 
+    const syncRenderMode = () => {
+        const luminous = Number(params.blendEnabled ?? 0) >= 0.5
+        const renderModeLabel = luminous
+            ? (UI_TEXT.view.renderModeLuminous || 'Luminous')
+            : (UI_TEXT.view.renderModePhysical || 'Physical')
+        renderModeButton.textContent = renderModeLabel
+        renderModeButton.setAttribute('aria-pressed', luminous ? 'true' : 'false')
+
+        blendingSection.style.display = luminous ? '' : 'none'
+    }
+
     const syncFov = () => {
         const fov = Number(params.cameraAngleOfView ?? 55)
         fovSlider.value = String(fov)
@@ -2169,7 +2242,6 @@ function buildViewMenu(body, syncRegistry) {
     const syncPostEnabled = () => {
         postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
-        fogEnabled.checked = Number(params.fogEnabled ?? 1) >= 0.5
     }
 
     const syncGuideToggles = () => {
@@ -2195,12 +2267,6 @@ function buildViewMenu(body, syncRegistry) {
         bloomThresholdNumber.value = String(bloomThreshold)
     }
 
-    const syncFogDensity = () => {
-        const fogDensity = Number(params.fogDensity ?? 0.002)
-        fogDensitySlider.value = String(fogDensity)
-        fogDensityNumber.value = String(fogDensity)
-    }
-
     const syncCameraFields = () => {
         syncCameraNumbers()
     }
@@ -2210,13 +2276,13 @@ function buildViewMenu(body, syncRegistry) {
     registerSync(syncRegistry, syncBackgroundColor, ['defaultBackgroundHue', 'defaultBackgroundSaturation', 'defaultBackgroundLightness'])
     registerSync(syncRegistry, syncProjectionControls, ['cameraProjection', 'cameraAxoPreset'])
     registerSync(syncRegistry, syncBlendMode, ['blendMode'])
+    registerSync(syncRegistry, syncRenderMode, ['blendEnabled', 'blendMode'])
     registerSync(syncRegistry, syncFov, ['cameraAngleOfView'])
-    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled', 'fogEnabled'])
+    registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled'])
     registerSync(syncRegistry, syncGuideToggles, ['originSignEnabled', 'coordinateGuidesEnabled'])
     registerSync(syncRegistry, syncBloomStrength, ['bloomStrength'])
     registerSync(syncRegistry, syncBloomRadius, ['bloomRadius'])
     registerSync(syncRegistry, syncBloomThreshold, ['bloomThreshold'])
-    registerSync(syncRegistry, syncFogDensity, ['fogDensity'])
     registerSync(syncRegistry, syncCameraFields, ['cameraPosX', 'cameraPosY', 'cameraPosZ', 'cameraTargetX', 'cameraTargetY', 'cameraTargetZ'])
 
     window.addEventListener('seesound:camera-state', (event) => {
@@ -2250,17 +2316,17 @@ function buildViewMenu(body, syncRegistry) {
     syncBackgroundColor()
     syncProjectionControls()
     syncBlendMode()
+    syncRenderMode()
     syncFov()
     syncPostEnabled()
     syncGuideToggles()
     syncBloomStrength()
     syncBloomRadius()
     syncBloomThreshold()
-    syncFogDensity()
     syncCameraFields()
     cameraHudToggle.checked = false
 
-    panel.append(canvasSection, backgroundSection, cameraSection, projectionSection, fovSection, blendingSection, postSection, guideSection)
+    panel.append(canvasSection, backgroundSection, cameraSection, projectionSection, fovSection, renderModeSection, blendingSection, postSection, guideSection)
     body.appendChild(panel)
 }
 
@@ -2724,18 +2790,34 @@ function buildRulesMenu(body, syncRegistry) {
             'aria-label': UI_TEXT.rules.clearTokens,
         })
         applyIconOnlyButton(clearTokensBtn, BUTTON_ICON_MAP.clear, UI_TEXT.rules.clearTokens)
-        const duplicateBtn = el('button', 'cp-btn cp-rule-card-duplicate', { type: 'button', title: 'Duplicate rule', 'aria-label': 'Duplicate rule' })
-        applyIconOnlyButton(duplicateBtn, BUTTON_ICON_MAP.duplicate, 'Duplicate rule')
-        const removeBtn = el('button', 'cp-btn cp-btn-danger cp-rule-card-remove', { type: 'button', title: 'Remove duplicate rule', 'aria-label': 'Remove duplicate rule' })
-        applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, 'Remove duplicate rule')
+        const duplicateLabel = getRuleText('duplicateRule', 'Duplicate rule')
+        const removeDuplicateLabel = getRuleText('removeDuplicateRule', 'Remove duplicate rule')
+        const collapseRuleLabel = getRuleText('collapseRule', 'Collapse rule')
+        const duplicateBtn = el('button', 'cp-btn cp-rule-card-duplicate', {
+            type: 'button',
+            title: duplicateLabel,
+            'aria-label': duplicateLabel,
+        })
+        applyIconOnlyButton(duplicateBtn, BUTTON_ICON_MAP.duplicate, duplicateLabel)
+        const removeBtn = el('button', 'cp-btn cp-btn-danger cp-rule-card-remove', {
+            type: 'button',
+            title: removeDuplicateLabel,
+            'aria-label': removeDuplicateLabel,
+        })
+        applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, removeDuplicateLabel)
         removeBtn.style.display = rowState.isDuplicate ? '' : 'none'
-        const collapseBtn = el('button', 'cp-btn cp-rule-card-collapse', { type: 'button', title: 'Collapse rule', 'aria-label': 'Collapse rule' })
+        const collapseBtn = el('button', 'cp-btn cp-rule-card-collapse', {
+            type: 'button',
+            title: collapseRuleLabel,
+            'aria-label': collapseRuleLabel,
+        })
         const collapseIcon = el('span', 'cp-btn-icon', { text: rowState.collapsed ? '▸' : '▾' })
         collapseBtn.appendChild(collapseIcon)
         headerTools.append(addConditionButton, clearTokensBtn, duplicateBtn, removeBtn, collapseBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-        const titleSuffix = rowState.isDuplicate ? ' (Duplicate)' : ''
-        const title = el('div', 'cp-rule-card-title', { text: `${definition.label}${titleSuffix}` })
+        const duplicateSuffix = getRuleText('duplicateSuffix', 'Duplicate')
+        const titleSuffix = rowState.isDuplicate ? ` (${duplicateSuffix})` : ''
+        const title = el('div', 'cp-rule-card-title', { text: `${getRuleRowLabel(definition)}${titleSuffix}` })
         header.append(toggle, title, headerTools)
 
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
@@ -2835,6 +2917,18 @@ function buildRulesMenu(body, syncRegistry) {
             expressionInput.addEventListener('blur', () => commitExpression({ rerender: true }))
             expressionInput.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter') event.preventDefault()
+                if ((event.key === 'Backspace' || event.key === 'Delete') && replaceActiveSlotWithText(expressionInput, '')) {
+                    event.preventDefault()
+                    commitExpression({ rerender: true })
+                }
+            })
+            expressionInput.addEventListener('beforeinput', (event) => {
+                const inputType = String(event.inputType || '')
+                if (!inputType.startsWith('insert')) return
+                const text = String(event.data || '')
+                if (!replaceActiveSlotWithText(expressionInput, text)) return
+                event.preventDefault()
+                commitExpression({ rerender: true })
             })
             expressionInput.addEventListener('click', (event) => {
                 const clickedPill = event.target instanceof Element ? event.target.closest('.cp-rule-inline-pill') : null
@@ -3023,14 +3117,17 @@ function buildRulesMenu(body, syncRegistry) {
         if (definition.section !== currentSection) {
             currentSection = definition.section
             const sectionName = currentSection
+            const sectionLabel = getRuleSectionLabel(definition)
             currentSubgroup = ''
             const section = el('section', 'cp-rule-section')
             const sectionHeader = el('div', 'cp-rule-section-header')
-            const titleBtn = el('button', 'cp-rule-section-title cp-rule-section-toggle', {
+            const titleBtn = el('button', 'cp-btn cp-rule-section-title cp-rule-section-toggle', {
                 type: 'button',
-                text: sectionName,
                 'aria-expanded': 'true',
             })
+            const titleIcon = el('span', 'cp-btn-icon cp-rule-section-toggle-icon', { text: '▾' })
+            const titleLabel = el('span', 'cp-rule-section-toggle-label', { text: sectionLabel })
+            titleBtn.append(titleIcon, titleLabel)
             const sectionEnable = el('input', 'cp-input-toggle cp-rule-section-enable', { type: 'checkbox' })
             sectionEnable.checked = true
             const sectionBody = el('div', 'cp-rule-section-body')
@@ -3046,6 +3143,7 @@ function buildRulesMenu(body, syncRegistry) {
                 sectionCollapseState.set(sectionName, nextExpanded)
                 section.classList.toggle('is-collapsed', !nextExpanded)
                 titleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false')
+                titleIcon.textContent = nextExpanded ? '▾' : '▸'
             })
 
             sectionEnable.addEventListener('change', () => {
@@ -3064,7 +3162,7 @@ function buildRulesMenu(body, syncRegistry) {
 
         if (definition.subgroup !== currentSubgroup) {
             currentSubgroup = definition.subgroup
-            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: currentSubgroup }))
+            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: getRuleSubgroupLabel(definition) }))
         }
 
         const rowState = createRowState(definition, false)
@@ -3102,13 +3200,32 @@ function createMenuPane(item) {
     const pane = el('section', 'cp-menu-pane', { 'data-menu-id': item.id })
     const header = el('div', 'cp-menu-pane-header')
     header.appendChild(el('h2', 'cp-menu-pane-title', { text: item.label }))
+    const headerActions = el('div', 'cp-menu-pane-actions')
+    const undoLabel = getRuleText('undo', 'Undo')
+    const redoLabel = getRuleText('redo', 'Redo')
+    const historyGroup = el('div', 'cp-menu-pane-history')
+    const undoButton = el('button', 'cp-btn cp-btn-icon cp-menu-pane-history-btn', {
+        type: 'button',
+        title: undoLabel,
+        'aria-label': undoLabel,
+    })
+    const redoButton = el('button', 'cp-btn cp-btn-icon cp-menu-pane-history-btn', {
+        type: 'button',
+        title: redoLabel,
+        'aria-label': redoLabel,
+    })
+    applyIconOnlyButton(undoButton, BUTTON_ICON_MAP.undo, undoLabel)
+    applyIconOnlyButton(redoButton, BUTTON_ICON_MAP.redo, redoLabel)
+    historyGroup.append(undoButton, redoButton)
+    headerActions.appendChild(historyGroup)
     const closeButton = el('button', 'cp-btn cp-menu-collapse', { type: 'button', text: UI_TEXT.menu.collapse })
     applyButtonIcon(closeButton, BUTTON_ICON_MAP.close, UI_TEXT.menu.collapse)
-    header.appendChild(closeButton)
+    headerActions.appendChild(closeButton)
+    header.appendChild(headerActions)
 
     const body = el('div', 'cp-menu-pane-body')
     pane.append(header, body)
-    return { pane, body, closeButton }
+    return { pane, body, header, headerActions, closeButton, undoButton, redoButton }
 }
 
 export function initControlPanel(container) {
@@ -3139,10 +3256,29 @@ export function initControlPanel(container) {
     shell.append(rail, stack)
     container.appendChild(shell)
 
+    const refreshHistoryButtons = () => {
+        for (const paneParts of menuPanes.values()) {
+            if (paneParts.undoButton) paneParts.undoButton.disabled = !canUndo()
+            if (paneParts.redoButton) paneParts.redoButton.disabled = !canRedo()
+        }
+    }
+
+    for (const paneParts of menuPanes.values()) {
+        paneParts.undoButton?.addEventListener('click', () => {
+            if (!undo()) return
+            refreshHistoryButtons()
+        })
+        paneParts.redoButton?.addEventListener('click', () => {
+            if (!redo()) return
+            refreshHistoryButtons()
+        })
+    }
+
     buildFileMenu(menuPanes.get('file').body)
     buildViewMenu(menuPanes.get('view').body, syncRegistry)
     buildSettingsMenu(menuPanes.get('settings').body, syncRegistry)
     buildRulesMenu(menuPanes.get('rules').body, syncRegistry)
+    refreshHistoryButtons()
 
     let pinnedMenuId = null
     let hoverMenuId = 'settings'
@@ -3268,6 +3404,7 @@ export function initControlPanel(container) {
             return
         }
         syncByKeys([key])
+        refreshHistoryButtons()
     })
 
     hoverMenuId = 'settings'

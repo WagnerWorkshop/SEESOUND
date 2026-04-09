@@ -49,21 +49,81 @@
             "axoOrthoYZ": "Ortogonale YZ",
             "angleOfView": "Angolo di Visuale",
             "blending": "Miscelazione",
+            "blendingEnabled": "Miscelazione",
             "postProcessing": "Post-elaborazione",
-            "postProcessingEnabled": "Abilita Post-elaborazione",
-            "bloomEnabled": "Bagliore Abilitato",
+            "postProcessingEnabled": "Post-elaborazione",
+            "bloomEnabled": "Bagliore",
+            "bokehEnabled": "Bokeh",
+            "fogEnabled": "Nebbia",
             "bloomStrength": "Intensità Bagliore",
             "bloomRadius": "Raggio Bagliore",
             "bloomThreshold": "Soglia Bagliore",
+            "bokehFocus": "Fuoco Bokeh",
+            "bokehAperture": "Apertura Bokeh",
+            "bokehMaxBlur": "Sfocatura Max Bokeh",
+            "renderMode": "Modalità di Render",
+            "renderModeSolid": "Physical",
+            "renderModeLuminous": "Luminous",
+            "renderModeSolidHint": "Pipeline fisica con profondità. Il bokeh può essere attivato con camera prospettica.",
+            "renderModeLuminousHint": "Pipeline di overlay energetico. La miscelazione additiva è attiva e il bokeh non è disponibile.",
+            "fogDensity": "Densità della Nebbia",
             "guides": "Guide",
             "guideAxes": "Assi di Origine",
             "guideCoordinates": "Guide di Coordinate",
             "cameraHud": "HUD Fotocamera"
         },
+        "canvasNav": {
+            "reset": "Reimposta Fotocamera",
+            "resetTooltip": "Reimposta fotocamera",
+            "fit": "Adatta",
+            "fitTooltip": "Adatta immagine ai limiti della tela",
+            "clear": "Pulisci",
+            "clearTooltip": "Pulisci particelle ed elementi scena",
+            "zoomIn": "Zoom In",
+            "zoomInTooltip": "Aumenta zoom tela",
+            "zoomOut": "Zoom Out",
+            "zoomOutTooltip": "Riduci zoom tela"
+        },
+        "audioPlayer": {
+            "collapsePlayerAria": "Comprimi player audio",
+            "collapsePlayerTitle": "Comprimi player",
+            "expandPlayerAria": "Espandi player",
+            "expandPlayerTitle": "Espandi player",
+            "openAudioFileAria": "Apri file audio",
+            "openAudioFileTitle": "Apri file audio",
+            "noFileLoaded": "Nessun file caricato",
+            "playAria": "Riproduci",
+            "pauseAria": "Pausa",
+            "stopAria": "Stop",
+            "stopTitle": "Stop (torna all'inizio)",
+            "backAria": "-10 secondi",
+            "backTitle": "-10 s",
+            "forwardAria": "+10 secondi",
+            "forwardTitle": "+10 s",
+            "muteAria": "Silenzia uscita",
+            "muteTitle": "Silenzia uscita",
+            "unmuteAria": "Riattiva audio",
+            "unmuteTitle": "Riattiva audio",
+            "savePngAria": "Salva PNG",
+            "savePngTitle": "Salva tela come PNG",
+            "recordVideoAria": "Registra video",
+            "recordVideoTitle": "Registra tela e audio",
+            "stopRecordingAria": "Ferma registrazione",
+            "playbackSpeedAria": "Velocità riproduzione",
+            "playbackSpeedTitle": "Velocità riproduzione",
+            "playbackSpeedControlsAria": "Controlli velocità riproduzione",
+            "playbackSpeedMultiplierAria": "Moltiplicatore velocità riproduzione",
+            "seekPositionAria": "Posizione ricerca",
+            "audioLoaded": "Audio caricato",
+            "timestampInitial": "0:00 / -:--",
+            "loadingPrefix": "Caricamento",
+            "decodingPrefix": "Decodifica",
+            "decodeFailed": "Decodifica fallita. Prova un altro file."
+        },
         "settings": {
             "sensitivity": "Sensibilità",
             "audioResolution": "Risoluzione Audio",
-            "particleDefaultSize": "Dimensione Predefinita",
+            "particleDefaultSize": "Moltiplicatore dimensione",
             "particleCapacity": "Capacità",
             "spawnRate": "Tasso di Generazione",
             "activityInterval": "Intervallo di Attività",
@@ -82,7 +142,7 @@
             "resetDefaults": "Ripristina Predefiniti",
             "tooltips": {
                 "inputGain": "Technical term: Input Gain. Scales all amplitude before analysis.",
-                "defaultParticleSize": "Technical term: Default Size. Base object size before rule outputs.",
+                "defaultParticleSize": "Technical term: Default Size Multiplier. Scales all particle sizes after rule outputs.",
                 "maxParticles": "Technical term: Capacity. Total GPU object slots.",
                 "particlesByFrame": "Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.",
                 "fluxWindowFrames": "Technical term: Flux Window Frames. Rolling frame window for activity averaging.",
@@ -123,7 +183,7 @@
                 "globalSpectralFluxNormMax": "Activity Global Max",
                 "spectralFlatnessNormMin": "Noisiness Min",
                 "spectralFlatnessNormMax": "Noisiness Max",
-                "defaultParticleSize": "Default Size",
+                "defaultParticleSize": "Size Multiplier",
                 "canvasWidth": "Canvas Width",
                 "canvasHeight": "Canvas Height",
                 "canvasScale": "Canvas Scale",
@@ -173,7 +233,7 @@
                 "globalSpectralFluxNormMax": "Normalization upper bound for frame-level activity.",
                 "spectralFlatnessNormMin": "Normalization lower bound for spectral noisiness.",
                 "spectralFlatnessNormMax": "Normalization upper bound for spectral noisiness.",
-                "defaultParticleSize": "Base diameter of every particle before per-frequency size scaling.",
+                "defaultParticleSize": "Global multiplier applied to all particle sizes after rule outputs.",
                 "canvasWidth": "Explicit canvas width in Three.js world units. 0 keeps automatic sizing.",
                 "canvasHeight": "Explicit canvas height in Three.js world units. 0 keeps automatic sizing.",
                 "canvasScale": "Display zoom of the canvas on screen. Does not change render resolution.",
@@ -224,6 +284,12 @@
             "mathPlaceholder": "Digita matematica o numero",
             "addMath": "Aggiungi Matematica",
             "clearTokens": "Cancella",
+            "duplicateRule": "Duplica regola",
+            "removeDuplicateRule": "Rimuovi regola duplicata",
+            "collapseRule": "Comprimi regola",
+            "duplicateSuffix": "Duplicata",
+            "undo": "Annulla",
+            "redo": "Ripeti",
             "tokenEditorPlaceholder": "Costruisci espressione",
             "insertHere": "Inserisci",
             "insertToken": "Inserisci token...",
@@ -282,6 +348,63 @@
                 "condition": "condizione",
                 "true_val": "vero",
                 "false_val": "falso"
+            },
+            "sections": {
+                "spawnedParticles": "Particelle luminose",
+                "lines": "Linee",
+                "background": "Sfondo",
+                "camera": "Camera"
+            },
+            "subgroups": {
+                "position": "Posizione",
+                "appearance": "Aspetto"
+            },
+            "rowLabels": {
+                "spawnedParticles.x": "X",
+                "spawnedParticles.y": "Y",
+                "spawnedParticles.z": "Z",
+                "spawnedParticles.size": "Dimensione",
+                "spawnedParticles.shapeType": "Forma",
+                "spawnedParticles.particleCount": "Conteggio particelle",
+                "spawnedParticles.red": "Rosso",
+                "spawnedParticles.green": "Verde",
+                "spawnedParticles.blue": "Blu",
+                "spawnedParticles.yellow": "Giallo",
+                "spawnedParticles.hue": "Tonalità",
+                "spawnedParticles.saturation": "Saturazione",
+                "spawnedParticles.brightness": "Luminosità",
+                "spawnedParticles.luma": "Luma",
+                "spawnedParticles.opacity": "Opacità",
+                "lines.x": "X",
+                "lines.y": "Y",
+                "lines.z": "Z",
+                "lines.length": "Lunghezza",
+                "lines.direction": "Direzione",
+                "lines.thickness": "Spessore",
+                "lines.lineCount": "Conteggio linee",
+                "lines.red": "Rosso",
+                "lines.green": "Verde",
+                "lines.blue": "Blu",
+                "lines.yellow": "Giallo",
+                "lines.hue": "Tonalità",
+                "lines.saturation": "Saturazione",
+                "lines.brightness": "Luminosità",
+                "lines.luma": "Luma",
+                "lines.opacity": "Opacità",
+                "background.red": "Rosso",
+                "background.green": "Verde",
+                "background.blue": "Blu",
+                "background.yellow": "Giallo",
+                "background.hue": "Tonalità",
+                "background.saturation": "Saturazione",
+                "background.brightness": "Luminosità",
+                "camera.x": "Posizione X",
+                "camera.y": "Posizione Y",
+                "camera.z": "Posizione Z",
+                "camera.targetX": "Target X",
+                "camera.targetY": "Target Y",
+                "camera.targetZ": "Target Z",
+                "camera.angleOfView": "Angolo di vista"
             }
         }
     },
@@ -290,238 +413,238 @@
             "id": "binMagnitude",
             "group": "detail",
             "label": "Volume di Dettaglio",
-            "legacyName": "binMagnitude",
+            "technicalName": "binMagnitude",
             "description": "Volume per frequenza del canale attuale."
         },
         {
             "id": "binRMSEnergy",
             "group": "detail",
             "label": "Energia di Dettaglio",
-            "legacyName": "binRMSEnergy",
+            "technicalName": "binRMSEnergy",
             "description": "Energia RMS per frequenza del canale attuale."
         },
         {
             "id": "frequencyHz",
             "group": "detail",
             "label": "Frequenza Hz",
-            "legacyName": "frequencyHz",
+            "technicalName": "frequencyHz",
             "description": "Frequenza fisica misurata in Hz."
         },
         {
             "id": "normFreq",
             "group": "detail",
             "label": "Frequenza Normalizzata",
-            "legacyName": "normFreq",
+            "technicalName": "normFreq",
             "description": "Frequenza fisica normalizzata in un intervallo 0-1."
         },
         {
             "id": "notePitchClass",
             "group": "detail",
             "label": "Nota Musicale",
-            "legacyName": "notePitchClass",
+            "technicalName": "notePitchClass",
             "description": "Un valore alto indica una nota più acuta nella scala cromatica."
         },
         {
             "id": "pan",
             "group": "detail",
             "label": "Panorama",
-            "legacyName": "pan",
+            "technicalName": "pan",
             "description": "Valore stereo da sinistra a destra."
         },
         {
             "id": "octave",
             "group": "detail",
             "label": "Ottava",
-            "legacyName": "octave",
+            "technicalName": "octave",
             "description": "Un valore alto indica un registro più acuto."
         },
         {
             "id": "binAttackTime",
             "group": "detail",
             "label": "Nitidezza d'Attacco",
-            "legacyName": "binAttackTime",
+            "technicalName": "binAttackTime",
             "description": "Inizio del suono molto veloce e scattante."
         },
         {
             "id": "binEnvelope",
             "group": "detail",
             "label": "Inviluppo",
-            "legacyName": "binEnvelope",
+            "technicalName": "binEnvelope",
             "description": "Il suono è nel suo punto più udibile nel suo ciclo."
         },
         {
             "id": "binEnvelopeState",
             "group": "detail",
             "label": "Stato dell'Inviluppo",
-            "legacyName": "binEnvelopeState",
+            "technicalName": "binEnvelopeState",
             "description": "Fase ADSR attuale per uno specifico canale di frequenza."
         },
         {
             "id": "binFlux",
             "group": "detail",
             "label": "Attività",
-            "legacyName": "binFlux",
+            "technicalName": "binFlux",
             "description": "Il suono o il tono cambia rapidamente."
         },
         {
             "id": "binPhase",
             "group": "detail",
             "label": "Fase",
-            "legacyName": "binPhase",
+            "technicalName": "binPhase",
             "description": "L'onda è nel punto più alto del suo ciclo."
         },
         {
             "id": "binPhaseDeviation",
             "group": "detail",
             "label": "Instabilità",
-            "legacyName": "binPhaseDeviation",
+            "technicalName": "binPhaseDeviation",
             "description": "La fase si sposta in modo imprevedibile."
         },
         {
             "id": "amplitude",
             "group": "overall",
             "label": "Volume",
-            "legacyName": "amplitude",
+            "technicalName": "amplitude",
             "description": "Volume del frame attuale."
         },
         {
             "id": "high",
             "group": "overall",
             "label": "Toni Alti",
-            "legacyName": "high",
+            "technicalName": "high",
             "description": "Volume dell'intervallo di frequenza alta."
         },
         {
             "id": "mid",
             "group": "overall",
             "label": "Toni Medi",
-            "legacyName": "mid",
+            "technicalName": "mid",
             "description": "Volume dell'intervallo di media frequenza."
         },
         {
             "id": "bass",
             "group": "overall",
             "label": "Toni Bassi",
-            "legacyName": "bass",
+            "technicalName": "bass",
             "description": "Volume dell'intervallo di bassa frequenza."
         },
         {
             "id": "deltaTime",
             "group": "overall",
             "label": "Tempo Delta",
-            "legacyName": "deltaTime",
+            "technicalName": "deltaTime",
             "description": "Tempo trascorso tra il frame attuale e quello precedente."
         },
         {
             "id": "peakFreq",
             "group": "overall",
             "label": "Frequenza di Picco",
-            "legacyName": "peakFreq",
+            "technicalName": "peakFreq",
             "description": "Quanto è alta la frequenza rilevata più assordante."
         },
         {
             "id": "time",
             "group": "overall",
             "label": "Tempo Attuale",
-            "legacyName": "time",
+            "technicalName": "time",
             "description": "Timestamp del file audio."
         },
         {
             "id": "chromagram",
             "group": "overall",
             "label": "Complessità",
-            "legacyName": "chromagram",
+            "technicalName": "chromagram",
             "description": "Profilo armonico multi-nota ricco."
         },
         {
             "id": "globalRmsEnergy",
             "group": "overall",
             "label": "Energia",
-            "legacyName": "globalRmsEnergy",
+            "technicalName": "globalRmsEnergy",
             "description": "Volume medio del frame attuale."
         },
         {
             "id": "inharmonicity",
             "group": "overall",
             "label": "Dissonanza",
-            "legacyName": "inharmonicity",
+            "technicalName": "inharmonicity",
             "description": "Gli armonici sono stonati rispetto alla fondamentale."
         },
         {
             "id": "peakAmplitude",
             "group": "overall",
             "label": "Volume di Picco",
-            "legacyName": "peakAmplitude",
+            "technicalName": "peakAmplitude",
             "description": "Il punto più assordante è vicino al massimo."
         },
         {
             "id": "spectralCentroid",
             "group": "overall",
             "label": "Nitidezza",
-            "legacyName": "spectralCentroid",
+            "technicalName": "spectralCentroid",
             "description": "Suono dominante ad alta frequenza."
         },
         {
             "id": "spectralFlatness",
             "group": "overall",
             "label": "Rumorosità",
-            "legacyName": "spectralFlatness",
+            "technicalName": "spectralFlatness",
             "description": "Rumoroso se il valore è alto; tono puro se basso."
         },
         {
             "id": "spectralFlux",
             "group": "overall",
             "label": "Attività",
-            "legacyName": "spectralFlux",
+            "technicalName": "spectralFlux",
             "description": "Il suono cambia rapidamente."
         },
         {
             "id": "spectralRolloff",
             "group": "overall",
             "label": "Brillantezza",
-            "legacyName": "spectralRolloff",
+            "technicalName": "spectralRolloff",
             "description": "Molte alte frequenze presenti."
         },
         {
             "id": "spectralSkewness",
             "group": "overall",
             "label": "Squilibrio",
-            "legacyName": "spectralSkewness",
+            "technicalName": "spectralSkewness",
             "description": "L'energia è concentrata verso un'estremità dello spettro."
         },
         {
             "id": "spectralSpread",
             "group": "overall",
             "label": "Diffusione",
-            "legacyName": "spectralSpread",
+            "technicalName": "spectralSpread",
             "description": "Il suono copre un'ampia diffusione di frequenze."
         },
         {
             "id": "zeroCrossingRate",
             "group": "overall",
             "label": "Sferragliare",
-            "legacyName": "zeroCrossingRate",
+            "technicalName": "zeroCrossingRate",
             "description": "Stridio nitido ad alta frequenza."
         },
         {
             "id": "canvasHeightPx",
             "group": "overall",
             "label": "Altezza della Tela",
-            "legacyName": "canvasHeightPx",
+            "technicalName": "canvasHeightPx",
             "description": "Altezza della tela in pixel."
         },
         {
             "id": "canvasWidthPx",
             "group": "overall",
             "label": "Larghezza della Tela",
-            "legacyName": "canvasWidthPx",
+            "technicalName": "canvasWidthPx",
             "description": "Larghezza della tela in pixel."
         },
         {
             "id": "audioLengthSec",
             "group": "overall",
             "label": "Lunghezza Audio",
-            "legacyName": "audioLengthSec",
+            "technicalName": "audioLengthSec",
             "description": "Lunghezza del file audio in secondi."
         }
     ]

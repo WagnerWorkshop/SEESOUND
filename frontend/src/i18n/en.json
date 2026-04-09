@@ -49,21 +49,81 @@
             "axoOrthoYZ": "Orthogonal YZ",
             "angleOfView": "Angle Of View",
             "blending": "Blending",
+            "blendingEnabled": "Blending",
             "postProcessing": "Post-Processing",
-            "postProcessingEnabled": "Enable Post-Processing",
-            "bloomEnabled": "Bloom Enabled",
+            "postProcessingEnabled": "Post-Processing",
+            "bloomEnabled": "Bloom",
+            "bokehEnabled": "Bokeh",
+            "fogEnabled": "Fog",
             "bloomStrength": "Bloom Strength",
             "bloomRadius": "Bloom Radius",
             "bloomThreshold": "Bloom Threshold",
+            "bokehFocus": "Bokeh Focus",
+            "bokehAperture": "Bokeh Aperture",
+            "bokehMaxBlur": "Bokeh Max Blur",
+            "renderMode": "Render Mode",
+            "renderModeSolid": "Physical",
+            "renderModeLuminous": "Luminous",
+            "renderModeSolidHint": "Physical depth pipeline. Bokeh can be enabled when using perspective camera.",
+            "renderModeLuminousHint": "Energy overlay pipeline. Additive blending is active and bokeh is unavailable.",
+            "fogDensity": "Fog Density",
             "guides": "Guides",
             "guideAxes": "Origin Axes",
             "guideCoordinates": "Coordinate Guides",
             "cameraHud": "Camera HUD"
         },
+        "canvasNav": {
+            "reset": "Reset Camera",
+            "resetTooltip": "Reset camera",
+            "fit": "Fit",
+            "fitTooltip": "Fit image to canvas bounds",
+            "clear": "Clear",
+            "clearTooltip": "Clear particles and scene elements",
+            "zoomIn": "Zoom In",
+            "zoomInTooltip": "Increase canvas zoom",
+            "zoomOut": "Zoom Out",
+            "zoomOutTooltip": "Decrease canvas zoom"
+        },
+        "audioPlayer": {
+            "collapsePlayerAria": "Collapse audio player",
+            "collapsePlayerTitle": "Collapse player",
+            "expandPlayerAria": "Expand player",
+            "expandPlayerTitle": "Expand player",
+            "openAudioFileAria": "Open audio file",
+            "openAudioFileTitle": "Open audio file",
+            "noFileLoaded": "No file loaded",
+            "playAria": "Play",
+            "pauseAria": "Pause",
+            "stopAria": "Stop",
+            "stopTitle": "Stop (return to start)",
+            "backAria": "-10 seconds",
+            "backTitle": "-10 s",
+            "forwardAria": "+10 seconds",
+            "forwardTitle": "+10 s",
+            "muteAria": "Mute output",
+            "muteTitle": "Mute output",
+            "unmuteAria": "Unmute output",
+            "unmuteTitle": "Unmute output",
+            "savePngAria": "Save PNG",
+            "savePngTitle": "Save canvas as PNG",
+            "recordVideoAria": "Record video",
+            "recordVideoTitle": "Record canvas and audio",
+            "stopRecordingAria": "Stop recording",
+            "playbackSpeedAria": "Playback speed",
+            "playbackSpeedTitle": "Playback speed",
+            "playbackSpeedControlsAria": "Playback speed controls",
+            "playbackSpeedMultiplierAria": "Playback speed multiplier",
+            "seekPositionAria": "Seek position",
+            "audioLoaded": "Audio loaded",
+            "timestampInitial": "0:00 / -:--",
+            "loadingPrefix": "Loading",
+            "decodingPrefix": "Decoding",
+            "decodeFailed": "Decode failed. Try another file."
+        },
         "settings": {
             "sensitivity": "Sensitivity",
             "audioResolution": "Audio Resolution",
-            "particleDefaultSize": "Default Size",
+            "particleDefaultSize": "Size Multiplier",
             "particleCapacity": "Capacity",
             "spawnRate": "Spawn Rate",
             "activityInterval": "Activity Interval",
@@ -82,7 +142,7 @@
             "resetDefaults": "Reset Defaults",
             "tooltips": {
                 "inputGain": "Technical term: Input Gain. Scales all amplitude before analysis.",
-                "defaultParticleSize": "Technical term: Default Size. Base object size before rule outputs.",
+                "defaultParticleSize": "Technical term: Default Size Multiplier. Scales all particle sizes after rule outputs.",
                 "maxParticles": "Technical term: Capacity. Total GPU object slots.",
                 "particlesByFrame": "Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.",
                 "fluxWindowFrames": "Technical term: Flux Window Frames. Rolling frame window for activity averaging.",
@@ -123,7 +183,7 @@
                 "globalSpectralFluxNormMax": "Activity Global Max",
                 "spectralFlatnessNormMin": "Noisiness Min",
                 "spectralFlatnessNormMax": "Noisiness Max",
-                "defaultParticleSize": "Default Size",
+                "defaultParticleSize": "Size Multiplier",
                 "canvasWidth": "Canvas Width",
                 "canvasHeight": "Canvas Height",
                 "canvasScale": "Canvas Scale",
@@ -173,7 +233,7 @@
                 "globalSpectralFluxNormMax": "Normalization upper bound for frame-level activity.",
                 "spectralFlatnessNormMin": "Normalization lower bound for spectral noisiness.",
                 "spectralFlatnessNormMax": "Normalization upper bound for spectral noisiness.",
-                "defaultParticleSize": "Base diameter of every particle before per-frequency size scaling.",
+                "defaultParticleSize": "Global multiplier applied to all particle sizes after rule outputs.",
                 "canvasWidth": "Explicit canvas width in Three.js world units. 0 keeps automatic sizing.",
                 "canvasHeight": "Explicit canvas height in Three.js world units. 0 keeps automatic sizing.",
                 "canvasScale": "Display zoom of the canvas on screen. Does not change render resolution.",
@@ -224,6 +284,12 @@
             "mathPlaceholder": "Type math or number and add",
             "addMath": "Add Math",
             "clearTokens": "Clear",
+            "duplicateRule": "Duplicate rule",
+            "removeDuplicateRule": "Remove duplicate rule",
+            "collapseRule": "Collapse rule",
+            "duplicateSuffix": "Duplicate",
+            "undo": "Undo",
+            "redo": "Redo",
             "tokenEditorPlaceholder": "Build expression with variables and math actions",
             "insertHere": "Insert",
             "insertToken": "Insert token...",
@@ -282,6 +348,63 @@
                 "condition": "condition",
                 "true_val": "true",
                 "false_val": "false"
+            },
+            "sections": {
+                "spawnedParticles": "Light Particles",
+                "lines": "Lines",
+                "background": "Background",
+                "camera": "Camera"
+            },
+            "subgroups": {
+                "position": "Position",
+                "appearance": "Appearance"
+            },
+            "rowLabels": {
+                "spawnedParticles.x": "X",
+                "spawnedParticles.y": "Y",
+                "spawnedParticles.z": "Z",
+                "spawnedParticles.size": "Size",
+                "spawnedParticles.shapeType": "Shape",
+                "spawnedParticles.particleCount": "Particle Count",
+                "spawnedParticles.red": "Red",
+                "spawnedParticles.green": "Green",
+                "spawnedParticles.blue": "Blue",
+                "spawnedParticles.yellow": "Yellow",
+                "spawnedParticles.hue": "Hue",
+                "spawnedParticles.saturation": "Saturation",
+                "spawnedParticles.brightness": "Brightness",
+                "spawnedParticles.luma": "Luma",
+                "spawnedParticles.opacity": "Opacity",
+                "lines.x": "X",
+                "lines.y": "Y",
+                "lines.z": "Z",
+                "lines.length": "Length",
+                "lines.direction": "Direction",
+                "lines.thickness": "Thickness",
+                "lines.lineCount": "Line Count",
+                "lines.red": "Red",
+                "lines.green": "Green",
+                "lines.blue": "Blue",
+                "lines.yellow": "Yellow",
+                "lines.hue": "Hue",
+                "lines.saturation": "Saturation",
+                "lines.brightness": "Brightness",
+                "lines.luma": "Luma",
+                "lines.opacity": "Opacity",
+                "background.red": "Red",
+                "background.green": "Green",
+                "background.blue": "Blue",
+                "background.yellow": "Yellow",
+                "background.hue": "Hue",
+                "background.saturation": "Saturation",
+                "background.brightness": "Brightness",
+                "camera.x": "Position X",
+                "camera.y": "Position Y",
+                "camera.z": "Position Z",
+                "camera.targetX": "Target X",
+                "camera.targetY": "Target Y",
+                "camera.targetZ": "Target Z",
+                "camera.angleOfView": "Angle Of View"
             }
         }
     },
@@ -290,238 +413,238 @@
             "id": "binMagnitude",
             "group": "detail",
             "label": "Detail Volume",
-            "legacyName": "binMagnitude",
+            "technicalName": "binMagnitude",
             "description": "Per-frequency volume of the current bin."
         },
         {
             "id": "binRMSEnergy",
             "group": "detail",
             "label": "Detail Energy",
-            "legacyName": "binRMSEnergy",
+            "technicalName": "binRMSEnergy",
             "description": "Per-frequency RMS energy for the current bin."
         },
         {
             "id": "frequencyHz",
             "group": "detail",
             "label": "Frequency Hz",
-            "legacyName": "frequencyHz",
+            "technicalName": "frequencyHz",
             "description": "Physical frequency measured in Hz."
         },
         {
             "id": "normFreq",
             "group": "detail",
             "label": "Frequency Normalized",
-            "legacyName": "normFreq",
+            "technicalName": "normFreq",
             "description": "Physical frequency normalized into a 0-1 range."
         },
         {
             "id": "notePitchClass",
             "group": "detail",
             "label": "Musical Note",
-            "legacyName": "notePitchClass",
+            "technicalName": "notePitchClass",
             "description": "High value means a higher note within the chromatic scale."
         },
         {
             "id": "pan",
             "group": "detail",
             "label": "Pan",
-            "legacyName": "pan",
+            "technicalName": "pan",
             "description": "Left-to-right stereo value."
         },
         {
             "id": "octave",
             "group": "detail",
             "label": "Octave",
-            "legacyName": "octave",
+            "technicalName": "octave",
             "description": "High value means a higher register."
         },
         {
             "id": "binAttackTime",
             "group": "detail",
             "label": "Attack Sharpness",
-            "legacyName": "binAttackTime",
+            "technicalName": "binAttackTime",
             "description": "High value means a very fast, snappy start to the sound."
         },
         {
             "id": "binEnvelope",
             "group": "detail",
             "label": "Envelope",
-            "legacyName": "binEnvelope",
+            "technicalName": "binEnvelope",
             "description": "High value means the sound is currently at its loudest point in its cycle."
         },
         {
             "id": "binEnvelopeState",
             "group": "detail",
             "label": "Envelope State",
-            "legacyName": "binEnvelopeState",
+            "technicalName": "binEnvelopeState",
             "description": "Current ADSR phase of a specific frequency bin."
         },
         {
             "id": "binFlux",
             "group": "detail",
             "label": "Activity",
-            "legacyName": "binFlux",
+            "technicalName": "binFlux",
             "description": "High value means the sound or tone is changing rapidly."
         },
         {
             "id": "binPhase",
             "group": "detail",
             "label": "Phase",
-            "legacyName": "binPhase",
+            "technicalName": "binPhase",
             "description": "High value means the wave is at the top of its cycle."
         },
         {
             "id": "binPhaseDeviation",
             "group": "detail",
             "label": "Instability",
-            "legacyName": "binPhaseDeviation",
+            "technicalName": "binPhaseDeviation",
             "description": "High value means phase is shifting unpredictably."
         },
         {
             "id": "amplitude",
             "group": "overall",
             "label": "Volume",
-            "legacyName": "amplitude",
+            "technicalName": "amplitude",
             "description": "Volume of the current frame."
         },
         {
             "id": "high",
             "group": "overall",
             "label": "High Tones",
-            "legacyName": "high",
+            "technicalName": "high",
             "description": "Volume of the high frequency range."
         },
         {
             "id": "mid",
             "group": "overall",
             "label": "Mid Tones",
-            "legacyName": "mid",
+            "technicalName": "mid",
             "description": "Volume of the mid frequency range."
         },
         {
             "id": "bass",
             "group": "overall",
             "label": "Low Tones",
-            "legacyName": "bass",
+            "technicalName": "bass",
             "description": "Volume of the low frequency range."
         },
         {
             "id": "deltaTime",
             "group": "overall",
             "label": "Delta Time",
-            "legacyName": "deltaTime",
+            "technicalName": "deltaTime",
             "description": "Elapsed time between current frame and previous frame."
         },
         {
             "id": "peakFreq",
             "group": "overall",
             "label": "Peak Frequency",
-            "legacyName": "peakFreq",
+            "technicalName": "peakFreq",
             "description": "How high the loudest detected frequency is."
         },
         {
             "id": "time",
             "group": "overall",
             "label": "Current Time",
-            "legacyName": "time",
+            "technicalName": "time",
             "description": "Timestamp of the audio file."
         },
         {
             "id": "chromagram",
             "group": "overall",
             "label": "Complexity",
-            "legacyName": "chromagram",
+            "technicalName": "chromagram",
             "description": "High value means a rich multi-note harmonic profile."
         },
         {
             "id": "globalRmsEnergy",
             "group": "overall",
             "label": "Energy",
-            "legacyName": "globalRmsEnergy",
+            "technicalName": "globalRmsEnergy",
             "description": "Average volume of the current frame."
         },
         {
             "id": "inharmonicity",
             "group": "overall",
             "label": "Dissonance",
-            "legacyName": "inharmonicity",
+            "technicalName": "inharmonicity",
             "description": "High value means overtones are out of tune with the fundamental."
         },
         {
             "id": "peakAmplitude",
             "group": "overall",
             "label": "Peak Volume",
-            "legacyName": "peakAmplitude",
+            "technicalName": "peakAmplitude",
             "description": "High value means the loudest point is near maximum."
         },
         {
             "id": "spectralCentroid",
             "group": "overall",
             "label": "Sharpness",
-            "legacyName": "spectralCentroid",
+            "technicalName": "spectralCentroid",
             "description": "High value means a high-frequency dominant sound."
         },
         {
             "id": "spectralFlatness",
             "group": "overall",
             "label": "Noisiness",
-            "legacyName": "spectralFlatness",
+            "technicalName": "spectralFlatness",
             "description": "High value means noisy; low value means pure tone."
         },
         {
             "id": "spectralFlux",
             "group": "overall",
             "label": "Activity",
-            "legacyName": "spectralFlux",
+            "technicalName": "spectralFlux",
             "description": "High value means sound is changing rapidly."
         },
         {
             "id": "spectralRolloff",
             "group": "overall",
             "label": "Brightness",
-            "legacyName": "spectralRolloff",
+            "technicalName": "spectralRolloff",
             "description": "High value means the sound includes many high frequencies."
         },
         {
             "id": "spectralSkewness",
             "group": "overall",
             "label": "Imbalance",
-            "legacyName": "spectralSkewness",
+            "technicalName": "spectralSkewness",
             "description": "High value means energy is weighted toward one end of the spectrum."
         },
         {
             "id": "spectralSpread",
             "group": "overall",
             "label": "Spread",
-            "legacyName": "spectralSpread",
+            "technicalName": "spectralSpread",
             "description": "High value means the sound covers a wide frequency spread."
         },
         {
             "id": "zeroCrossingRate",
             "group": "overall",
             "label": "Rattle",
-            "legacyName": "zeroCrossingRate",
+            "technicalName": "zeroCrossingRate",
             "description": "High value means sharp high-frequency clatter."
         },
         {
             "id": "canvasHeightPx",
             "group": "overall",
             "label": "Canvas Height",
-            "legacyName": "canvasHeightPx",
+            "technicalName": "canvasHeightPx",
             "description": "Canvas height measured in pixels."
         },
         {
             "id": "canvasWidthPx",
             "group": "overall",
             "label": "Canvas Width",
-            "legacyName": "canvasWidthPx",
+            "technicalName": "canvasWidthPx",
             "description": "Canvas width measured in pixels."
         },
         {
             "id": "audioLengthSec",
             "group": "overall",
             "label": "Audio Length",
-            "legacyName": "audioLengthSec",
+            "technicalName": "audioLengthSec",
             "description": "Audio file length measured in seconds."
         }
     ]

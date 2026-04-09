@@ -101,6 +101,16 @@ function hsvToRgb(h, s, v) {
     }
 }
 
+function applyYellowModifier(r, g, b, yellow) {
+    const y = Number(yellow)
+    if (!Number.isFinite(y)) return { r: clamp01(r), g: clamp01(g), b: clamp01(b) }
+    return {
+        r: clamp01(r + y),
+        g: clamp01(g + y),
+        b: clamp01(b),
+    }
+}
+
 const POINT_VERTEX_SHADER = `
 attribute float psize;
 attribute vec3 color;
@@ -643,6 +653,10 @@ export class ParticleSystem {
                 nextG = rgb.g
                 nextB = rgb.b
             }
+            const yellowRgb = applyYellowModifier(nextR, nextG, nextB, particle.yellow)
+            nextR = yellowRgb.r
+            nextG = yellowRgb.g
+            nextB = yellowRgb.b
             this._col[i * 3] = nextR
             this._col[i * 3 + 1] = nextG
             this._col[i * 3 + 2] = nextB
@@ -680,6 +694,10 @@ export class ParticleSystem {
             outG = rgb.g
             outB = rgb.b
         }
+        const yellowRgb = applyYellowModifier(outR, outG, outB, state.yellow)
+        outR = yellowRgb.r
+        outG = yellowRgb.g
+        outB = yellowRgb.b
         bg.setRGB(outR, outG, outB)
     }
 
@@ -742,7 +760,8 @@ export class ParticleSystem {
 
         const persistMode = params.persistMode ?? 0 // 0 = Momentary, 1 = Painting
         const gainMult = params.inputGain ?? 1
-        const baseSize = params.defaultParticleSize ?? 6
+        const sizeMultiplierRaw = Number(params.defaultParticleSize)
+        const sizeMultiplier = Number.isFinite(sizeMultiplierRaw) ? Math.max(0, sizeMultiplierRaw) : 1
         const freqNormMinHz = Math.max(FREQ_MIN_HZ, Math.min(FREQ_MAX_HZ, Number(params.freqNormMin ?? 40)))
         const freqNormMaxHz = Math.max(freqNormMinHz + 1, Math.min(FREQ_MAX_HZ, Number(params.freqNormMax ?? 12000)))
         const logNormMin = freqToLogNorm(freqNormMinHz)
@@ -771,6 +790,7 @@ export class ParticleSystem {
         const stepRatioRaw = Math.pow(freqNormMaxHz / Math.max(freqNormMinHz, 1e-6), 1 / logBucketCount)
         const stepRatio = Number.isFinite(stepRatioRaw) && stepRatioRaw > 1 ? stepRatioRaw : 1
         const blendStr = params.blendMode ?? 'screen'
+        const blendEnabled = Number(params.blendEnabled ?? 0) >= 0.5
         const bgHue = Number.isFinite(Number(params.defaultBackgroundHue)) ? Number(params.defaultBackgroundHue) : 0
         const bgSat = Number.isFinite(Number(params.defaultBackgroundSaturation)) ? Number(params.defaultBackgroundSaturation) : 0
         const bgLight = Number.isFinite(Number(params.defaultBackgroundLightness)) ? Number(params.defaultBackgroundLightness) : 0
@@ -795,7 +815,17 @@ export class ParticleSystem {
         const emitPhysicalParticles = false
 
         // Adjust Three.js blending mode
-        if (blendStr === 'alpha') {
+        if (!blendEnabled) {
+            if (this._mat.blending !== THREE.NormalBlending) {
+                this._mat.blending = THREE.NormalBlending
+                this._mat.needsUpdate = true
+                this._lastBlending = THREE.NormalBlending
+            }
+            if (!this._mat.depthWrite) {
+                this._mat.depthWrite = true
+                this._mat.needsUpdate = true
+            }
+        } else if (blendStr === 'alpha') {
             const mat = this._mat
             const needsUpdate = (
                 mat.blending !== THREE.CustomBlending ||
@@ -816,33 +846,61 @@ export class ParticleSystem {
                 mat.needsUpdate = true
             }
         } else {
-            const blendMap = {
-                'screen': THREE.AdditiveBlending,
-                'lighter': THREE.AdditiveBlending,
-                'source-over': THREE.NormalBlending,
-                // Multiply on a black clear color can produce a fully black frame.
-                'multiply': THREE.NormalBlending,
-            }
-            const nextBlending = blendMap[blendStr] ?? THREE.AdditiveBlending
-            if (nextBlending !== this._lastBlending) {
-                this._mat.blending = nextBlending
-                this._mat.needsUpdate = true
-                this._lastBlending = nextBlending
+            const mat = this._mat
+            let needsUpdate = false
+
+            if (blendStr === 'screen' || blendStr === 'lighter') {
+                const should = (
+                    mat.blending !== THREE.CustomBlending ||
+                    mat.blendSrc !== THREE.OneFactor ||
+                    mat.blendDst !== THREE.OneMinusSrcColorFactor ||
+                    mat.blendEquation !== THREE.AddEquation
+                )
+                if (should) {
+                    mat.blending = THREE.CustomBlending
+                    mat.blendSrc = THREE.OneFactor
+                    mat.blendDst = THREE.OneMinusSrcColorFactor
+                    mat.blendEquation = THREE.AddEquation
+                    this._lastBlending = mat.blending
+                    needsUpdate = true
+                }
+            } else if (blendStr === 'multiply') {
+                const should = (
+                    mat.blending !== THREE.CustomBlending ||
+                    mat.blendSrc !== THREE.DstColorFactor ||
+                    mat.blendDst !== THREE.ZeroFactor ||
+                    mat.blendEquation !== THREE.AddEquation
+                )
+                if (should) {
+                    mat.blending = THREE.CustomBlending
+                    mat.blendSrc = THREE.DstColorFactor
+                    mat.blendDst = THREE.ZeroFactor
+                    mat.blendEquation = THREE.AddEquation
+                    this._lastBlending = mat.blending
+                    needsUpdate = true
+                }
+            } else {
+                if (mat.blending !== THREE.NormalBlending) {
+                    mat.blending = THREE.NormalBlending
+                    this._lastBlending = mat.blending
+                    needsUpdate = true
+                }
             }
 
-            const wantsOpaqueDepth = blendStr === 'source-over'
-            if (this._mat.depthWrite !== wantsOpaqueDepth) {
-                this._mat.depthWrite = wantsOpaqueDepth
-                this._mat.needsUpdate = true
+            if (mat.depthWrite) {
+                mat.depthWrite = false
+                needsUpdate = true
             }
+            if (needsUpdate) mat.needsUpdate = true
         }
 
         if (this._lineMat.blending !== this._mat.blending) {
             this._lineMat.blending = this._mat.blending
             this._lineMat.needsUpdate = true
         }
-        if (this._lineMat.depthWrite) {
-            this._lineMat.depthWrite = false
+        const wantsLineDepthWrite = !blendEnabled
+        if (this._lineMat.depthWrite !== wantsLineDepthWrite) {
+            this._lineMat.depthWrite = wantsLineDepthWrite
             this._lineMat.needsUpdate = true
         }
 
@@ -949,7 +1007,7 @@ export class ParticleSystem {
                 x,
                 y,
                 z,
-                size: Math.max(1.0, baseSize * (0.5 + energy * 1.5)),
+                size: Math.max(1.0, 0.5 + energy * 1.5),
                 red: brightness,
                 green: brightness,
                 blue: brightness,
@@ -1008,7 +1066,8 @@ export class ParticleSystem {
             this._pos[writeIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
             this._pos[writeIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
             this._pos[writeIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
-            this._sz[writeIndex] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(2.0, baseSize)
+            const unscaledSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
+            this._sz[writeIndex] = unscaledSize * sizeMultiplier
             let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
             let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
             let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : brightness
@@ -1022,6 +1081,10 @@ export class ParticleSystem {
                 nextG = rgb.g
                 nextB = rgb.b
             }
+            const yellowRgb = applyYellowModifier(nextR, nextG, nextB, particle.yellow)
+            nextR = yellowRgb.r
+            nextG = yellowRgb.g
+            nextB = yellowRgb.b
             this._col[writeIndex * 3] = nextR
             this._col[writeIndex * 3 + 1] = nextG
             this._col[writeIndex * 3 + 2] = nextB
@@ -1124,6 +1187,10 @@ export class ParticleSystem {
                 nextG = rgb.g
                 nextB = rgb.b
             }
+            const yellowRgb = applyYellowModifier(nextR, nextG, nextB, line.yellow)
+            nextR = yellowRgb.r
+            nextG = yellowRgb.g
+            nextB = yellowRgb.b
 
             const opacity = Number.isFinite(line.opacity) ? Math.max(0, Math.min(1, line.opacity)) : 0.4
             const outR = nextR * opacity
@@ -1201,7 +1268,7 @@ export class ParticleSystem {
                 x,
                 y,
                 z,
-                size: Math.max(1.0, baseSize * (0.5 + energy * 1.5)),
+                size: Math.max(1.0, 0.5 + energy * 1.5),
                 particleCount: 1,
                 red: brightness,
                 green: brightness,
@@ -1257,7 +1324,8 @@ export class ParticleSystem {
             this._physicalPos[physicalWriteIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
             this._physicalPos[physicalWriteIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
             this._physicalPos[physicalWriteIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
-            this._physicalSize[physicalWriteIndex] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1, baseSize)
+            const unscaledPhysicalSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
+            this._physicalSize[physicalWriteIndex] = unscaledPhysicalSize * sizeMultiplier
 
             let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
             let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
@@ -1272,6 +1340,11 @@ export class ParticleSystem {
                 nextG = rgb.g
                 nextB = rgb.b
             }
+
+            const yellowRgb = applyYellowModifier(nextR, nextG, nextB, particle.yellow)
+            nextR = yellowRgb.r
+            nextG = yellowRgb.g
+            nextB = yellowRgb.b
 
             this._physicalCol[physicalWriteIndex * 3] = nextR
             this._physicalCol[physicalWriteIndex * 3 + 1] = nextG
