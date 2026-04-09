@@ -1067,7 +1067,6 @@ class AudioEngine {
         this.timeDomainData = new Uint8Array(this.FFT_SIZE)
         this._freqL = new Uint8Array(128)
         this._freqR = new Uint8Array(128)
-        this._prevFrequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
         this._binMagnitude = null
         this._binFlux = null
@@ -1178,7 +1177,6 @@ class AudioEngine {
         this.FFT_SIZE = nextSize
         this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this.timeDomainData = new Uint8Array(this.FFT_SIZE)
-        this._prevFrequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
         this._binMagnitude = null
         this._binFlux = null
@@ -1313,9 +1311,10 @@ class AudioEngine {
         this.peakByte = peak
 
         const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
+        const needsCentroidFrame = this._calcUsage.needSpectralCentroid || this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness
+        const frameCentroidHz = needsCentroidFrame ? computeSpectralCentroid(this.frequencyData, sr) : 0
         if (this._calcUsage.needSpectralCentroid) {
-            const centroidHz = computeSpectralCentroid(this.frequencyData, sr)
-            this.spectralCentroidHz += (centroidHz - this.spectralCentroidHz) * alpha
+            this.spectralCentroidHz += (frameCentroidHz - this.spectralCentroidHz) * alpha
             this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
         } else {
             this.spectralCentroidHz = 0
@@ -1367,11 +1366,11 @@ class AudioEngine {
         }
 
         if (this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness) {
-            const spread = computeSpectralSpread(this.frequencyData, sr, this.spectralCentroidHz)
+            const spread = computeSpectralSpread(this.frequencyData, sr, frameCentroidHz)
             if (this._calcUsage.needSpectralSpread) this.spectralSpread += (spread - this.spectralSpread) * alpha
             else this.spectralSpread = 0
             if (this._calcUsage.needSpectralSkewness) {
-                const skew = computeSpectralSkewness(this.frequencyData, sr, this.spectralCentroidHz, spread)
+                const skew = computeSpectralSkewness(this.frequencyData, sr, frameCentroidHz, spread)
                 this.spectralSkewness += (skew - this.spectralSkewness) * alpha
             } else {
                 this.spectralSkewness = 0
@@ -1389,7 +1388,6 @@ class AudioEngine {
 
         // Keep an isolated copy of the current FFT frame for next-frame deltas.
         this._prevFrequencyDataBins.set(this.frequencyData)
-        this._prevFrequencyData.set(this.frequencyData)
 
         let sq = 0; for (const b of this.timeDomainData) sq += ((b - 128) / 128) ** 2
         this.amplitude = Math.sqrt(sq / this.timeDomainData.length)

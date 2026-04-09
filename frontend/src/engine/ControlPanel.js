@@ -3256,21 +3256,41 @@ export function initControlPanel(container) {
     shell.append(rail, stack)
     container.appendChild(shell)
 
-    const refreshHistoryButtons = () => {
+    let lastCanUndo = null
+    let lastCanRedo = null
+    const refreshHistoryButtons = (force = false) => {
+        const nextCanUndo = !!canUndo()
+        const nextCanRedo = !!canRedo()
+        if (!force && nextCanUndo === lastCanUndo && nextCanRedo === lastCanRedo) return false
+        lastCanUndo = nextCanUndo
+        lastCanRedo = nextCanRedo
         for (const paneParts of menuPanes.values()) {
-            if (paneParts.undoButton) paneParts.undoButton.disabled = !canUndo()
-            if (paneParts.redoButton) paneParts.redoButton.disabled = !canRedo()
+            if (paneParts.undoButton) paneParts.undoButton.disabled = !nextCanUndo
+            if (paneParts.redoButton) paneParts.redoButton.disabled = !nextCanRedo
         }
+        return true
+    }
+
+    let historyRefreshRaf = null
+    const scheduleHistoryButtonsRefresh = () => {
+        const nextCanUndo = !!canUndo()
+        const nextCanRedo = !!canRedo()
+        if (nextCanUndo === lastCanUndo && nextCanRedo === lastCanRedo) return
+        if (historyRefreshRaf !== null) return
+        historyRefreshRaf = window.requestAnimationFrame(() => {
+            historyRefreshRaf = null
+            refreshHistoryButtons(false)
+        })
     }
 
     for (const paneParts of menuPanes.values()) {
         paneParts.undoButton?.addEventListener('click', () => {
             if (!undo()) return
-            refreshHistoryButtons()
+            refreshHistoryButtons(true)
         })
         paneParts.redoButton?.addEventListener('click', () => {
             if (!redo()) return
-            refreshHistoryButtons()
+            refreshHistoryButtons(true)
         })
     }
 
@@ -3278,7 +3298,7 @@ export function initControlPanel(container) {
     buildViewMenu(menuPanes.get('view').body, syncRegistry)
     buildSettingsMenu(menuPanes.get('settings').body, syncRegistry)
     buildRulesMenu(menuPanes.get('rules').body, syncRegistry)
-    refreshHistoryButtons()
+    refreshHistoryButtons(true)
 
     let pinnedMenuId = null
     let hoverMenuId = 'settings'
@@ -3380,14 +3400,37 @@ export function initControlPanel(container) {
         })
     }
 
+    let syncFlushRaf = null
+    let syncIncludeGlobal = false
+    const pendingSyncKeys = new Set()
+
+    const flushQueuedSync = () => {
+        syncFlushRaf = null
+        const keys = [...pendingSyncKeys]
+        pendingSyncKeys.clear()
+        const callbacks = collectSyncCallbacks(syncRegistry, keys, syncIncludeGlobal)
+        syncIncludeGlobal = false
+        if (!callbacks.length) return
+        runSyncCallbacks(callbacks)
+    }
+
+    const queueSyncFlush = () => {
+        if (syncFlushRaf !== null) return
+        syncFlushRaf = window.requestAnimationFrame(flushQueuedSync)
+    }
+
     const syncAll = () => {
-        runSyncCallbacks(collectSyncCallbacks(syncRegistry, [], true))
+        syncIncludeGlobal = true
+        queueSyncFlush()
     }
 
     const syncByKeys = (keys) => {
-        const callbacks = collectSyncCallbacks(syncRegistry, keys, false)
-        if (!callbacks.length) return
-        runSyncCallbacks(callbacks)
+        for (const key of Array.isArray(keys) ? keys : []) {
+            const normalized = String(key || '').trim()
+            if (!normalized) continue
+            pendingSyncKeys.add(normalized)
+        }
+        queueSyncFlush()
     }
 
     subscribe((_, key, value) => {
@@ -3401,10 +3444,11 @@ export function initControlPanel(container) {
                 return
             }
             syncAll()
+            scheduleHistoryButtonsRefresh()
             return
         }
         syncByKeys([key])
-        refreshHistoryButtons()
+        scheduleHistoryButtonsRefresh()
     })
 
     hoverMenuId = 'settings'

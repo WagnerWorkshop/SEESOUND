@@ -163,6 +163,9 @@ export class ParticleSystem {
     constructor(scene, opts = {}) {
         this._scene = scene
         this._N = Math.max(1, Math.floor(opts.maxParticles ?? 1024))
+        this._capacity = this._N
+        this._maxActiveParticles = this._N
+        this._insertIndex = 0
         this._visibleCount = 0
         this._paintCount = 0
         this._lineVisibleCount = 0
@@ -248,7 +251,10 @@ export class ParticleSystem {
     }
 
     _allocateBuffers(maxParticles) {
-        this._N = Math.max(1, Math.floor(maxParticles))
+        this._capacity = Math.max(1, Math.floor(maxParticles))
+        this._N = this._capacity
+        this._maxActiveParticles = this._capacity
+        this._insertIndex = 0
         this._archiveOffloadBatch = Math.max(256, Math.floor(this._N * 0.1))
         this._pos = new Float32Array(this._N * 3)
         this._col = new Float32Array(this._N * 3)
@@ -297,6 +303,61 @@ export class ParticleSystem {
         }
 
         this.clear()
+    }
+
+    _getActiveParticleCapacity() {
+        return Math.max(1, Math.min(this._capacity || this._N, this._maxActiveParticles || this._N))
+    }
+
+    _markAttributeRange(attribute, offset, count) {
+        if (!attribute || count <= 0) return
+        const safeOffset = Math.max(0, Math.floor(offset))
+        const safeCount = Math.max(0, Math.floor(count))
+        if (safeCount <= 0) return
+
+        if (typeof attribute.addUpdateRange === 'function') {
+            attribute.addUpdateRange(safeOffset, safeCount)
+            attribute.needsUpdate = true
+            return
+        }
+
+        if (attribute.updateRange) {
+            const current = attribute.updateRange
+            if (!Number.isFinite(current.count) || current.count < 0) {
+                current.offset = safeOffset
+                current.count = safeCount
+            } else {
+                const start = Math.min(current.offset, safeOffset)
+                const end = Math.max(current.offset + current.count, safeOffset + safeCount)
+                current.offset = start
+                current.count = end - start
+            }
+            attribute.needsUpdate = true
+            return
+        }
+
+        attribute.needsUpdate = true
+    }
+
+    _markPointRangeDirty(minIndex, maxIndex) {
+        if (!Number.isFinite(minIndex) || !Number.isFinite(maxIndex) || maxIndex < minIndex) return
+        const min = Math.max(0, Math.floor(minIndex))
+        const max = Math.max(min, Math.floor(maxIndex))
+        const span = (max - min + 1)
+        this._markAttributeRange(this._aPos, min * 3, span * 3)
+        this._markAttributeRange(this._aCol, min * 3, span * 3)
+        this._markAttributeRange(this._aSz, min, span)
+        this._markAttributeRange(this._aAlpha, min, span)
+        this._markAttributeRange(this._aShape, min, span)
+    }
+
+    _markLineRangeDirty(minIndex, maxIndex) {
+        if (!Number.isFinite(minIndex) || !Number.isFinite(maxIndex) || maxIndex < minIndex) return
+        const min = Math.max(0, Math.floor(minIndex))
+        const max = Math.max(min, Math.floor(maxIndex))
+        const span = (max - min + 1)
+        this._markAttributeRange(this._aLinePos, min * 6, span * 6)
+        this._markAttributeRange(this._aLineCol, min * 6, span * 6)
     }
 
     _pruneArchive(params, nowSec) {
@@ -410,6 +471,7 @@ export class ParticleSystem {
 
         this._paintCount = cursor
         this._visibleCount = cursor
+        this._insertIndex = cursor % this._getActiveParticleCapacity()
         this._geo.setDrawRange(0, cursor)
         this._lineVisibleCount = 0
         this._lineGeo.setDrawRange(0, 0)
@@ -434,13 +496,26 @@ export class ParticleSystem {
 
     setMaxParticles(nextMax) {
         const wanted = Math.max(1, Math.floor(nextMax || 1))
-        if (wanted === this._N) return
-        this._allocateBuffers(wanted)
+        const clamped = Math.max(1, Math.min(this._capacity, wanted))
+        if (clamped === this._maxActiveParticles) return
+
+        this._maxActiveParticles = clamped
+        this._visibleCount = Math.min(this._visibleCount, clamped)
+        this._paintCount = this._visibleCount
+        this._lineVisibleCount = Math.min(this._lineVisibleCount, clamped)
+        this._physicalVisibleCount = Math.min(this._physicalVisibleCount, clamped)
+        this._physicalPaintCount = this._physicalVisibleCount
+        this._insertIndex = this._visibleCount % clamped
+
+        this._geo.setDrawRange(0, this._visibleCount)
+        this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
+        if (this._physicalMesh) this._physicalMesh.count = this._physicalVisibleCount
     }
 
     clear() {
         this._paintCount = 0
         this._visibleCount = 0
+        this._insertIndex = 0
         this._lineVisibleCount = 0
         this._physicalPaintCount = 0
         this._physicalVisibleCount = 0
@@ -940,49 +1015,96 @@ export class ParticleSystem {
             chromagram: clamp01(ae.chromagram),
         }
         frameBinInputs.amplitude = frameBinInputs.globalRmsEnergy
-        if (needBinMagnitude && binMagArr && binMagArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binMagArr.length; i++) sum += normalizeByRange(binMagArr[i], binMagnitudeNormMin, binMagnitudeNormMax)
-            frameBinInputs.binMagnitude = sum / binMagArr.length
+        const frameBinScanLength = Math.max(
+            needBinMagnitude && binMagArr ? binMagArr.length : 0,
+            needBinFlux && binFluxArr ? binFluxArr.length : 0,
+            needBinPhaseDev && binPhaseDevArr ? binPhaseDevArr.length : 0,
+            needBinAttackTime && binAttackTimeArr ? binAttackTimeArr.length : 0,
+            needBinEnvelope && binEnvArr ? binEnvArr.length : 0,
+            needBinPhase && binPhaseArr ? binPhaseArr.length : 0,
+        )
+        if (frameBinScanLength > 0) {
+            let sumMagnitude = 0
+            let countMagnitude = 0
+            let sumFlux = 0
+            let countFlux = 0
+            let sumPhaseDev = 0
+            let countPhaseDev = 0
+            let sumAttackTime = 0
+            let countAttackTime = 0
+            let sumEnvelope = 0
+            let countEnvelope = 0
+            let sumPhase = 0
+            let countPhase = 0
+
+            for (let i = 0; i < frameBinScanLength; i++) {
+                if (needBinMagnitude && binMagArr && i < binMagArr.length) {
+                    sumMagnitude += normalizeByRange(binMagArr[i], binMagnitudeNormMin, binMagnitudeNormMax)
+                    countMagnitude++
+                }
+                if (needBinFlux && binFluxArr && i < binFluxArr.length) {
+                    sumFlux += normalizeByRange(binFluxArr[i], binFluxNormMin, binFluxNormMax)
+                    countFlux++
+                }
+                if (needBinPhaseDev && binPhaseDevArr && i < binPhaseDevArr.length) {
+                    sumPhaseDev += normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
+                    countPhaseDev++
+                }
+                if (needBinAttackTime && binAttackTimeArr && i < binAttackTimeArr.length) {
+                    sumAttackTime += normalizeByRange(binAttackTimeArr[i], binAttackTimeNormMin, binAttackTimeNormMax)
+                    countAttackTime++
+                }
+                if (needBinEnvelope && binEnvArr && i < binEnvArr.length) {
+                    sumEnvelope += binEnvArr[i]
+                    countEnvelope++
+                }
+                if (needBinPhase && binPhaseArr && i < binPhaseArr.length) {
+                    sumPhase += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
+                    countPhase++
+                }
+            }
+
+            if (countMagnitude > 0) frameBinInputs.binMagnitude = sumMagnitude / countMagnitude
+            if (countFlux > 0) frameBinInputs.binFlux = sumFlux / countFlux
+            if (countPhaseDev > 0) frameBinInputs.binPhaseDeviation = sumPhaseDev / countPhaseDev
+            if (countAttackTime > 0) frameBinInputs.binAttackTime = sumAttackTime / countAttackTime
+            if (countEnvelope > 0) {
+                frameBinInputs.binEnvelope = sumEnvelope / countEnvelope
+                frameBinInputs.binEnvelopeState = frameBinInputs.binEnvelope
+            }
+            if (countPhase > 0) frameBinInputs.binPhase = sumPhase / countPhase
         }
-        if (needBinFlux && binFluxArr && binFluxArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binFluxArr.length; i++) sum += normalizeByRange(binFluxArr[i], binFluxNormMin, binFluxNormMax)
-            frameBinInputs.binFlux = sum / binFluxArr.length
+
+        const activeParticleCapacity = this._getActiveParticleCapacity()
+        let writeIndex = (persistMode === 1 && emitLightParticles)
+            ? (this._insertIndex % activeParticleCapacity)
+            : 0
+        let lineWriteIndex = (persistMode === 1 && emitLines) ? Math.min(this._lineVisibleCount, activeParticleCapacity) : 0
+        let physicalWriteIndex = (persistMode === 1 && emitPhysicalParticles) ? Math.min(this._physicalPaintCount, activeParticleCapacity) : 0
+        let wroteParticles = 0
+
+        let pointDirtyMin = Number.POSITIVE_INFINITY
+        let pointDirtyMax = Number.NEGATIVE_INFINITY
+        const markPointDirty = (index) => {
+            if (!Number.isFinite(index)) return
+            pointDirtyMin = Math.min(pointDirtyMin, index)
+            pointDirtyMax = Math.max(pointDirtyMax, index)
         }
-        if (needBinPhaseDev && binPhaseDevArr && binPhaseDevArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binPhaseDevArr.length; i++) sum += normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
-            frameBinInputs.binPhaseDeviation = sum / binPhaseDevArr.length
+
+        let lineDirtyMin = Number.POSITIVE_INFINITY
+        let lineDirtyMax = Number.NEGATIVE_INFINITY
+        const markLineDirty = (index) => {
+            if (!Number.isFinite(index)) return
+            lineDirtyMin = Math.min(lineDirtyMin, index)
+            lineDirtyMax = Math.max(lineDirtyMax, index)
         }
-        if (needBinAttackTime && binAttackTimeArr && binAttackTimeArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binAttackTimeArr.length; i++) sum += normalizeByRange(binAttackTimeArr[i], binAttackTimeNormMin, binAttackTimeNormMax)
-            frameBinInputs.binAttackTime = sum / binAttackTimeArr.length
-        }
-        if (needBinEnvelope && binEnvArr && binEnvArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binEnvArr.length; i++) sum += binEnvArr[i]
-            frameBinInputs.binEnvelope = sum / binEnvArr.length
-            frameBinInputs.binEnvelopeState = frameBinInputs.binEnvelope
-        }
-        if (needBinPhase && binPhaseArr && binPhaseArr.length > 0) {
-            let sum = 0
-            for (let i = 0; i < binPhaseArr.length; i++) sum += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
-            frameBinInputs.binPhase = sum / binPhaseArr.length
-        }
-        let writeIndex = (persistMode === 1 && emitLightParticles) ? this._paintCount : 0
-        let lineWriteIndex = (persistMode === 1 && emitLines) ? this._lineVisibleCount : 0
-        let physicalWriteIndex = (persistMode === 1 && emitPhysicalParticles) ? this._physicalPaintCount : 0
 
         const writeParticle = (bucket, alphaBoost = 1) => {
             if (!emitLightParticles) return
-            if (writeIndex >= this._N && persistMode === 1) {
-                const dropCount = Math.max(1, Math.floor(params.archiveOffloadBatch ?? this._archiveOffloadBatch))
-                const removed = this._archiveAndCompactOldest(dropCount, writeIndex, params, currentTime)
-                writeIndex = Math.max(0, writeIndex - removed)
-            }
-            if (writeIndex >= this._N) return
+            if (activeParticleCapacity <= 0) return
+            if (persistMode !== 1 && writeIndex >= activeParticleCapacity) return
+
+            const slotIndex = writeIndex
             const hz = bucket.hz
             const rawNorm = freqToLogNorm(hz)
             const freqNorm = normalizeByRange(rawNorm, logNormMin, logNormMax)
@@ -1063,11 +1185,11 @@ export class ParticleSystem {
             if (spawnProb <= 0) return
             if (spawnProb < 1 && Math.random() > spawnProb) return
 
-            this._pos[writeIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
-            this._pos[writeIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
-            this._pos[writeIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
+            this._pos[slotIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
+            this._pos[slotIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
+            this._pos[slotIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
             const unscaledSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
-            this._sz[writeIndex] = unscaledSize * sizeMultiplier
+            this._sz[slotIndex] = unscaledSize * sizeMultiplier
             let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
             let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
             let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : brightness
@@ -1085,19 +1207,23 @@ export class ParticleSystem {
             nextR = yellowRgb.r
             nextG = yellowRgb.g
             nextB = yellowRgb.b
-            this._col[writeIndex * 3] = nextR
-            this._col[writeIndex * 3 + 1] = nextG
-            this._col[writeIndex * 3 + 2] = nextB
-            this._alpha[writeIndex] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
-            this._shape[writeIndex] = shapeToValue(particle.shapeType)
-            this._pan[writeIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
-            this._binRms[writeIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
-            writeIndex++
+            this._col[slotIndex * 3] = nextR
+            this._col[slotIndex * 3 + 1] = nextG
+            this._col[slotIndex * 3 + 2] = nextB
+            this._alpha[slotIndex] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
+            this._shape[slotIndex] = shapeToValue(particle.shapeType)
+            this._pan[slotIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
+            this._binRms[slotIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
+            markPointDirty(slotIndex)
+            wroteParticles++
+
+            if (persistMode === 1) writeIndex = (slotIndex + 1) % activeParticleCapacity
+            else writeIndex = slotIndex + 1
         }
 
         const writeLine = (bucket, alphaBoost = 1) => {
             if (!emitLines) return
-            if (lineWriteIndex >= this._N) return
+            if (lineWriteIndex >= activeParticleCapacity) return
             const hz = bucket.hz
             const rawNorm = freqToLogNorm(hz)
             const freqNorm = normalizeByRange(rawNorm, logNormMin, logNormMax)
@@ -1222,7 +1348,8 @@ export class ParticleSystem {
                 yEnd = centerY + halfLength
             }
 
-            const base = lineWriteIndex * 6
+            const lineSlotIndex = lineWriteIndex
+            const base = lineSlotIndex * 6
             this._linePos[base] = xStart
             this._linePos[base + 1] = yStart
             this._linePos[base + 2] = zStart
@@ -1237,14 +1364,15 @@ export class ParticleSystem {
             this._lineCol[base + 4] = outG
             this._lineCol[base + 5] = outB
 
-            this._lineThickness[lineWriteIndex] = Number.isFinite(line.thickness) ? Math.max(0, line.thickness) : 1
-            this._lineAlpha[lineWriteIndex] = opacity
-            lineWriteIndex++
+            this._lineThickness[lineSlotIndex] = Number.isFinite(line.thickness) ? Math.max(0, line.thickness) : 1
+            this._lineAlpha[lineSlotIndex] = opacity
+            markLineDirty(lineSlotIndex)
+            lineWriteIndex = lineSlotIndex + 1
         }
 
         const writePhysical = (bucket) => {
             if (!emitPhysicalParticles) return
-            if (physicalWriteIndex >= this._N) return
+            if (physicalWriteIndex >= activeParticleCapacity) return
 
             const hz = bucket.hz
             const rawNorm = freqToLogNorm(hz)
@@ -1465,26 +1593,35 @@ export class ParticleSystem {
                 binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
             })
             hzStart = hzEnd
-            if (writeIndex >= this._N) break
+            if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
         }
 
         if (persistMode === 1) {
-            this._paintCount = writeIndex
-            this._visibleCount = this._paintCount
-            this._geo.setDrawRange(0, this._paintCount)
-            this._lineVisibleCount = lineWriteIndex
+            if (emitLightParticles) {
+                this._insertIndex = writeIndex % activeParticleCapacity
+                this._visibleCount = Math.min(activeParticleCapacity, this._visibleCount + wroteParticles)
+                this._paintCount = this._visibleCount
+            } else {
+                this._insertIndex = 0
+                this._paintCount = 0
+                this._visibleCount = 0
+            }
+            this._geo.setDrawRange(0, this._visibleCount)
+
+            this._lineVisibleCount = Math.min(activeParticleCapacity, lineWriteIndex)
             this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
-            this._physicalPaintCount = physicalWriteIndex
+            this._physicalPaintCount = Math.min(activeParticleCapacity, physicalWriteIndex)
             this._physicalVisibleCount = this._physicalPaintCount
             this._pruneArchive(params, currentTime)
         } else {
+            this._insertIndex = 0
             this._paintCount = 0
-            this._visibleCount = writeIndex
-            this._geo.setDrawRange(0, writeIndex)
-            this._lineVisibleCount = lineWriteIndex
-            this._lineGeo.setDrawRange(0, lineWriteIndex * 2)
+            this._visibleCount = Math.min(activeParticleCapacity, writeIndex)
+            this._geo.setDrawRange(0, this._visibleCount)
+            this._lineVisibleCount = Math.min(activeParticleCapacity, lineWriteIndex)
+            this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
             this._physicalPaintCount = 0
-            this._physicalVisibleCount = physicalWriteIndex
+            this._physicalVisibleCount = Math.min(activeParticleCapacity, physicalWriteIndex)
         }
 
         if (this._physicalMesh) {
@@ -1534,7 +1671,8 @@ export class ParticleSystem {
             this._physicalMaterial.needsUpdate = true
         }
 
-        if (params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visibleCount > 0) {
+        const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visibleCount > 0
+        if (livingRulesActive) {
             this.applyLivingRulesToRange({
                 params,
                 inputs: this._buildRuleInputs(ae, {
@@ -1592,13 +1730,17 @@ export class ParticleSystem {
                 angleOfView: null,
             }
         }
-        this._aPos.needsUpdate = true
-        this._aCol.needsUpdate = true
-        this._aSz.needsUpdate = true
-        this._aAlpha.needsUpdate = true
-        this._aShape.needsUpdate = true
-        this._aLinePos.needsUpdate = true
-        this._aLineCol.needsUpdate = true
+        if (livingRulesActive && this._visibleCount > 0) {
+            pointDirtyMin = Math.min(pointDirtyMin, 0)
+            pointDirtyMax = Math.max(pointDirtyMax, this._visibleCount - 1)
+        }
+
+        if (Number.isFinite(pointDirtyMin) && Number.isFinite(pointDirtyMax) && pointDirtyMax >= pointDirtyMin) {
+            this._markPointRangeDirty(pointDirtyMin, pointDirtyMax)
+        }
+        if (Number.isFinite(lineDirtyMin) && Number.isFinite(lineDirtyMax) && lineDirtyMax >= lineDirtyMin) {
+            this._markLineRangeDirty(lineDirtyMin, lineDirtyMax)
+        }
     }
 
     /** Set the Three.js blending mode on the material. */
