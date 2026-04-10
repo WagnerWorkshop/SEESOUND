@@ -465,6 +465,85 @@ function getRuleVariableTooltip(entry) {
     return description
 }
 
+function escapeRegExpLiteral(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeSearchKey(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '')
+}
+
+function getRuleVariableAliases(entry) {
+    const aliases = new Set()
+    const id = String(entry?.id || '').trim()
+    const label = String(entry?.label || '').trim()
+    const legacyName = String(entry?.legacyName || '').trim()
+    const technical = formatTechnicalTerm(legacyName || id)
+
+    if (id) aliases.add(id)
+    if (label) aliases.add(label)
+    if (legacyName) aliases.add(legacyName)
+    if (technical) aliases.add(technical)
+    return [...aliases]
+}
+
+function findRuleVariableSuggestions(query, limit = 6) {
+    const source = String(query || '').trim()
+    const normalizedQuery = normalizeSearchKey(source)
+    if (!normalizedQuery) return []
+
+    const ranked = []
+    for (const entry of RULE_VARIABLES) {
+        const aliases = getRuleVariableAliases(entry)
+        let bestRank = Number.POSITIVE_INFINITY
+        for (const alias of aliases) {
+            const normalizedAlias = normalizeSearchKey(alias)
+            if (!normalizedAlias) continue
+            if (normalizedAlias === normalizedQuery) bestRank = Math.min(bestRank, 0)
+            else if (normalizedAlias.startsWith(normalizedQuery)) bestRank = Math.min(bestRank, 1)
+            else if (normalizedAlias.includes(normalizedQuery)) bestRank = Math.min(bestRank, 2)
+        }
+        if (bestRank !== Number.POSITIVE_INFINITY) {
+            ranked.push({ rank: bestRank, entry })
+        }
+    }
+
+    ranked.sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank
+        return String(a.entry?.label || a.entry?.id || '').localeCompare(String(b.entry?.label || b.entry?.id || ''))
+    })
+    return ranked.slice(0, limit).map((item) => item.entry)
+}
+
+function replaceExpressionVariableAliases(expression) {
+    let source = String(expression || '')
+    if (!source.trim()) return source
+
+    const replacements = []
+    for (const entry of RULE_VARIABLES) {
+        const id = String(entry?.id || '').trim()
+        if (!id) continue
+        for (const alias of getRuleVariableAliases(entry)) {
+            const normalizedAlias = String(alias || '').trim()
+            if (!normalizedAlias) continue
+            if (normalizedAlias === id) continue
+            replacements.push({ alias: normalizedAlias, id })
+        }
+    }
+
+    replacements.sort((a, b) => b.alias.length - a.alias.length)
+
+    for (const { alias, id } of replacements) {
+        const escapedAlias = escapeRegExpLiteral(alias)
+        const regex = new RegExp(`(^|[^A-Za-z0-9_])(${escapedAlias})(?=$|[^A-Za-z0-9_])`, 'gi')
+        source = source.replace(regex, (_match, prefix) => `${prefix}${id}`)
+    }
+
+    return source
+}
+
 function applySelectedOptionTooltip(select) {
     if (!select) return
     const sync = () => {
@@ -1104,6 +1183,81 @@ function placeCaretAfterNode(node) {
     range.collapse(true)
     selection.removeAllRanges()
     selection.addRange(range)
+}
+
+function captureEditorSelectionRange(editor) {
+    if (!editor) return null
+    const selection = window.getSelection?.()
+    if (!selection || selection.rangeCount === 0) return null
+    if (!isSelectionInside(editor, selection)) return null
+    return selection.getRangeAt(0).cloneRange()
+}
+
+function restoreEditorSelectionRange(editor, savedRange) {
+    if (!editor || !savedRange) return false
+    const selection = window.getSelection?.()
+    if (!selection) return false
+
+    const startNode = savedRange.startContainer
+    const endNode = savedRange.endContainer
+    if (!startNode || !endNode) return false
+    if (!editor.contains(startNode) || !editor.contains(endNode)) return false
+
+    selection.removeAllRanges()
+    selection.addRange(savedRange)
+    return true
+}
+
+function getAutocompleteQueryAtCursor(editor) {
+    if (!editor) return ''
+    const selection = window.getSelection?.()
+    if (!selection || selection.rangeCount === 0) return ''
+    if (!isSelectionInside(editor, selection)) return ''
+
+    const active = selection.getRangeAt(0)
+    if (!active.collapsed) return ''
+
+    const probe = active.cloneRange()
+    probe.selectNodeContents(editor)
+    probe.setEnd(active.endContainer, active.endOffset)
+    const beforeText = readExpressionFromFragment(probe.cloneContents())
+    const match = String(beforeText || '').match(/([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z0-9_]+)*)$/)
+    return String(match?.[1] || '').trim()
+}
+
+function removeTrailingQueryAtCursor(editor, query) {
+    const needle = String(query || '').trim()
+    if (!editor || !needle) return false
+    const selection = window.getSelection?.()
+    if (!selection || selection.rangeCount === 0) return false
+
+    const range = selection.getRangeAt(0)
+    if (!range.collapsed) return false
+
+    let node = range.startContainer
+    let offset = range.startOffset
+
+    if (node.nodeType !== Node.TEXT_NODE) {
+        const previous = node.childNodes[Math.max(0, offset - 1)]
+        if (!(previous instanceof Text)) return false
+        node = previous
+        offset = previous.textContent?.length || 0
+    }
+
+    if (!(node instanceof Text)) return false
+    const text = String(node.textContent || '')
+    const before = text.slice(0, offset)
+    if (!before.toLowerCase().endsWith(needle.toLowerCase())) return false
+
+    const start = Math.max(0, offset - needle.length)
+    node.textContent = text.slice(0, start) + text.slice(offset)
+
+    const nextRange = document.createRange()
+    nextRange.setStart(node, start)
+    nextRange.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(nextRange)
+    return true
 }
 
 function insertVariablePillAtCursor(editor, variableId) {
@@ -2979,6 +3133,8 @@ function buildRulesMenu(body, syncRegistry) {
             const tokenRow = el('div', 'cp-rule-token-row')
             valueActionSelect = createRuleTokenValueSelect('')
             const functionSelect = createRuleFunctionSelect('')
+            const autocompleteHint = el('div', 'cp-rule-autocomplete-hint')
+            autocompleteHint.hidden = true
 
             expressionInput = el('div', 'cp-rule-token-editor cp-rule-expression-input', {
                 contenteditable: 'true',
@@ -2990,10 +3146,11 @@ function buildRulesMenu(body, syncRegistry) {
             tokenEditor = expressionInput
 
             tokenRow.append(valueActionSelect, functionSelect)
-            expressionRow.append(tokenRow, expressionInput)
+            expressionRow.append(tokenRow, expressionInput, autocompleteHint)
 
             const commitExpression = ({ rerender = false } = {}) => {
-                rowState.expression = normalizeExpressionSlotGaps(readExpressionFromEditor(expressionInput))
+                const rawExpression = readExpressionFromEditor(expressionInput)
+                rowState.expression = normalizeExpressionSlotGaps(replaceExpressionVariableAliases(rawExpression))
                 rowState.tokens = parseExpressionToTokens(rowState.expression)
 
                 if (rerender) {
@@ -3012,12 +3169,41 @@ function buildRulesMenu(body, syncRegistry) {
 
             rowState.onExpressionChanged = commitExpression
 
+            const syncExpressionSelection = () => {
+                const captured = captureEditorSelectionRange(expressionInput)
+                if (captured) rowState.savedSelectionRange = captured
+            }
+
+            const updateAutocompleteHint = () => {
+                const query = getAutocompleteQueryAtCursor(expressionInput)
+                const suggestions = findRuleVariableSuggestions(query, 4)
+                rowState.autocomplete = {
+                    query,
+                    suggestions,
+                }
+                if (!query || !suggestions.length) {
+                    autocompleteHint.hidden = true
+                    autocompleteHint.textContent = ''
+                    return
+                }
+
+                const suggestionText = suggestions
+                    .map((entry) => `${entry.label || entry.id} (${entry.id})`)
+                    .join(', ')
+                autocompleteHint.textContent = `${getRuleText('ruleSuggestionPrefix', 'Suggestion')}: ${suggestionText}`
+                autocompleteHint.hidden = false
+            }
+
+            valueActionSelect.addEventListener('pointerdown', syncExpressionSelection)
+            valueActionSelect.addEventListener('focus', syncExpressionSelection)
+
             valueActionSelect.addEventListener('change', () => {
                 const selected = String(valueActionSelect.value || '')
                 valueActionSelect.value = ''
                 if (!selected.startsWith('var:')) return
                 const nextVariableId = selected.slice(4)
                 const activePill = rowState.activePill
+                restoreEditorSelectionRange(expressionInput, rowState.savedSelectionRange)
                 if (activePill && expressionInput.contains(activePill)) {
                     activePill.replaceWith(createRuleExpressionPill(nextVariableId))
                     rowState.activePill = null
@@ -3026,7 +3212,9 @@ function buildRulesMenu(body, syncRegistry) {
                 } else {
                     insertVariablePillAtCursor(expressionInput, nextVariableId)
                 }
-                commitExpression()
+                commitExpression({ rerender: true })
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
 
             functionSelect.addEventListener('change', () => {
@@ -3035,19 +3223,43 @@ function buildRulesMenu(body, syncRegistry) {
                 if (!selected) return
                 insertFunctionTemplateAtCursor(expressionInput, selected)
                 commitExpression()
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
 
-            expressionInput.addEventListener('input', commitExpression)
+            expressionInput.addEventListener('input', (event) => {
+                const inserted = String(event?.data || '')
+                const inputType = String(event?.inputType || '')
+                const finalizeAlias = inputType.startsWith('insert') && /[\s()+\-*/,]/.test(inserted)
+                commitExpression({ rerender: finalizeAlias })
+                syncExpressionSelection()
+                updateAutocompleteHint()
+            })
             expressionInput.addEventListener('blur', () => {
                 const shouldSuppress = !!rowState.suppressNextBlurRerender
                 rowState.suppressNextBlurRerender = false
                 commitExpression({ rerender: !shouldSuppress })
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
             expressionInput.addEventListener('keydown', (event) => {
+                const suggestion = rowState.autocomplete?.suggestions?.[0]
+                const query = String(rowState.autocomplete?.query || '').trim()
+                if (event.key === 'Tab' && suggestion && query) {
+                    event.preventDefault()
+                    removeTrailingQueryAtCursor(expressionInput, query)
+                    insertVariablePillAtCursor(expressionInput, String(suggestion.id || ''))
+                    commitExpression({ rerender: true })
+                    syncExpressionSelection()
+                    updateAutocompleteHint()
+                    return
+                }
                 if (event.key === 'Enter') event.preventDefault()
                 if ((event.key === 'Backspace' || event.key === 'Delete') && replaceActiveSlotWithText(expressionInput, '')) {
                     event.preventDefault()
                     commitExpression({ rerender: true })
+                    syncExpressionSelection()
+                    updateAutocompleteHint()
                 }
             })
             expressionInput.addEventListener('beforeinput', (event) => {
@@ -3057,6 +3269,8 @@ function buildRulesMenu(body, syncRegistry) {
                 if (!replaceActiveSlotWithText(expressionInput, text)) return
                 event.preventDefault()
                 commitExpression({ rerender: true })
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
             expressionInput.addEventListener('click', (event) => {
                 const clickedPill = event.target instanceof Element ? event.target.closest('.cp-rule-inline-pill') : null
@@ -3071,6 +3285,16 @@ function buildRulesMenu(body, syncRegistry) {
                 range.selectNodeContents(slot)
                 selection.removeAllRanges()
                 selection.addRange(range)
+                syncExpressionSelection()
+                updateAutocompleteHint()
+            })
+            expressionInput.addEventListener('keyup', () => {
+                syncExpressionSelection()
+                updateAutocompleteHint()
+            })
+            expressionInput.addEventListener('mouseup', () => {
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
 
             clearTokensBtn.addEventListener('click', () => {
@@ -3081,7 +3305,12 @@ function buildRulesMenu(body, syncRegistry) {
                 rowState.pendingInsertIndex = null
                 commitExpression()
                 expressionInput.focus()
+                syncExpressionSelection()
+                updateAutocompleteHint()
             })
+
+            rowState.autocompleteHint = autocompleteHint
+            rowState.autocomplete = { query: '', suggestions: [] }
         }
 
         card.append(header, conditionRow, expressionRow)
