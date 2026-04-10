@@ -520,18 +520,6 @@ const PARAMS_BASE = [
         desc: 'Momentary: canvas fades each frame. Painting: marks accumulate.',
         isToggle: true, toggleLabels: ['Momentary', 'Painting'],
     },
-    {
-        key: 'originSignEnabled', group: 'mixing', label: 'Origin Axes',
-        min: 0, max: 1, step: 1, default: 1, unit: '',
-        desc: 'Show/hide origin axes guide.',
-        isToggle: true, toggleLabels: ['Off', 'On'],
-    },
-    {
-        key: 'coordinateGuidesEnabled', group: 'mixing', label: 'Coordinate Guides',
-        min: 0, max: 1, step: 1, default: 0, unit: '',
-        desc: 'Show/hide coordinate guide grids.',
-        isToggle: true, toggleLabels: ['Off', 'On'],
-    },
 ]
 
 function getLocalizedSettingText(bucket, key, fallback = '') {

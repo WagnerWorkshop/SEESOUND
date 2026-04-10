@@ -30,7 +30,7 @@
             "exportHintPngTransparent": "Current frame without background",
             "exportHintObj": "Scene geometry",
             "exportHintSettingsJson": "Current parameter and rule settings",
-            "factoryTemplates": "Factory Templates",
+            "factoryTemplates": "Templates",
             "templatesLoading": "Loading templates...",
             "templatesEmpty": "No templates available.",
             "recoveryTitle": "Crash Recovery",

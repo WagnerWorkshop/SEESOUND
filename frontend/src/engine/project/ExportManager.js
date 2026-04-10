@@ -39,6 +39,28 @@ export class ExportManager {
         this._recordedChunks = []
         this._recordingAudioCleanup = null
         this._recordingEndedHandler = null
+        this._recordingHiddenObjects = []
+    }
+
+    _shouldExcludeFromExport(obj) {
+        return !!(obj?.userData?.excludeFromExport || obj?.userData?.excludeFromPng)
+    }
+
+    _hideExcludedObjects() {
+        const hidden = []
+        this.scene.traverse((obj) => {
+            if (this._shouldExcludeFromExport(obj) && obj.visible) {
+                hidden.push(obj)
+                obj.visible = false
+            }
+        })
+        return hidden
+    }
+
+    _restoreHiddenObjects(list) {
+        for (const obj of Array.isArray(list) ? list : []) {
+            if (obj) obj.visible = true
+        }
     }
 
     isRecording() {
@@ -107,35 +129,31 @@ export class ExportManager {
                 exportCamera.updateProjectionMatrix()
             }
 
-            const hiddenForExport = []
-            this.scene.traverse((obj) => {
-                if (obj?.userData?.excludeFromPng && obj.visible) {
-                    hiddenForExport.push(obj)
-                    obj.visible = false
-                }
-            })
+            const hiddenForExport = this._hideExcludedObjects()
 
             exportRenderer.setClearColor(this.ps.getBackgroundColor(), transparent ? 0 : 1)
             this.ps.setViewportHeight(exportRenderer.domElement.height)
-            if (!transparent && this.shouldUsePostProcessing?.()) {
-                const exportRenderPass = new RenderPass(this.scene, exportCamera)
-                const exportBloomPass = new UnrealBloomPass(
-                    new THREE.Vector2(1, 1),
-                    Math.max(0, Number(this.params.bloomStrength ?? 1.15) || 0),
-                    Math.max(0, Number(this.params.bloomRadius ?? 0.7) || 0),
-                    Math.max(0, Math.min(1, Number(this.params.bloomThreshold ?? 0.18) || 0)),
-                )
-                exportComposer = new EffectComposer(exportRenderer)
-                exportComposer.addPass(exportRenderPass)
-                exportComposer.addPass(exportBloomPass)
-                exportComposer.setPixelRatio(exportDpr)
-                exportComposer.setSize(logicalW, logicalH)
-                exportComposer.render()
-            } else {
-                exportRenderer.render(this.scene, exportCamera)
+            try {
+                if (!transparent && this.shouldUsePostProcessing?.()) {
+                    const exportRenderPass = new RenderPass(this.scene, exportCamera)
+                    const exportBloomPass = new UnrealBloomPass(
+                        new THREE.Vector2(1, 1),
+                        Math.max(0, Number(this.params.bloomStrength ?? 1.15) || 0),
+                        Math.max(0, Number(this.params.bloomRadius ?? 0.7) || 0),
+                        Math.max(0, Math.min(1, Number(this.params.bloomThreshold ?? 0.18) || 0)),
+                    )
+                    exportComposer = new EffectComposer(exportRenderer)
+                    exportComposer.addPass(exportRenderPass)
+                    exportComposer.addPass(exportBloomPass)
+                    exportComposer.setPixelRatio(exportDpr)
+                    exportComposer.setSize(logicalW, logicalH)
+                    exportComposer.render()
+                } else {
+                    exportRenderer.render(this.scene, exportCamera)
+                }
+            } finally {
+                this._restoreHiddenObjects(hiddenForExport)
             }
-
-            for (const obj of hiddenForExport) obj.visible = true
 
             const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, 'image/png'))
             if (!blob) throw new Error('PNG export failed (empty blob).')
@@ -174,7 +192,7 @@ export class ExportManager {
         const exportRoot = new THREE.Group()
         for (const child of this.scene.children) {
             if (!child?.visible) continue
-            if (child?.userData?.excludeFromPng) continue
+            if (this._shouldExcludeFromExport(child)) continue
             exportRoot.add(child.clone(true))
         }
 
@@ -246,6 +264,7 @@ export class ExportManager {
         }
 
         const captureSourceCanvas = this.renderer?.domElement || this.canvas
+        this._recordingHiddenObjects = this._hideExcludedObjects()
         const canvasStream = captureSourceCanvas.captureStream(60)
         const outputStream = new MediaStream()
         for (const track of canvasStream.getVideoTracks()) outputStream.addTrack(track)
@@ -297,6 +316,8 @@ export class ExportManager {
                 audioEl.removeEventListener('ended', this._recordingEndedHandler)
                 this._recordingEndedHandler = null
             }
+            this._restoreHiddenObjects(this._recordingHiddenObjects)
+            this._recordingHiddenObjects = []
             this._mediaRecorder = null
             this._emitRecordState(playerEl, false)
         }
@@ -319,6 +340,8 @@ export class ExportManager {
         try {
             if (this._mediaRecorder.state !== 'inactive') this._mediaRecorder.stop()
         } catch {
+            this._restoreHiddenObjects(this._recordingHiddenObjects)
+            this._recordingHiddenObjects = []
             this._mediaRecorder = null
             this._emitRecordState(playerEl, false)
         }

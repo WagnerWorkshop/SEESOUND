@@ -1,0 +1,235 @@
+{
+    "schemaVersion": 1,
+    "name": "The Transient Web",
+    "params": {
+        "inputGain": 1.2,
+        "freqNormMin": 40,
+        "freqNormMax": 12000,
+        "fftSize": 4096,
+        "persistMode": 1,
+        "blendMode": "screen",
+        "cameraProjection": "perspective",
+        "cameraPosX": 0,
+        "cameraPosY": 0,
+        "cameraPosZ": 500,
+        "cameraTargetX": 0,
+        "cameraTargetY": 0,
+        "cameraTargetZ": 0,
+        "postProcessEnabled": 1,
+        "bloomEnabled": 1,
+        "bloomStrength": 1.5,
+        "bloomRadius": 1.0,
+        "bloomThreshold": 0.1,
+        "ruleEngineEnabled": true,
+        "ruleBlocks": [
+            {
+                "id": "web-disable-particles",
+                "group": "Particles",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "value": 0
+                    }
+                ]
+            },
+            {
+                "id": "web-line-x",
+                "group": "Lines Position",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "(normFreq - 0.5) * canvasWidthPx"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-y",
+                "group": "Lines Position",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "(binPhase - 0.5) * canvasHeightPx"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-z",
+                "group": "Lines Position",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "(binPhaseDeviation - 1.5) * 200"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-length",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "length",
+                        "expression": "binAttackTime * canvasWidthPx * 0.5"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-direction",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": ">",
+                    "input": "normFreq",
+                    "value": 0.5
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "direction",
+                        "value": "y"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-direction-alt",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "<=",
+                    "input": "normFreq",
+                    "value": 0.5
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "direction",
+                        "value": "x"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-opacity",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "pow(binFlux, 2) * 3"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-hue",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "hue",
+                        "expression": "binPhaseDeviation / 3.14"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-sat",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "saturation",
+                        "expression": "binFlux * 2"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-brightness",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "brightness",
+                        "expression": "binMagnitude * 2"
+                    }
+                ]
+            },
+            {
+                "id": "web-line-thickness",
+                "group": "Lines Appearance",
+                "enabled": true,
+                "target": "lines",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "thickness",
+                        "expression": "binMagnitude * 6"
+                    }
+                ]
+            }
+        ]
+    }
+}

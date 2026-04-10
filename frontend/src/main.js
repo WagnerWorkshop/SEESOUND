@@ -83,23 +83,9 @@ const composer = new EffectComposer(renderer)
 const scene = new THREE.Scene()
 const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
-let originSignEnabled = true
 originAxes.userData.excludeFromPng = true
+originAxes.userData.excludeFromExport = true
 scene.add(originAxes)
-function emitOriginSignState() {
-    window.dispatchEvent(new CustomEvent('seesound:origin-sign-state', {
-        detail: { enabled: originSignEnabled, size: ORIGIN_SIGN_SIZE },
-    }))
-}
-
-window.addEventListener('seesound:origin-sign-toggle', (e) => {
-    const requested = e?.detail?.enabled
-    if (typeof requested === 'boolean') originSignEnabled = requested
-    else originSignEnabled = !originSignEnabled
-    originAxes.visible = originSignEnabled
-    emitOriginSignState()
-})
-emitOriginSignState()
 const MIN_CAMERA_CLIP_EXTENT = 10000
 const MIN_CAMERA_CLIP_FAR = MIN_CAMERA_CLIP_EXTENT * 2
 const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, MIN_CAMERA_CLIP_FAR)
@@ -143,30 +129,34 @@ function applyProjectionFromParams() {
     syncOrbitFromCamera()
 }
 
-function syncCameraFromParams() {
-    const px = Number(params.cameraPosX)
-    const py = Number(params.cameraPosY)
-    const pz = Number(params.cameraPosZ)
-    const tx = Number(params.cameraTargetX)
-    const ty = Number(params.cameraTargetY)
-    const tz = Number(params.cameraTargetZ)
+function syncCameraFromParams({ includePose = true, includeFov = true } = {}) {
+    if (includePose) {
+        const px = Number(params.cameraPosX)
+        const py = Number(params.cameraPosY)
+        const pz = Number(params.cameraPosZ)
+        const tx = Number(params.cameraTargetX)
+        const ty = Number(params.cameraTargetY)
+        const tz = Number(params.cameraTargetZ)
 
-    if (Number.isFinite(px)) camera.position.x = px
-    if (Number.isFinite(py)) camera.position.y = py
-    if (Number.isFinite(pz)) camera.position.z = pz
+        if (Number.isFinite(px)) camera.position.x = px
+        if (Number.isFinite(py)) camera.position.y = py
+        if (Number.isFinite(pz)) camera.position.z = pz
 
-    if (Number.isFinite(tx)) orbitTarget.x = tx
-    if (Number.isFinite(ty)) orbitTarget.y = ty
-    if (Number.isFinite(tz)) orbitTarget.z = tz
+        if (Number.isFinite(tx)) orbitTarget.x = tx
+        if (Number.isFinite(ty)) orbitTarget.y = ty
+        if (Number.isFinite(tz)) orbitTarget.z = tz
 
-    const fov = Math.max(20, Math.min(120, Number(params.cameraAngleOfView ?? 55)))
-    if (Number.isFinite(fov) && cameraPerspective.fov !== fov) {
-        cameraPerspective.fov = fov
-        cameraPerspective.updateProjectionMatrix()
+        camera.lookAt(orbitTarget)
+        syncOrbitFromCamera()
     }
 
-    camera.lookAt(orbitTarget)
-    syncOrbitFromCamera()
+    if (includeFov) {
+        const fov = Math.max(20, Math.min(120, Number(params.cameraAngleOfView ?? 55)))
+        if (Number.isFinite(fov) && cameraPerspective.fov !== fov) {
+            cameraPerspective.fov = fov
+            cameraPerspective.updateProjectionMatrix()
+        }
+    }
 }
 
 function syncPostProcessingFromParams() {
@@ -227,36 +217,11 @@ function applyOrbitToCamera() {
     cameraController?.applyOrbitToCamera()
 }
 
-function _axoAnglesForPreset(presetName) {
+function _normalizeAxoPreset(presetName) {
     const preset = String(presetName || 'orthoXY')
-    if (preset === 'isometric') {
-        return {
-            azimuth: Math.PI / 4,
-            elevation: Math.asin(1 / Math.sqrt(3)),
-        }
-    }
-    if (preset === 'fortyFive') {
-        return {
-            azimuth: Math.PI / 4,
-            elevation: Math.PI / 4,
-        }
-    }
-    if (preset === 'topXZ') {
-        return {
-            azimuth: 0,
-            elevation: Math.PI / 2 - 0.001,
-        }
-    }
-    if (preset === 'orthoYZ') {
-        return {
-            azimuth: Math.PI / 2,
-            elevation: 0,
-        }
-    }
-    return {
-        azimuth: 0,
-        elevation: 0,
-    }
+    if (preset === 'topXZ') return 'orthoXZ'
+    if (preset === 'isometry') return 'isometric'
+    return preset
 }
 
 function resetCameraPose() {
@@ -278,17 +243,24 @@ function resetCameraPose() {
 }
 
 function applyAxoPresetFromParams(forceDefaultRadius = false) {
-    if (params.cameraProjection === 'perspective') return
-    const preset = String(params.cameraAxoPreset || 'orthoXY')
-    const radius = forceDefaultRadius
+    const preset = _normalizeAxoPreset(params.cameraAxoPreset)
+    const fallbackDistance = forceDefaultRadius
         ? DEFAULT_ORBIT_RADIUS
         : Math.max(40, Number(orbitState.radius) || DEFAULT_ORBIT_RADIUS)
-    const { azimuth, elevation } = _axoAnglesForPreset(preset)
+    const axisValue = (value) => (Math.abs(Number(value) || 0) > 1e-4 ? Number(value) : fallbackDistance)
 
-    orbitState.radius = radius
-    orbitState.azimuth = azimuth
-    orbitState.elevation = elevation
-    applyOrbitToCamera()
+    orbitTarget.set(0, 0, 0)
+
+    if (preset === 'isometric') {
+        camera.position.set(500, 500, 500)
+    } else if (preset === 'orthoYZ') {
+        camera.position.set(axisValue(camera.position.x), 0, 0)
+    } else if (preset === 'orthoXZ') {
+        camera.position.set(0, axisValue(camera.position.y), 0)
+    } else {
+        camera.position.set(0, 0, axisValue(camera.position.z))
+    }
+    camera.lookAt(orbitTarget)
     syncOrbitFromCamera()
 }
 
@@ -460,11 +432,19 @@ function fitCameraToVisible() {
     orbitTarget.copy(center)
 
     if (camera.isOrthographicCamera) {
-        const { azimuth, elevation } = _axoAnglesForPreset(params.cameraAxoPreset)
-        orbitState.azimuth = azimuth
-        orbitState.elevation = elevation
-        orbitState.radius = Math.max(radius * 2.2, 60)
-        applyOrbitToCamera()
+        const preset = _normalizeAxoPreset(params.cameraAxoPreset)
+        const fitDistance = Math.max(radius * 2.2, 60)
+        if (preset === 'isometric') {
+            camera.position.set(center.x + fitDistance, center.y + fitDistance, center.z + fitDistance)
+        } else if (preset === 'orthoYZ') {
+            camera.position.set(center.x + fitDistance, center.y, center.z)
+        } else if (preset === 'orthoXZ') {
+            camera.position.set(center.x, center.y + fitDistance, center.z)
+        } else {
+            camera.position.set(center.x, center.y, center.z + fitDistance)
+        }
+        camera.lookAt(center)
+        syncOrbitFromCamera()
 
         camera.updateMatrixWorld(true)
         const m = camera.matrixWorld.elements
@@ -562,7 +542,7 @@ function resizeRenderer(w, h) {
 
     cameraPerspective.aspect = w / Math.max(1, h)
     cameraPerspective.updateProjectionMatrix()
-    renderer.setSize(w, h, false)   // false → do NOT set canvas style size
+    renderer.setSize(w, h, false)   // false -> do NOT set canvas style size
     composer.setSize(w, h)
     bloomPass.setSize(w, h)
 }
@@ -853,6 +833,48 @@ function setCameraHudEnabled(nextEnabled) {
     emitCameraHudState()
 }
 
+const CAMERA_STATE_EMIT_INTERVAL_MS = 1000
+let _lastCameraStateEmitTs = 0
+let _lastCameraStateSignature = ''
+
+function emitCameraState(force = false) {
+    const now = performance.now()
+    if (!force && (now - _lastCameraStateEmitTs) < CAMERA_STATE_EMIT_INTERVAL_MS) return
+
+    const projection = camera === cameraPerspective ? 'perspective' : 'axonometric'
+    const signature = [
+        camera.position.x.toFixed(3),
+        camera.position.y.toFixed(3),
+        camera.position.z.toFixed(3),
+        orbitTarget.x.toFixed(3),
+        orbitTarget.y.toFixed(3),
+        orbitTarget.z.toFixed(3),
+        cameraPerspective.fov.toFixed(3),
+        projection,
+    ].join('|')
+
+    _lastCameraStateEmitTs = now
+    if (!force && signature === _lastCameraStateSignature) return
+    _lastCameraStateSignature = signature
+
+    window.dispatchEvent(new CustomEvent('seesound:camera-state', {
+        detail: {
+            position: {
+                x: camera.position.x,
+                y: camera.position.y,
+                z: camera.position.z,
+            },
+            target: {
+                x: orbitTarget.x,
+                y: orbitTarget.y,
+                z: orbitTarget.z,
+            },
+            fov: cameraPerspective.fov,
+            projection,
+        },
+    }))
+}
+
 window.addEventListener('seesound:camera-hud-toggle', (e) => {
     const requested = e?.detail?.enabled
     if (typeof requested === 'boolean') {
@@ -866,6 +888,7 @@ cameraHud.append(cameraReadout)
 const hudHost = document.getElementById('app') || document.body
 if (hudHost) hudHost.appendChild(cameraHud)
 setCameraHudEnabled(false)
+emitCameraState(true)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  ANIMATION LOOP
@@ -1163,6 +1186,8 @@ function animate() {
         }))
     }
 
+    emitCameraState(false)
+
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
     syncFogFromParams(bg)
@@ -1187,7 +1212,7 @@ function animate() {
         const cameraUnits = getCameraCanvasUnits()
         const canvW = cameraUnits.w
         const canvH = cameraUnits.h
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()}${lineSegment} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
+        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()}${lineSegment} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)}`
     }
 }
 animate()
@@ -1268,6 +1293,7 @@ animate()
     let projectLocalAutosaveInterval = null
     let localDraftDirtySinceLastAutosave = false
     let pendingRecoveryDraft = null
+    let _lastAutosaveCameraSignature = ''
 
     const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
     const LOCAL_PROJECT_AUTOSAVE_MS = 20000
@@ -1396,7 +1422,17 @@ animate()
     }
 
     const _buildCurrentProjectPayload = async () => {
-        const snapshot = getSnapshot()
+        const snapshot = {
+            ...getSnapshot(),
+            cameraPosX: Number(camera.position.x),
+            cameraPosY: Number(camera.position.y),
+            cameraPosZ: Number(camera.position.z),
+            cameraTargetX: Number(orbitTarget.x),
+            cameraTargetY: Number(orbitTarget.y),
+            cameraTargetZ: Number(orbitTarget.z),
+            cameraProjection: camera === cameraPerspective ? 'perspective' : 'axonometric',
+            cameraAngleOfView: Number(cameraPerspective.fov),
+        }
         const presetLibrary = await _collectPresetLibrary()
         const title = _currentPresetTitle()
         return buildProjectPayload({
@@ -1620,6 +1656,30 @@ animate()
         _ensureLocalDraftAutosaveLoop()
     }
 
+    window.addEventListener('seesound:camera-state', (event) => {
+        const detail = event?.detail || {}
+        const px = Number(detail.position?.x)
+        const py = Number(detail.position?.y)
+        const pz = Number(detail.position?.z)
+        const tx = Number(detail.target?.x)
+        const ty = Number(detail.target?.y)
+        const tz = Number(detail.target?.z)
+        const fov = Number(detail.fov)
+        const projection = String(detail.projection || '')
+
+        if (![px, py, pz, tx, ty, tz, fov].every(Number.isFinite)) return
+        if (projection !== 'perspective' && projection !== 'axonometric') return
+
+        const signature = [
+            px.toFixed(3), py.toFixed(3), pz.toFixed(3),
+            tx.toFixed(3), ty.toFixed(3), tz.toFixed(3),
+            fov.toFixed(3), projection,
+        ].join('|')
+        if (signature === _lastAutosaveCameraSignature) return
+        _lastAutosaveCameraSignature = signature
+        _markLocalProjectDraftDirty()
+    })
+
     const _readLocalProjectDraftIfAny = () => {
         try {
             const raw = localStorage.getItem(LOCAL_PROJECT_DRAFT_KEY)
@@ -1817,6 +1877,7 @@ animate()
             console.warn('[Project] load failed:', err)
         } finally {
             projectLoadInProgress = false
+            _markLocalProjectDraftDirty()
         }
     }
 
@@ -1929,7 +1990,7 @@ animate()
             projectFileName = normalizedSuggestedName
             emitProjectFileState()
             _markLocalProjectDraftDirty()
-            alert('File picker is unavailable here. Downloaded the project file instead.')
+            console.info('[Project] Save As fallback: browser download save dialog used (no File System Access handle).')
             return true
         }
 
@@ -1963,7 +2024,7 @@ animate()
             projectFileName = normalizedSuggestedName
             emitProjectFileState()
             _markLocalProjectDraftDirty()
-            alert('Could not access the save picker. Downloaded the project file instead.')
+            console.info('[Project] Save As fallback: browser download save dialog used after picker write failure.')
             return true
         }
     }
@@ -2072,6 +2133,7 @@ animate()
         projectFileName = defaults.fileName
         emitProjectFileState()
         await loadProjectFromPayload(_buildDefaultProjectPayload())
+        _markLocalProjectDraftDirty()
     }
 
     emitProjectFileState()
@@ -2178,17 +2240,20 @@ applyCanvasScaleFromParams()
     emitCanvasSize(s.w, s.h)
 }
 subscribe((_, key) => {
-    if (key === 'cameraProjection') applyProjectionFromParams()
-    if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
+    if (key === 'cameraProjection') {
+        applyProjectionFromParams()
+        if (params.cameraProjection !== 'perspective') applyAxoPresetFromParams()
+    }
+    if (key === 'cameraAxoPreset') applyAxoPresetFromParams()
     if (
         key === 'cameraPosX' ||
         key === 'cameraPosY' ||
         key === 'cameraPosZ' ||
         key === 'cameraTargetX' ||
         key === 'cameraTargetY' ||
-        key === 'cameraTargetZ' ||
-        key === 'cameraAngleOfView'
-    ) syncCameraFromParams()
+        key === 'cameraTargetZ'
+    ) syncCameraFromParams({ includePose: true, includeFov: false })
+    if (key === 'cameraAngleOfView') syncCameraFromParams({ includePose: false, includeFov: true })
     if (
         key === 'postProcessEnabled' ||
         key === 'bloomEnabled' ||

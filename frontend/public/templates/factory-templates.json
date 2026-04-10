@@ -40,6 +40,18 @@
             "presetPath": "/templates/presets/linear-timbre-colors.json",
             "presetName": "linear timbre colors",
             "thumbnail": "/templates/thumbnails/linear-timbre-colors.svg"
+        },
+        {
+            "id": "the-vortex",
+            "title": "The Vortex",
+            "presetPath": "/templates/presets/the-vortex.json",
+            "presetName": "The Vortex"
+        },
+        {
+            "id": "transient-web",
+            "title": "The Transient Web",
+            "presetPath": "/templates/presets/transient-web.json",
+            "presetName": "The Transient Web"
         }
     ]
 }

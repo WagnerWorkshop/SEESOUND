@@ -1,14 +1,14 @@
 /* ===== BEGIN main.css ===== */
 :root {
     --brand-hue: 125;
-    --brand-9: hsl(var(--brand-hue), 50%, 10%);
-    --brand-8: hsl(var(--brand-hue), 50%, 18%);
-    --brand-7: hsl(var(--brand-hue), 50%, 24%);
-    --brand-6: hsl(var(--brand-hue), 50%, 30%);
-    --brand-5: hsl(var(--brand-hue), 50%, 39%);
-    --brand-4: hsl(var(--brand-hue), 50%, 52%);
-    --brand-3: hsl(var(--brand-hue), 50%, 67%);
-    --brand-2: hsl(var(--brand-hue), 50%, 80%);
+    --brand-9: hsl(var(--brand-hue), 20%, 10%);
+    --brand-8: hsl(var(--brand-hue), 26%, 18%);
+    --brand-7: hsl(var(--brand-hue), 31%, 24%);
+    --brand-6: hsl(var(--brand-hue), 37%, 30%);
+    --brand-5: hsl(var(--brand-hue), 43%, 39%);
+    --brand-4: hsl(var(--brand-hue), 48%, 52%);
+    --brand-3: hsl(var(--brand-hue), 54%, 67%);
+    --brand-2: hsl(var(--brand-hue), 60%, 80%);
 
     --gray-950: #060707;
     --gray-900: #0d1110;
@@ -21,13 +21,13 @@
     --gray-200: #d6ddda;
     --gray-100: #eaf0ed;
 
-    --color-bg: hsla(var(--brand-hue), 15%, 40%, 0.3);
-    --color-bg-2: hsla(var(--brand-hue), 15%, 60%, 0.3);
-    --color-bg-solid: #121715;
-    --color-bg-raised: rgb(27 35 32 / 0.86);
-    --color-border: rgb(110 120 116 / 0.35);
-    --color-border-strong: rgb(168 184 178 / 0.45);
-    --color-border-soft: rgb(110 120 116 / 0.3);
+    --color-bg: hsla(var(--brand-hue), 15%, 50%, 0.3);
+    --color-bg-2: hsla(var(--brand-hue), 15%, 70%, 0.3);
+    --color-bg-solid: hsl(var(--brand-hue), 12%, 8%);
+    --color-bg-raised: rgba(var(--brand-hue), 35, 32, 0.86);
+    --color-border: hsla(var(--brand-hue), 4%, 45%, 0.35);
+    --color-border-strong: hsla(var(--brand-hue), 4%, 45%, 0.45);
+    --color-border-soft: hsla(var(--brand-hue), 4%, 45%, 0.3);
     --color-text: var(--gray-100);
     --color-text-muted: var(--gray-300);
     --color-text-dim: var(--gray-500);
@@ -90,8 +90,8 @@
     --border-bright: 1px solid var(--brand-5);
     --box-shadow: 0 -1px 3px hsla(0, 0%, 100%, 0.1) inset;
 
-    --transition-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-mid: 240ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-mid: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 *,
@@ -209,16 +209,18 @@ input[type=number]::-webkit-inner-spin-button {
     box-shadow: var(--box-shadow);
     color: var(--color-text-muted);
     font-family: var(--font-ui);
-    font-size: var(--fs-label);
+    font-size: var(--fs-input);
     font-weight: 600;
     padding: var(--padding-btn);
     cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-mid), border-color var(--transition-mid), filter var(--transition-fast);
 }
 
 .cp-btn:hover {
     color: var(--color-accent);
     filter: brightness(1.25);
+    transition: background var(--transition-fast), border-color var(--transition-fast), filter var(--transition-fast);
+
 }
 
 .cp-btn:active {
@@ -699,6 +701,12 @@ input[type=number]::-webkit-inner-spin-button {
     display: flex;
     flex-direction: column;
     gap: var(--gap-m);
+    position: relative;
+    z-index: 0;
+}
+
+.cp-rule-card.has-active-parameter-hint {
+    z-index: 40;
 }
 
 .cp-section-title {
@@ -747,6 +755,10 @@ input[type=number]::-webkit-inner-spin-button {
     gap: var(--gap-m);
 }
 
+.cp-view-mode-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .cp-start-project-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -783,10 +795,14 @@ input[type=number]::-webkit-inner-spin-button {
     text-align: left;
     padding: var(--padding-s);
     cursor: pointer;
+    transition: transform var(--transition-mid), filter var(--transition-mid);
 }
 
 .cp-template-card:hover {
     border-color: var(--color-border-strong);
+    transform: scale(1.015);
+    transition: transform var(--transition-fast), filter var(--transition-fast);
+    filter: brightness(1.25);
 }
 
 .cp-template-thumb {
@@ -1044,7 +1060,7 @@ input[type=number]::-webkit-inner-spin-button {
 .cp-rule-parameter-hint {
     position: absolute;
     z-index: 25;
-    display: inline-flex;
+    display: none;
     align-items: center;
     gap: 0;
     padding: var(--padding-s);
@@ -1057,6 +1073,10 @@ input[type=number]::-webkit-inner-spin-button {
     font-size: var(--fs-input);
     color: var(--color-text);
     pointer-events: none;
+}
+
+.cp-rule-parameter-hint.is-active {
+    display: inline-flex;
 }
 
 .cp-rule-parameter-hint-name {

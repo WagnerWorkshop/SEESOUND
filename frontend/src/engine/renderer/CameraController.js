@@ -110,7 +110,7 @@ export class CameraController {
             const dir = new THREE.Vector3()
             camera.getWorldDirection(dir)
             const speed = Math.max(2, this.orbitState.radius * 0.08)
-            const step = (deltaY > 0 ? 1 : -1) * speed
+            const step = (deltaY > 0 ? -1 : 1) * speed
             camera.position.addScaledVector(dir, step)
             this.syncOrbitFromCamera()
         } else {

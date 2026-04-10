@@ -234,6 +234,7 @@ export class ParticleSystem {
         this._ruleCompileState = this._compiledRules
         this._frameCounter = 0
         this._lastUpdateT = performance.now()
+        this._lastPersistMode = 0
         this._archive = new ParticleArchive()
         this._archive.updateOffloadBatch(this._N)
     }
@@ -694,7 +695,18 @@ export class ParticleSystem {
         const nyquist = sampleRate / 2
         const binToHz = (b) => (b / freqData.length) * nyquist
 
-        const persistMode = params.persistMode ?? 0 // 0 = Momentary, 1 = Painting
+        const persistMode = Number(params.persistMode ?? 0) >= 0.5 ? 1 : 0 // 0 = Momentary, 1 = Painting
+        const persistModeChanged = persistMode !== this._lastPersistMode
+        if (persistModeChanged) {
+            // Treat mode switches as a hard boundary so transient buffers do not leak
+            // into the first painted frame (or vice versa).
+            this._insertIndex = 0
+            this._paintCount = 0
+            this._visibleCount = 0
+            this._lineVisibleCount = 0
+            this._geo.setDrawRange(0, 0)
+            this._lineGeo.setDrawRange(0, 0)
+        }
         const gainMult = params.inputGain ?? 1
         const sizeMultiplierRaw = Number(params.defaultParticleSize)
         const sizeMultiplier = Number.isFinite(sizeMultiplierRaw) ? Math.max(0, sizeMultiplierRaw) : 1
@@ -1421,6 +1433,8 @@ export class ParticleSystem {
         if (Number.isFinite(lineDirtyMin) && Number.isFinite(lineDirtyMax) && lineDirtyMax >= lineDirtyMin) {
             this._markLineRangeDirty(lineDirtyMin, lineDirtyMax)
         }
+
+        this._lastPersistMode = persistMode
     }
 
     /** Set the Three.js blending mode on the material. */

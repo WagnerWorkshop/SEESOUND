@@ -494,6 +494,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const parameterHint = el('div', 'cp-rule-parameter-hint')
             parameterHint.hidden = true
 
+            const setParameterHintVisible = (visible) => {
+                const active = !!visible
+                parameterHint.hidden = !active
+                parameterHint.classList.toggle('is-active', active)
+                card.classList.toggle('has-active-parameter-hint', active)
+                if (!active) {
+                    parameterHint.innerHTML = ''
+                }
+            }
+
             expressionInput = el('div', 'cp-rule-token-editor cp-rule-expression-input', {
                 contenteditable: 'true',
                 role: 'textbox',
@@ -629,26 +639,28 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
             const updateParameterHint = () => {
                 const selection = window.getSelection?.()
-                const hasCaretInEditor = !!(selection && selection.rangeCount > 0 && expressionInput.contains(selection.anchorNode))
+                const hasCaretInEditor = !!(
+                    selection
+                    && selection.rangeCount > 0
+                    && expressionInput.contains(selection.anchorNode)
+                    && document.activeElement === expressionInput
+                )
                 if (!hasCaretInEditor) {
-                    parameterHint.hidden = true
-                    parameterHint.innerHTML = ''
+                    setParameterHintVisible(false)
                     return
                 }
 
                 const beforeCaret = readExpressionToCursor(expressionInput)
                 const context = getActiveParameterContext(beforeCaret)
                 if (!context) {
-                    parameterHint.hidden = true
-                    parameterHint.innerHTML = ''
+                    setParameterHintVisible(false)
                     return
                 }
 
                 const functionId = String(context.functionName || '').trim()
                 const slotIds = getRuleFunctionParamSlots(functionId)
                 if (!slotIds.length) {
-                    parameterHint.hidden = true
-                    parameterHint.innerHTML = ''
+                    setParameterHintVisible(false)
                     return
                 }
 
@@ -671,7 +683,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 })
 
                 parameterHint.appendChild(document.createTextNode(')'))
-                parameterHint.hidden = false
+                setParameterHintVisible(true)
 
                 const editorRect = expressionInput.getBoundingClientRect()
                 const rowRect = expressionRow.getBoundingClientRect()
@@ -707,7 +719,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 }
 
                 const suggestionText = suggestions
-                    .map((entry) => `${entry.label || entry.id} (${entry.id})`)
+                    .map((entry) => String(entry.label || entry.id || '').trim())
+                    .filter(Boolean)
                     .join(', ')
                 autocompleteHint.textContent = `${getRuleText('ruleSuggestionPrefix', 'Suggestion')}: ${suggestionText}`
                 autocompleteHint.hidden = false

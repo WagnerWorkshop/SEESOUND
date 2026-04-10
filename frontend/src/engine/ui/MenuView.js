@@ -89,8 +89,11 @@ export function buildViewMenu(body, syncRegistry, deps) {
     fovSection.appendChild(fovRow)
 
     const renderModeSection = el('section', 'cp-section')
+    const renderModeActions = el('div', 'cp-button-grid cp-view-mode-actions')
     const renderModeButton = el('button', 'cp-btn cp-btn-wide', { type: 'button' })
-    renderModeSection.append(renderModeButton)
+    const persistModeButton = el('button', 'cp-btn cp-btn-wide', { type: 'button' })
+    renderModeActions.append(renderModeButton, persistModeButton)
+    renderModeSection.append(renderModeActions)
 
     const blendingSection = el('section', 'cp-section')
     blendingSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.blending }))
@@ -179,17 +182,10 @@ export function buildViewMenu(body, syncRegistry, deps) {
 
     const guideSection = el('section', 'cp-section')
     guideSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.guides }))
-    const originToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-    const guideToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const cameraHudToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-
-    const originRow = el('label', 'cp-inline-pair')
-    originRow.append(originToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideAxes }))
-    const guideRow = el('label', 'cp-inline-pair')
-    guideRow.append(guideToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.guideCoordinates }))
     const cameraHudRow = el('label', 'cp-inline-pair')
     cameraHudRow.append(cameraHudToggle, el('span', 'cp-setting-label', { text: UI_TEXT.view.cameraHud }))
-    guideSection.append(originRow, guideRow, cameraHudRow)
+    guideSection.append(cameraHudRow)
 
     widthInput.addEventListener('change', () => {
         const w = Math.max(160, Math.floor(Number(widthInput.value) || 160))
@@ -287,6 +283,11 @@ export function buildViewMenu(body, syncRegistry, deps) {
         applyRenderMode(luminous ? 'solid' : 'luminous')
     })
 
+    persistModeButton.addEventListener('click', () => {
+        const painting = Number(params.persistMode ?? 0) >= 0.5
+        set('persistMode', painting ? 0 : 1)
+    })
+
     postEnabled.addEventListener('change', () => set('postProcessEnabled', postEnabled.checked ? 1 : 0))
     bloomEnabled.addEventListener('change', () => set('bloomEnabled', bloomEnabled.checked ? 1 : 0))
     fogEnabled.addEventListener('change', () => set('fogEnabled', fogEnabled.checked ? 1 : 0))
@@ -323,26 +324,10 @@ export function buildViewMenu(body, syncRegistry, deps) {
     fovSlider.addEventListener('input', () => applyFovFromSlider(Number(fovSlider.value)))
     fovNumber.addEventListener('change', () => applyFovFromNumber(fovNumber.value))
 
-    originToggle.addEventListener('change', () => {
-        set('originSignEnabled', originToggle.checked ? 1 : 0)
-    })
-    guideToggle.addEventListener('change', () => {
-        set('coordinateGuidesEnabled', guideToggle.checked ? 1 : 0)
-    })
     cameraHudToggle.addEventListener('change', () => {
         window.dispatchEvent(new CustomEvent('seesound:camera-hud-toggle', {
             detail: { enabled: cameraHudToggle.checked },
         }))
-    })
-
-    window.addEventListener('seesound:origin-sign-state', (e) => {
-        const enabled = e?.detail?.enabled
-        if (typeof enabled === 'boolean') originToggle.checked = enabled
-    })
-
-    window.addEventListener('seesound:coordinate-guide-state', (e) => {
-        const enabled = e?.detail?.enabled
-        if (typeof enabled === 'boolean') guideToggle.checked = enabled
     })
 
     window.addEventListener('seesound:camera-hud-state', (e) => {
@@ -385,11 +370,21 @@ export function buildViewMenu(body, syncRegistry, deps) {
         const luminous = Number(params.blendEnabled ?? 0) >= 0.5
         const renderModeLabel = luminous
             ? (UI_TEXT.view.renderModeLuminous || 'Luminous')
-            : (UI_TEXT.view.renderModePhysical || 'Physical')
+            : (UI_TEXT.view.renderModePhysical || UI_TEXT.view.renderModeSolid || 'Physical')
         renderModeButton.textContent = renderModeLabel
         renderModeButton.setAttribute('aria-pressed', luminous ? 'true' : 'false')
 
         blendingSection.style.display = luminous ? '' : 'none'
+    }
+
+    const syncPersistMode = () => {
+        const painting = Number(params.persistMode ?? 0) >= 0.5
+        const momentaryLabel = UI_TEXT.view.persistModeMomentary || 'Momentary'
+        const paintingLabel = UI_TEXT.view.persistModePainting || 'Painting'
+        const stateLabel = painting ? paintingLabel : momentaryLabel
+        persistModeButton.textContent = stateLabel
+        persistModeButton.setAttribute('aria-pressed', painting ? 'true' : 'false')
+        persistModeButton.title = `${UI_TEXT.settings?.paramLabels?.persistMode || UI_TEXT.view.persistMode || 'Persistence'}: ${stateLabel}`
     }
 
     const syncFov = () => {
@@ -402,11 +397,6 @@ export function buildViewMenu(body, syncRegistry, deps) {
         postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
         fogEnabled.checked = Number(params.fogEnabled ?? 1) >= 0.5
-    }
-
-    const syncGuideToggles = () => {
-        originToggle.checked = Number(params.originSignEnabled ?? 1) >= 0.5
-        guideToggle.checked = Number(params.coordinateGuidesEnabled ?? 0) >= 0.5
     }
 
     const syncBloomStrength = () => {
@@ -443,9 +433,9 @@ export function buildViewMenu(body, syncRegistry, deps) {
     registerSync(syncRegistry, syncProjectionControls, ['cameraProjection', 'cameraAxoPreset'])
     registerSync(syncRegistry, syncBlendMode, ['blendMode'])
     registerSync(syncRegistry, syncRenderMode, ['blendEnabled', 'blendMode'])
+    registerSync(syncRegistry, syncPersistMode, ['persistMode'])
     registerSync(syncRegistry, syncFov, ['cameraAngleOfView'])
     registerSync(syncRegistry, syncPostEnabled, ['postProcessEnabled', 'bloomEnabled', 'fogEnabled'])
-    registerSync(syncRegistry, syncGuideToggles, ['originSignEnabled', 'coordinateGuidesEnabled'])
     registerSync(syncRegistry, syncBloomStrength, ['bloomStrength'])
     registerSync(syncRegistry, syncBloomRadius, ['bloomRadius'])
     registerSync(syncRegistry, syncBloomThreshold, ['bloomThreshold'])
@@ -484,9 +474,9 @@ export function buildViewMenu(body, syncRegistry, deps) {
     syncProjectionControls()
     syncBlendMode()
     syncRenderMode()
+    syncPersistMode()
     syncFov()
     syncPostEnabled()
-    syncGuideToggles()
     syncBloomStrength()
     syncBloomRadius()
     syncBloomThreshold()

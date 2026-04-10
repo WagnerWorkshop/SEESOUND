@@ -1,0 +1,181 @@
+{
+    "schemaVersion": 1,
+    "name": "The Vortex",
+    "params": {
+        "inputGain": 1.0,
+        "freqNormMin": 20,
+        "freqNormMax": 16000,
+        "fftSize": 2048,
+        "persistMode": 1,
+        "blendMode": "screen",
+        "cameraProjection": "perspective",
+        "cameraPosX": 0,
+        "cameraPosY": 0,
+        "cameraPosZ": 420,
+        "cameraTargetX": 0,
+        "cameraTargetY": 0,
+        "cameraTargetZ": 0,
+        "cameraAngleOfView": 65,
+        "postProcessEnabled": 1,
+        "bloomEnabled": 1,
+        "bloomStrength": 1.2,
+        "bloomRadius": 0.8,
+        "bloomThreshold": 0.2,
+        "ruleEngineEnabled": true,
+        "ruleBlocks": [
+            {
+                "id": "vortex-x",
+                "group": "Position",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "cos(normFreq * 3.14159 * 2) * (binMagnitude * canvasWidthPx * 0.5)"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-y",
+                "group": "Position",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "sin(normFreq * 3.14159 * 2) * (binMagnitude * canvasHeightPx * 0.5)"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-z",
+                "group": "Position",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "((time) / max(audioLengthSec, 1) - 0.5) * -canvasWidthPx"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-hue",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "hue",
+                        "expression": "normFreq"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-sat",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "saturation",
+                        "value": 1
+                    }
+                ]
+            },
+            {
+                "id": "vortex-brightness",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "brightness",
+                        "expression": "binMagnitude * 1.5"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-size",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "size",
+                        "expression": "binMagnitude * 4"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-opacity",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "binMagnitude"
+                    }
+                ]
+            },
+            {
+                "id": "vortex-shape",
+                "group": "Appearance",
+                "enabled": true,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "shapeType",
+                        "value": "circle"
+                    }
+                ]
+            }
+        ]
+    }
+}
