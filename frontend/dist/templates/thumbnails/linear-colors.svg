@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" role="img" aria-label="Linear Colors">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2f5fcb"/>
+      <stop offset="100%" stop-color="#b3266d"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" fill="url(#g)"/>
+  <circle cx="64" cy="92" r="26" fill="#ffce4a"/>
+  <circle cx="152" cy="74" r="22" fill="#57f7b2"/>
+  <circle cx="236" cy="108" r="30" fill="#a9f1ff"/>
+  <text x="18" y="30" font-family="Roboto, sans-serif" font-size="18" font-weight="700" fill="#ffffff">Linear Colors</text>
+</svg>

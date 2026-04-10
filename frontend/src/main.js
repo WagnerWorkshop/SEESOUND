@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import {
     params,
     set,
@@ -40,9 +41,11 @@ import { initAudioPlayer } from './components/AudioPlayer.js'
 import { initCanvasResizer } from './components/CanvasResizer.js'
 import {
     buildProjectPayload,
-    parseProjectText,
+    parseProjectFile,
     PROJECT_FILE_EXTENSION,
-    triggerProjectDownload,
+    PROJECT_PACKAGE_EXTENSION,
+    buildProjectPackageBlob,
+    triggerBlobDownload,
 } from './engine/project/ProjectIO.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
 import {
@@ -1528,7 +1531,7 @@ let _lastPerformanceDropSignalTs = 0
 const platformConfig = {
     tier: 'free',
     maxExportResolution: Number.POSITIVE_INFINITY,
-    canExportObj: false,
+    canExportObj: true,
     canCloudRender: false,
 }
 
@@ -1553,7 +1556,9 @@ function _applyPlatformConfig(raw) {
     platformConfig.maxExportResolution = Number.isFinite(maxRes) && maxRes > 0
         ? Math.floor(maxRes)
         : Number.POSITIVE_INFINITY
-    platformConfig.canExportObj = !!cfg.canExportObj
+    if (typeof cfg.canExportObj === 'boolean') {
+        platformConfig.canExportObj = cfg.canExportObj
+    }
     platformConfig.canCloudRender = !!cfg.canCloudRender
 }
 
@@ -1607,19 +1612,26 @@ function _defaultProjectName() {
     return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
 }
 
+function _defaultProjectPackageName() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    return `seesound-project-package-${stamp}${PROJECT_PACKAGE_EXTENSION}`
+}
+
 function getDefaultProjectDefinition() {
     return {
-        fileName: 'New Project.ssp.json',
+        fileName: 'New Project.ssp',
         presetName: 'default',
         params: getSnapshot(),
         presetLibrary: [],
     }
 }
 
-async function saveCanvasPng() {
+async function saveCanvasPng({ transparent = false } = {}) {
     const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
     const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
-    const defaultPngName = `${audioTitle} - ${presetTitle}.png`
+    const defaultPngName = transparent
+        ? `${audioTitle} - ${presetTitle} - transparent.png`
+        : `${audioTitle} - ${presetTitle}.png`
     const rawRequestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
     const rawRequestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
     const entitlementMaxRes = Number(platformConfig.maxExportResolution)
@@ -1643,6 +1655,7 @@ async function saveCanvasPng() {
     const exportRenderer = new THREE.WebGLRenderer({
         canvas: exportCanvas,
         antialias: true,
+        alpha: true,
         preserveDrawingBuffer: true,
     })
     let exportComposer = null
@@ -1678,9 +1691,9 @@ async function saveCanvasPng() {
             }
         })
 
-        exportRenderer.setClearColor(ps.getBackgroundColor(), 1)
+        exportRenderer.setClearColor(ps.getBackgroundColor(), transparent ? 0 : 1)
         ps.setViewportHeight(exportRenderer.domElement.height)
-        if (shouldUsePostProcessing()) {
+        if (!transparent && shouldUsePostProcessing()) {
             const exportRenderPass = new RenderPass(scene, exportCamera)
             const exportBloomPass = new UnrealBloomPass(
                 new THREE.Vector2(1, 1),
@@ -1723,6 +1736,34 @@ async function saveCanvasPng() {
         try { exportComposer?.dispose?.() } catch { }
         exportRenderer.dispose()
     }
+}
+
+async function saveSceneObj() {
+    if (!platformConfig.canExportObj) {
+        _emitToPlatform('engine:export-blocked', { reason: 'obj_export_unavailable' })
+        alert('OBJ export is not available in this environment.')
+        return false
+    }
+
+    const exporter = new OBJExporter()
+    const exportRoot = new THREE.Group()
+    for (const child of scene.children) {
+        if (!child?.visible) continue
+        if (child?.userData?.excludeFromPng) continue
+        exportRoot.add(child.clone(true))
+    }
+
+    const objText = exporter.parse(exportRoot)
+    if (!objText || !String(objText).trim()) {
+        alert('OBJ export failed.')
+        return false
+    }
+
+    const blob = new Blob([objText], { type: 'text/plain;charset=utf-8' })
+    const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+    const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+    triggerBlobDownload(blob, `${audioTitle} - ${presetTitle}.obj`)
+    return true
 }
 
 function emitMuteState(playerEl, muted) {
@@ -2113,6 +2154,7 @@ animate()
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
     let projectLocalSaveTimer = null
+    let pendingRecoveryDraft = null
 
     const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
     const AUDIO_DB_NAME = 'seesound_local_audio_v1'
@@ -2225,8 +2267,17 @@ animate()
     }
 
     const _writeProjectToHandle = async (handle, payload) => {
+        const handleName = String(handle?.name || projectFileName || '').trim().toLowerCase()
+        const includeAudio = handleName.endsWith(PROJECT_PACKAGE_EXTENSION)
+        const thumbnailBlob = await _captureProjectThumbnailBlob()
+        const projectBlob = await buildProjectPackageBlob({
+            payload,
+            projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
+            audioFile: includeAudio && loadedAudioFile instanceof File ? loadedAudioFile : null,
+            thumbnailBlob,
+        })
         const writable = await handle.createWritable()
-        await writable.write(JSON.stringify(payload, null, 2))
+        await writable.write(projectBlob)
         await writable.close()
     }
 
@@ -2240,6 +2291,172 @@ animate()
             presetLibrary,
             projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
         })
+    }
+
+    const _captureProjectThumbnailBlob = async () => {
+        const sourceCanvas = renderer?.domElement
+        if (!(sourceCanvas instanceof HTMLCanvasElement)) return null
+        if (typeof sourceCanvas.toBlob !== 'function') return null
+        return new Promise((resolve) => {
+            sourceCanvas.toBlob((blob) => resolve(blob || null), 'image/png')
+        })
+    }
+
+    const _downloadProjectBundle = async ({ payload, fileName, includeAudio = false } = {}) => {
+        const safePayload = payload && typeof payload === 'object'
+            ? payload
+            : await _buildCurrentProjectPayload()
+        const thumbnailBlob = await _captureProjectThumbnailBlob()
+        const packageBlob = await buildProjectPackageBlob({
+            payload: safePayload,
+            projectName: _nameWithoutExt(projectFileName || fileName),
+            audioFile: includeAudio && loadedAudioFile instanceof File ? loadedAudioFile : null,
+            thumbnailBlob,
+        })
+        triggerBlobDownload(packageBlob, String(fileName || _defaultProjectName()))
+    }
+
+    const _createDemoToneFile = () => {
+        const sampleRate = 22050
+        const durationSec = 7
+        const frameCount = Math.max(1, Math.floor(sampleRate * durationSec))
+        const dataBytes = frameCount * 2
+        const buffer = new ArrayBuffer(44 + dataBytes)
+        const view = new DataView(buffer)
+
+        const writeString = (offset, text) => {
+            for (let i = 0; i < text.length; i += 1) {
+                view.setUint8(offset + i, text.charCodeAt(i))
+            }
+        }
+
+        writeString(0, 'RIFF')
+        view.setUint32(4, 36 + dataBytes, true)
+        writeString(8, 'WAVE')
+        writeString(12, 'fmt ')
+        view.setUint32(16, 16, true)
+        view.setUint16(20, 1, true)
+        view.setUint16(22, 1, true)
+        view.setUint32(24, sampleRate, true)
+        view.setUint32(28, sampleRate * 2, true)
+        view.setUint16(32, 2, true)
+        view.setUint16(34, 16, true)
+        writeString(36, 'data')
+        view.setUint32(40, dataBytes, true)
+
+        const fadeLength = Math.floor(sampleRate * 0.12)
+        for (let i = 0; i < frameCount; i += 1) {
+            const t = i / sampleRate
+            const freqA = 164.81
+            const freqB = 246.94
+            const blend = 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.22 * t)
+            const wave = ((1 - blend) * Math.sin(2 * Math.PI * freqA * t)) + (blend * Math.sin(2 * Math.PI * freqB * t))
+            const attack = i < fadeLength ? (i / Math.max(1, fadeLength)) : 1
+            const release = i > frameCount - fadeLength ? ((frameCount - i) / Math.max(1, fadeLength)) : 1
+            const sample = Math.max(-1, Math.min(1, wave * 0.28 * attack * release))
+            view.setInt16(44 + (i * 2), Math.round(sample * 32767), true)
+        }
+
+        return new File([buffer], 'seesound-template-demo.wav', {
+            type: 'audio/wav',
+            lastModified: Date.now(),
+        })
+    }
+
+    const _ensureTemplateAudioFallback = async (detail = {}) => {
+        if (loadedAudioFile instanceof File) return
+
+        const demoAudioPath = String(detail?.demoAudioPath || '').trim()
+        if (demoAudioPath) {
+            try {
+                const response = await fetch(demoAudioPath, { cache: 'no-store' })
+                if (response.ok) {
+                    const blob = await response.blob()
+                    const fileName = demoAudioPath.split('/').pop() || 'template-demo-audio.wav'
+                    const audioFile = new File([blob], fileName, {
+                        type: blob.type || 'audio/*',
+                        lastModified: Date.now(),
+                    })
+                    if (loadFile(audioFile, audioFile.name)) return
+                }
+            } catch {
+                // fallback to generated tone below
+            }
+        }
+
+        const fallbackTone = _createDemoToneFile()
+        loadFile(fallbackTone, fallbackTone.name)
+    }
+
+    const _loadFactoryTemplateFromDetail = async (detail = {}) => {
+        const template = (detail && typeof detail === 'object') ? detail : {}
+        const templateTitle = String(template.title || template.id || template.presetName || UI_TEXT?.file?.projectNew || 'New Project').trim()
+
+        try {
+            if (template.projectPath) {
+                const response = await fetch(String(template.projectPath), { cache: 'no-store' })
+                if (!response.ok) return false
+                const blob = await response.blob()
+                const sourceName = String(template.projectPath).split('/').pop() || `${templateTitle}${PROJECT_FILE_EXTENSION}`
+                const sourceFile = new File([blob], sourceName, {
+                    type: blob.type || 'application/octet-stream',
+                    lastModified: Date.now(),
+                })
+                const parsed = await parseProjectFile(sourceFile)
+
+                projectFileHandle = null
+                projectFileName = String(sourceFile.name || `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`).trim()
+                await loadProjectFromPayload(parsed.payload)
+                emitProjectFileState()
+
+                if (!(loadedAudioFile instanceof File) && parsed.audioFile instanceof File) {
+                    loadFile(parsed.audioFile, parsed.audioFile.name)
+                } else {
+                    await _ensureTemplateAudioFallback(template)
+                }
+
+                return true
+            }
+
+            const presetPath = String(template.presetPath || '').trim()
+            if (presetPath) {
+                const response = await fetch(presetPath, { cache: 'no-store' })
+                if (!response.ok) return false
+
+                const parsed = await response.json()
+                const presetParams = (parsed?.params && typeof parsed.params === 'object')
+                    ? parsed.params
+                    : ((parsed && typeof parsed === 'object') ? parsed : null)
+                if (!presetParams) return false
+
+                // Apply template params/rules as one patch so a single Undo restores previous state.
+                setMany(presetParams)
+                await _ensureTemplateAudioFallback(template)
+                return true
+            }
+
+            const presetName = String(template.presetName || '').trim()
+            if (!presetName) return false
+            const preset = await loadPreset(presetName)
+            if (!preset?.params || typeof preset.params !== 'object') return false
+
+            const payload = buildProjectPayload({
+                params: preset.params,
+                presetName,
+                presetLibrary: [],
+                projectName: templateTitle,
+            })
+
+            projectFileHandle = null
+            projectFileName = `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`
+            await loadProjectFromPayload(payload)
+            emitProjectFileState()
+            await _ensureTemplateAudioFallback(template)
+            return true
+        } catch (err) {
+            console.warn('[Template] load failed:', err)
+            return false
+        }
     }
 
     const _saveLocalProjectDraft = async () => {
@@ -2268,28 +2485,38 @@ animate()
         }, 500)
     }
 
-    const _restoreLocalProjectDraftIfAny = async () => {
+    const _readLocalProjectDraftIfAny = () => {
         try {
             const raw = localStorage.getItem(LOCAL_PROJECT_DRAFT_KEY)
-            if (!raw) return false
+            if (!raw) return null
             const parsed = JSON.parse(raw)
             const payload = parsed?.payload
-            if (!payload || typeof payload !== 'object') return false
+            if (!payload || typeof payload !== 'object') return null
+            return parsed
+        } catch (err) {
+            console.warn('[Project] local draft read failed:', err)
+            return null
+        }
+    }
 
+    const _applyRecoveredLocalDraft = async (draft) => {
+        const parsed = (draft && typeof draft === 'object') ? draft : null
+        if (!parsed?.payload || typeof parsed.payload !== 'object') return false
+        try {
             projectFileHandle = null
             projectFileName = String(parsed?.fileName || getDefaultProjectDefinition().fileName || '').trim()
             emitProjectFileState()
-            await loadProjectFromPayload(payload)
+            await loadProjectFromPayload(parsed.payload)
 
             if (parsed?.hasAudio) {
                 const restoredAudio = await _loadAudioFileFromDb()
                 if (restoredAudio) {
                     loadFile(restoredAudio, restoredAudio.name)
-                    loadedAudioFile = restoredAudio
-                    _currentAudioFileName = restoredAudio.name || ''
                 }
             }
 
+            pendingRecoveryDraft = null
+            window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
             return true
         } catch (err) {
             console.warn('[Project] local draft restore failed:', err)
@@ -2297,23 +2524,133 @@ animate()
         }
     }
 
-    const saveProject = async ({ forceDownload = false } = {}) => {
+    const saveProject = async () => {
+        if (!projectFileHandle) return false
         try {
             const payload = await _buildCurrentProjectPayload()
-            if (!forceDownload && projectFileHandle) {
-                await _writeProjectToHandle(projectFileHandle, payload)
-                window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
-                    detail: { fileName: projectFileName || _defaultProjectName() },
-                }))
-                emitProjectFileState()
-                _scheduleLocalProjectDraftSave()
-                return
-            }
-            triggerProjectDownload(payload, _defaultProjectName())
+            await _writeProjectToHandle(projectFileHandle, payload)
+            window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
+                detail: { fileName: projectFileName || _defaultProjectName() },
+            }))
+            emitProjectFileState()
             _scheduleLocalProjectDraftSave()
+            return true
         } catch (err) {
             console.warn('[Project] save failed:', err)
+            return false
         }
+    }
+
+    const _pickProjectFileWithInput = async () => {
+        if (typeof document === 'undefined') return null
+        return new Promise((resolve) => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = `${PROJECT_FILE_EXTENSION},${PROJECT_PACKAGE_EXTENSION},.json,application/json,application/zip`
+            input.style.display = 'none'
+            document.body.appendChild(input)
+
+            let settled = false
+            const cleanup = () => {
+                input.removeEventListener('change', onChange)
+                window.removeEventListener('focus', onFocus, true)
+                if (input.parentNode) input.parentNode.removeChild(input)
+            }
+            const finish = (file) => {
+                if (settled) return
+                settled = true
+                cleanup()
+                resolve(file || null)
+            }
+            const onChange = () => {
+                const picked = input.files?.[0] || null
+                finish(picked)
+            }
+            const onFocus = () => {
+                setTimeout(() => {
+                    if (!settled && !(input.files && input.files.length)) finish(null)
+                }, 300)
+            }
+
+            input.addEventListener('change', onChange, { once: true })
+            window.addEventListener('focus', onFocus, true)
+            input.click()
+        })
+    }
+
+    const exportSettingsJson = async () => {
+        const snapshot = getSnapshot()
+        const presetName = String(_currentPresetTitle() || '').trim() || 'settings'
+        const safeName = _sanitizeFilePart(presetName, 'settings')
+        const payload = {
+            exportedAt: new Date().toISOString(),
+            presetName,
+            params: snapshot,
+        }
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+        triggerBlobDownload(blob, `${safeName}.json`)
+        return true
+    }
+
+    const exportProjectAs = async (format = 'project-package') => {
+        const target = String(format || 'project-package')
+        const payload = await _buildCurrentProjectPayload()
+
+        if (target === 'png') {
+            await saveCanvasPng({ transparent: false })
+            return true
+        }
+
+        if (target === 'png-transparent') {
+            await saveCanvasPng({ transparent: true })
+            return true
+        }
+
+        if (target === 'obj') {
+            await saveSceneObj()
+            return true
+        }
+
+        if (target === 'settings-json') {
+            return exportSettingsJson()
+        }
+
+        if (target === 'project-file') {
+            const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
+                ? projectFileName
+                : _defaultProjectName()
+            await _downloadProjectBundle({
+                payload,
+                fileName: suggestedName,
+                includeAudio: false,
+            })
+            _scheduleLocalProjectDraftSave()
+            return true
+        }
+
+        if (target === 'project-package') {
+            const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_PACKAGE_EXTENSION)
+                ? projectFileName
+                : _defaultProjectPackageName()
+            await _downloadProjectBundle({
+                payload,
+                fileName: suggestedName,
+                includeAudio: true,
+            })
+            _scheduleLocalProjectDraftSave()
+            return true
+        }
+
+        const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
+            ? projectFileName
+            : _defaultProjectName()
+        await _downloadProjectBundle({
+            payload,
+            fileName: suggestedName,
+            includeAudio: false,
+        })
+        _scheduleLocalProjectDraftSave()
+        return true
     }
 
     const scheduleProjectAutosave = () => {
@@ -2321,7 +2658,7 @@ animate()
         if (projectAutoSaveTimer) clearTimeout(projectAutoSaveTimer)
         projectAutoSaveTimer = setTimeout(async () => {
             projectAutoSaveTimer = null
-            await saveProject({ forceDownload: false })
+            await saveProject()
         }, 450)
     }
 
@@ -2350,26 +2687,44 @@ animate()
     }
 
     const openProjectWithPicker = async () => {
-        if (typeof window.showOpenFilePicker !== 'function') return false
         try {
-            const [handle] = await window.showOpenFilePicker({
-                multiple: false,
-                excludeAcceptAllOption: false,
-                types: [{
-                    description: 'SEESOUND Project',
-                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
-                }],
-            })
-            if (!handle) return false
-            const file = await handle.getFile()
-            const text = await file.text()
-            const payload = parseProjectText(text)
+            let handle = null
+            let file = null
+            if (typeof window.showOpenFilePicker === 'function') {
+                const picked = await window.showOpenFilePicker({
+                    multiple: false,
+                    excludeAcceptAllOption: false,
+                    types: [{
+                        description: 'SEESOUND Project',
+                        accept: {
+                            'application/json': [PROJECT_FILE_EXTENSION, '.json'],
+                            'application/zip': [PROJECT_PACKAGE_EXTENSION],
+                        },
+                    }],
+                })
+                handle = picked?.[0] || null
+                if (!handle) return false
+                file = await handle.getFile()
+            } else {
+                file = await _pickProjectFileWithInput()
+                if (!(file instanceof File)) return false
+            }
+
+            const parsed = await parseProjectFile(file)
             projectFileHandle = handle
             projectFileName = String(file.name || '').trim()
-            await loadProjectFromPayload(payload)
+            await loadProjectFromPayload(parsed.payload)
             emitProjectFileState()
+
+            if (parsed.audioFile instanceof File) {
+                loadFile(parsed.audioFile, parsed.audioFile.name)
+            }
+
             return true
-        } catch {
+        } catch (err) {
+            if (err?.name === 'AbortError') return false
+            console.warn('[Project] open failed:', err)
+            alert('Failed to open project file.')
             return false
         }
     }
@@ -2393,7 +2748,7 @@ animate()
                 suggestedName,
                 types: [{
                     description: 'SEESOUND Project',
-                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
+                    accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
                 }],
             })
             if (!handle) return false
@@ -2406,7 +2761,7 @@ animate()
 
             projectFileHandle = handle
             projectFileName = String(handle.name || suggestedName).trim()
-            await saveProject({ forceDownload: false })
+            await saveProject()
             emitProjectFileState()
             _scheduleLocalProjectDraftSave()
             return true
@@ -2423,13 +2778,13 @@ animate()
                 suggestedName,
                 types: [{
                     description: 'SEESOUND Project',
-                    accept: { 'application/json': [PROJECT_FILE_EXTENSION, '.json'] },
+                    accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
                 }],
             })
             if (!handle) return false
             projectFileHandle = handle
             projectFileName = String(handle.name || suggestedName).trim()
-            await saveProject({ forceDownload: false })
+            await saveProject()
             emitProjectFileState()
             return true
         } catch {
@@ -2439,11 +2794,10 @@ animate()
 
     playerEl.addEventListener('player:saveproject', async () => {
         if (projectFileHandle) {
-            await saveProject({ forceDownload: false })
+            await saveProject()
             return
         }
-        const ok = await saveProjectAsWithPicker(_defaultProjectName())
-        if (!ok) await saveProject({ forceDownload: true })
+        alert('Use Save As first to choose where this project should be saved.')
     })
     playerEl.addEventListener('player:loadproject', async (e) => {
         await loadProjectFromPayload(e?.detail?.payload || {})
@@ -2451,18 +2805,18 @@ animate()
 
     window.addEventListener('seesound:project-save-request', async () => {
         if (projectFileHandle) {
-            await saveProject({ forceDownload: false })
+            await saveProject()
             return
         }
-        const ok = await saveProjectAsWithPicker(_defaultProjectName())
-        if (!ok) await saveProject({ forceDownload: true })
+        alert('Use Save As first to choose where this project should be saved.')
     })
     window.addEventListener('seesound:project-save-as-request', async () => {
-        const suggested = projectFileName
-            ? `${projectFileName}${PROJECT_FILE_EXTENSION}`
-            : _defaultProjectName()
-        const ok = await saveProjectAsWithPicker(suggested)
-        if (!ok) await saveProject({ forceDownload: true })
+        const suggested = String(projectFileName || '').trim() || _defaultProjectName()
+        await saveProjectAsWithPicker(suggested)
+    })
+    window.addEventListener('seesound:project-export-request', async (e) => {
+        const format = String(e?.detail?.format || 'project-package')
+        await exportProjectAs(format)
     })
     window.addEventListener('seesound:project-load-request', async (e) => {
         const detail = e?.detail || {}
@@ -2483,7 +2837,38 @@ animate()
         await openProjectWithPicker()
     })
     window.addEventListener('seesound:project-new-request', async () => {
-        await createNewProjectWithPicker(getDefaultProjectDefinition().fileName, true)
+        projectLoadInProgress = true
+        try {
+            resetToDefaults()
+            await _ensureAtLeastOnePreset()
+            projectFileHandle = null
+            projectFileName = String(getDefaultProjectDefinition().fileName || `New Project${PROJECT_FILE_EXTENSION}`).trim()
+            pendingRecoveryDraft = null
+            try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
+            emitProjectFileState()
+            window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+                detail: {
+                    fileName: projectFileName,
+                    presetName: 'default',
+                },
+            }))
+            window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
+        } finally {
+            projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
+        }
+    })
+    window.addEventListener('seesound:factory-template-load-request', async (e) => {
+        await _loadFactoryTemplateFromDetail(e?.detail || {})
+    })
+    window.addEventListener('seesound:project-recovery-restore', async () => {
+        if (!pendingRecoveryDraft) return
+        await _applyRecoveredLocalDraft(pendingRecoveryDraft)
+    })
+    window.addEventListener('seesound:project-recovery-dismiss', () => {
+        pendingRecoveryDraft = null
+        try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
+        window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
     })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
@@ -2497,8 +2882,17 @@ animate()
     })
 
     const bootstrapDefaultProject = async () => {
-        const restored = await _restoreLocalProjectDraftIfAny()
-        if (restored) return
+        const maybeDraft = _readLocalProjectDraftIfAny()
+        if (maybeDraft?.payload && typeof maybeDraft.payload === 'object') {
+            pendingRecoveryDraft = maybeDraft
+            window.dispatchEvent(new CustomEvent('seesound:project-recovery-available', {
+                detail: {
+                    fileName: String(maybeDraft.fileName || ''),
+                    projectName: String(maybeDraft?.payload?.projectName || ''),
+                    updatedAt: Number(maybeDraft.updatedAt || Date.now()),
+                },
+            }))
+        }
         const defaults = getDefaultProjectDefinition()
         projectFileName = defaults.fileName
         emitProjectFileState()

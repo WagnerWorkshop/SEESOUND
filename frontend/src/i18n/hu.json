@@ -1,6 +1,7 @@
 {
     "uiText": {
         "menu": {
+            "start": "Start",
             "file": "Fájl",
             "view": "Nézet",
             "settings": "Beállítások",
@@ -8,10 +9,33 @@
             "collapse": "Összecsukás"
         },
         "file": {
+            "myProject": "Projekt",
             "project": "Projekt",
-            "projectNew": "Új projekt",
+            "projectOpen": "Megnyitás",
+            "projectNew": "Új",
             "projectLoad": "Betöltés",
             "projectSave": "Mentés",
+            "exportAsAction": "Export",
+            "exportProjectJson": "Projekt (.ssp)",
+            "exportProjectPackage": "Projektcsomag (.sspp)",
+            "exportProjectPackageOption": "Projektcsomag (.sspp)",
+            "exportImageOption": "Kép (.png)",
+            "exportImageNoBgOption": "Átlátszó kép (.png)",
+            "exportObjOption": "3D objektum (.obj)",
+            "exportSettingsJson": "Beállítások (.json)",
+            "exportHintProjectFile": "Projektfájl minden beállíással",
+            "exportHintProjectPackage": "Beállítások, szabályok és hangfájl",
+            "exportHintPng": "Aktuális képkocka háttérrel",
+            "exportHintPngTransparent": "Aktuális képkocka háttér nélkül",
+            "exportHintObj": "Jelenetgeometria",
+            "exportHintSettingsJson": "Aktuális paraméter- és szabálybeállítások",
+            "factoryTemplates": "Sablonok",
+            "templatesLoading": "Sablonok betöltése...",
+            "templatesEmpty": "Nincs elérhető sablon.",
+            "recoveryTitle": "Helyreállítás",
+            "recoveryMessage": "Találtunk egy helyreállítható vázlatot: {time} ({project}).",
+            "recoveryRestore": "Helyreállítás",
+            "recoveryDismiss": "Elvetés",
             "projectSaveAs": "Mentés másként",
             "presets": "Előbeállítások",
             "presetLoad": "Betöltés",
@@ -412,7 +436,7 @@
         {
             "id": "binMagnitude",
             "group": "detail",
-            "label": "Részletes Hangerő",
+            "label": "Részletes hangerő",
             "technicalName": "binMagnitude",
             "description": "Az aktuális sáv frekvenciánkénti hangereje."
         },
@@ -440,7 +464,7 @@
         {
             "id": "notePitchClass",
             "group": "detail",
-            "label": "Zenei Hang",
+            "label": "Zenei hang",
             "technicalName": "notePitchClass",
             "description": "A magas érték magasabb hangot jelent a kromatikus skálán belül."
         },
@@ -461,7 +485,7 @@
         {
             "id": "binAttackTime",
             "group": "detail",
-            "label": "Támadás Élessége",
+            "label": "Támadás élessége",
             "technicalName": "binAttackTime",
             "description": "Magas érték: nagyon gyors kezdés."
         },
@@ -475,7 +499,7 @@
         {
             "id": "binEnvelopeState",
             "group": "detail",
-            "label": "Burkológörbe Állapota",
+            "label": "Burkológörbe állapota",
             "technicalName": "binEnvelopeState",
             "description": "Egy adott frekvenciasáv aktuális ADSR fázisa."
         },
@@ -510,28 +534,28 @@
         {
             "id": "high",
             "group": "overall",
-            "label": "Magas Hangok",
+            "label": "Magas hangok",
             "technicalName": "high",
             "description": "A magas frekvenciatartomány hangereje."
         },
         {
             "id": "mid",
             "group": "overall",
-            "label": "Középső Hangok",
+            "label": "Közép hangok",
             "technicalName": "mid",
             "description": "A középfrekvencia-tartomány hangereje."
         },
         {
             "id": "bass",
             "group": "overall",
-            "label": "Mély Hangok",
+            "label": "Mély hangok",
             "technicalName": "bass",
             "description": "A basszus frekvenciatartomány hangereje."
         },
         {
             "id": "deltaTime",
             "group": "overall",
-            "label": "Delta Idő",
+            "label": "Delta idő",
             "technicalName": "deltaTime",
             "description": "Eltelt idő az aktuális és az előző keret között."
         },
@@ -545,7 +569,7 @@
         {
             "id": "time",
             "group": "overall",
-            "label": "Jelenlegi Idő",
+            "label": "Idő",
             "technicalName": "time",
             "description": "Az audiofájl időbélyege."
         },
@@ -629,21 +653,21 @@
         {
             "id": "canvasHeightPx",
             "group": "overall",
-            "label": "Vászon Magassága",
+            "label": "Vászon magassága",
             "technicalName": "canvasHeightPx",
             "description": "Vászon magassága pixelben kifejezve."
         },
         {
             "id": "canvasWidthPx",
             "group": "overall",
-            "label": "Vászon Szélessége",
+            "label": "Vászon szélessége",
             "technicalName": "canvasWidthPx",
             "description": "Vászon szélessége pixelben kifejezve."
         },
         {
             "id": "audioLengthSec",
             "group": "overall",
-            "label": "Hang Fájl Hossza",
+            "label": "Hangfájl Hossza",
             "technicalName": "audioLengthSec",
             "description": "Hangfájl hossza másodpercben kifejezve."
         }

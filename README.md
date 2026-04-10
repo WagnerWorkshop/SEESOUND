@@ -27,6 +27,10 @@ Current UX/runtime status (April 2026):
 - Line rules use midpoint + length + axis direction semantics; default line spawning no longer silently fails.
 - Canvas width/height aliases used by rules are pixel-based (`canvasWidthPx` / `canvasHeightPx`).
 - Fit-to-canvas camera behavior is tight framing with no intentional margin.
+- Start menu export options are now presented as: PNG, transparent PNG, OBJ, project package (`.sspp`), and settings JSON.
+- Project open now supports both File System Access picker and a browser-compatible hidden file-input fallback.
+- Factory templates are loaded from `public/templates/factory-templates.json` with a built-in fallback list (including Holistic 3D).
+- Export/template labels and hints are aligned across `en`, `de`, `es`, `fr`, and `it` locale files.
 
 ## 2. Runtime Architecture
 
@@ -119,31 +123,28 @@ Core fields:
 
 Important behavior in main.js:
 
-- Project load replaces preset library to enforce project-file source-of-truth.
-- Autosave writes only when a File System Access file handle is attached.
-- Save writes to attached handle; Save As attaches a new handle.
-- If no handle exists, fallback is download-based project export.
+- Project load restores incoming presets additively so factory/default presets remain available.
+- Autosave writes only when a File System Access file handle is attached and no project-load transaction is in progress.
+- Save writes only to an already attached file handle; without a handle the user is prompted to use Save As first.
+- Save As attaches a new handle via `showSaveFilePicker` when available.
+- Open uses `showOpenFilePicker` when available and falls back to hidden file-input selection otherwise.
 
 ## 4. Default Project Bootstrapping
 
-Default startup project is defined in frontend/src/config/DefaultProject.js.
-
-Current bundled default presets:
-
-- linear basic
-- linear colors
-- linear timbre colors
-- textured timbre colors
-
-Preset JSON source for startup bundle:
-
-- frontend/src/presets/default-project/*.json
+Default startup project state is currently defined by `getDefaultProjectDefinition()` in `frontend/src/main.js`.
 
 Bootstrap behavior:
 
 - On startup, app loads this default project payload.
-- It seeds params and preset library before normal interaction.
-- Default file label is seesound-default-project.ssp.json until user binds a handle.
+- Default payload uses current params snapshot, `presetName: default`, and an empty `presetLibrary`.
+- If no standard preset exists, the app creates a `default` preset from the current snapshot.
+- Local draft recovery is checked first; if found, a recovery prompt is emitted and the user can restore or dismiss.
+- Default file label is `New Project.ssp` until a handle is attached.
+
+Template bootstrapping:
+
+- Start menu templates are fetched from `frontend/public/templates/factory-templates.json`.
+- If manifest fetch fails or is empty, a built-in fallback template list is rendered.
 
 ## 5. UI Event Contract
 

@@ -8,11 +8,6 @@ import {
     undo,
     redo,
     resetToDefaults,
-    getSnapshot,
-    listPresets,
-    loadPreset,
-    savePreset,
-    deletePreset,
 } from './ParamStore.js'
 import {
     UI_TEXT,
@@ -52,7 +47,7 @@ const NONE_VAR = '__none__'
 const RULE_OPERATORS = Object.freeze(['always', '>', '>=', '<', '<=', '==', '!='])
 
 const MENU_ITEMS = Object.freeze([
-    { id: 'file', label: UI_TEXT.menu.file },
+    { id: 'start', label: UI_TEXT.menu.start || UI_TEXT.menu.file },
     { id: 'view', label: UI_TEXT.menu.view },
     { id: 'settings', label: UI_TEXT.menu.settings },
     { id: 'rules', label: UI_TEXT.menu.rules },
@@ -296,7 +291,7 @@ const RULE_VARIABLE_PATTERN = RULE_VARIABLES
 const RULE_VARIABLE_REGEX = new RegExp(`\\b(${RULE_VARIABLE_PATTERN})\\b`, 'g')
 
 const MENU_ICON_MAP = Object.freeze({
-    file: menuFileIcon,
+    start: menuFileIcon,
     view: menuViewIcon,
     settings: menuSettingsIcon,
     rules: menuRulesIcon,
@@ -1100,6 +1095,17 @@ function caretRangeFromPoint(x, y) {
     return null
 }
 
+function placeCaretAfterNode(node) {
+    if (!node) return
+    const selection = window.getSelection?.()
+    if (!selection) return
+    const range = document.createRange()
+    range.setStartAfter(node)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+}
+
 function insertVariablePillAtCursor(editor, variableId) {
     if (!editor || !variableId) return
     const selection = window.getSelection?.()
@@ -1249,6 +1255,132 @@ function insertFunctionTemplateAtCursor(editor, functionId) {
 function renderTokenEditor(rowState) {
     if (!rowState?.expressionInput) return
     const editor = rowState.expressionInput
+
+    const hidePillContextMenu = () => {
+        if (!rowState.pillContextMenu) return
+        rowState.pillContextMenu.classList.remove('is-open')
+        rowState.pillContextMenuTarget = null
+    }
+
+    const openPillContextMenu = (pill, clientX, clientY) => {
+        const menu = ensurePillContextMenu()
+        if (!menu || !pill) return
+        rowState.activePill = pill
+        rowState.pillContextMenuTarget = pill
+        menu.classList.add('is-open')
+
+        const margin = 8
+        const menuRect = menu.getBoundingClientRect()
+        const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin)
+        const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin)
+        const left = clamp(clientX, margin, maxLeft)
+        const top = clamp(clientY, margin, maxTop)
+        menu.style.left = `${left}px`
+        menu.style.top = `${top}px`
+    }
+
+    const ensurePillContextMenu = () => {
+        if (rowState.pillContextMenu) return rowState.pillContextMenu
+
+        const menu = el('div', 'cp-rule-pill-context-menu', {
+            role: 'menu',
+            'aria-label': getRuleText('pillMenuLabel', 'Pill actions'),
+        })
+
+        const changeBtn = el('button', 'cp-rule-pill-context-item', {
+            type: 'button',
+            role: 'menuitem',
+            text: getRuleText('pillMenuChange', 'Change'),
+        })
+        const duplicateBtn = el('button', 'cp-rule-pill-context-item', {
+            type: 'button',
+            role: 'menuitem',
+            text: getRuleText('pillMenuDuplicate', 'Duplicate'),
+        })
+        const deleteBtn = el('button', 'cp-rule-pill-context-item', {
+            type: 'button',
+            role: 'menuitem',
+            text: getRuleText('pillMenuDelete', 'Delete'),
+        })
+
+        menu.append(changeBtn, duplicateBtn, deleteBtn)
+        document.body.appendChild(menu)
+
+        const getTargetPill = () => {
+            const target = rowState.pillContextMenuTarget
+            if (!target || !editor.contains(target)) return null
+            return target
+        }
+
+        changeBtn.addEventListener('click', () => {
+            const targetPill = getTargetPill()
+            if (!targetPill) {
+                hidePillContextMenu()
+                return
+            }
+            const id = String(targetPill.getAttribute('data-rule-var-id') || '')
+            rowState.activePill = targetPill
+            rowState.suppressNextBlurRerender = true
+            hidePillContextMenu()
+            if (rowState.valueActionSelect && id) {
+                rowState.valueActionSelect.value = `var:${id}`
+                openSelectPicker(rowState.valueActionSelect)
+            }
+        })
+
+        duplicateBtn.addEventListener('click', () => {
+            const targetPill = getTargetPill()
+            if (!targetPill) {
+                hidePillContextMenu()
+                return
+            }
+            const id = String(targetPill.getAttribute('data-rule-var-id') || '').trim()
+            if (!id) {
+                hidePillContextMenu()
+                return
+            }
+            const cloned = createRuleExpressionPill(id)
+            wirePillInteractions(cloned)
+            const spacer = document.createTextNode(' ')
+            targetPill.after(spacer, cloned)
+            placeCaretAfterNode(cloned)
+            hidePillContextMenu()
+            rowState.onExpressionChanged?.()
+        })
+
+        deleteBtn.addEventListener('click', () => {
+            const targetPill = getTargetPill()
+            if (!targetPill) {
+                hidePillContextMenu()
+                return
+            }
+            if (rowState.activePill === targetPill) rowState.activePill = null
+            targetPill.remove()
+            hidePillContextMenu()
+            rowState.onExpressionChanged?.()
+        })
+
+        if (!rowState.pillContextMenuEventsBound) {
+            document.addEventListener('pointerdown', (event) => {
+                if (!rowState.pillContextMenu?.classList.contains('is-open')) return
+                const target = event.target
+                const inMenu = target instanceof Element && rowState.pillContextMenu.contains(target)
+                if (inMenu) return
+                hidePillContextMenu()
+            })
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') hidePillContextMenu()
+            })
+            window.addEventListener('resize', hidePillContextMenu)
+            window.addEventListener('scroll', hidePillContextMenu, true)
+            rowState.pillContextMenuEventsBound = true
+        }
+
+        rowState.pillContextMenu = menu
+        return menu
+    }
+
+    hidePillContextMenu()
     editor.innerHTML = ''
     rowState.activePill = null
 
@@ -1279,11 +1411,17 @@ function renderTokenEditor(rowState) {
             event.preventDefault()
             event.stopPropagation()
             rowState.activePill = pill
+            rowState.suppressNextBlurRerender = true
             const id = String(pill.getAttribute('data-rule-var-id') || '')
             if (rowState.valueActionSelect && id) {
                 rowState.valueActionSelect.value = `var:${id}`
                 openSelectPicker(rowState.valueActionSelect)
             }
+        })
+        pill.addEventListener('contextmenu', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openPillContextMenu(pill, event.clientX, event.clientY)
         })
         pill.addEventListener('dragstart', (event) => {
             rowState.draggingPill = pill
@@ -1587,150 +1725,154 @@ function createRuleConditionInputSelect(selected = NONE_VAR) {
 
 function buildFileMenu(body) {
     const panel = el('div', 'cp-menu-pane-inner')
-    const PRESET_FILE_EXTENSION = '.ssp-preset.json'
+    const TEMPLATE_MANIFEST_URL = '/templates/factory-templates.json'
+    const FALLBACK_FACTORY_TEMPLATES = Object.freeze([
+        { id: 'linear-basic', title: 'Linear Basic', presetName: 'linear basic', presetPath: '/templates/presets/linear-basic.json', thumbnail: '/templates/thumbnails/linear-basic.svg' },
+        { id: 'linear-colors', title: 'Linear Colors', presetName: 'linear colors', presetPath: '/templates/presets/linear-colors.json', thumbnail: '/templates/thumbnails/linear-colors.svg' },
+        { id: 'linear-timbre-colors', title: 'Linear Timbre Colors', presetName: 'linear timbre colors', presetPath: '/templates/presets/linear-timbre-colors.json', thumbnail: '/templates/thumbnails/linear-timbre-colors.svg' },
+        { id: 'linear-textured', title: 'Linear Textured', presetName: 'linear textured', presetPath: '/templates/presets/linear-textured.json', thumbnail: '/templates/thumbnails/linear-textured.svg' },
+        { id: 'holistic-3d', title: 'Holistic 3D', presetName: 'holistic 3d', presetPath: '/templates/presets/holistic-3d.json', thumbnail: '/templates/thumbnails/holistic-3d.svg' },
+    ])
 
-    const presetNameFromFile = (rawName = '') => {
+    const shortNameFromFile = (rawName = '') => {
         const fileName = String(rawName || '').trim()
         if (!fileName) return ''
-        if (/\.ssp-preset\.json$/i.test(fileName)) return fileName.replace(/\.ssp-preset\.json$/i, '')
+        if (/\.sspp$/i.test(fileName)) return fileName.replace(/\.sspp$/i, '')
+        if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
         return fileName.replace(/\.[^./\\]+$/g, '')
     }
 
-    const buildPresetPayload = (name, presetParams) => ({
-        schemaVersion: 1,
-        name: String(name || '').trim(),
-        params: (presetParams && typeof presetParams === 'object') ? presetParams : {},
-        updatedAt: new Date().toISOString(),
-    })
-
-    const parsePresetText = (text, fileName = '') => {
-        const payload = JSON.parse(String(text || '{}'))
-        if (!payload || typeof payload !== 'object') {
-            throw new Error('Preset file is invalid.')
-        }
-        const parsedName = String(payload?.name || '').trim() || presetNameFromFile(fileName)
-        if (payload?.params && typeof payload.params === 'object') {
-            return { name: parsedName, params: payload.params }
-        }
-        return { name: parsedName, params: payload }
+    const buildExportOptions = () => {
+        const labels = UI_TEXT?.file || {}
+        return [
+            {
+                value: 'png',
+                label: labels.exportImageOption || 'Image (.png)',
+                hint: labels.exportHintPng || 'Current frame with background',
+            },
+            {
+                value: 'png-transparent',
+                label: labels.exportImageNoBgOption || 'Transparent image (.png)',
+                hint: labels.exportHintPngTransparent || 'Current frame without background',
+            },
+            {
+                value: 'obj',
+                label: labels.exportObjOption || '3D object (.obj)',
+                hint: labels.exportHintObj || 'Scene geometry',
+            },
+            {
+                value: 'project-package',
+                label: labels.exportProjectPackageOption || 'Project package (.sspp)',
+                hint: labels.exportHintProjectPackage || 'All settings, rules and audio',
+            },
+            {
+                value: 'settings-json',
+                label: labels.exportSettingsJson || 'Settings (.json)',
+                hint: labels.exportHintSettingsJson || 'Current parameter and rule settings',
+            },
+        ]
     }
 
-    const savePresetToLocalFile = async (name, presetParams) => {
-        const trimmedName = String(name || '').trim()
-        const fallbackName = `${trimmedName || 'seesound-preset'}${PRESET_FILE_EXTENSION}`
-        const payload = buildPresetPayload(trimmedName, presetParams)
-        if (typeof window.showSaveFilePicker === 'function') {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: fallbackName,
-                    excludeAcceptAllOption: false,
-                    types: [{
-                        description: 'SEESOUND Preset',
-                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
-                    }],
-                })
-                if (!handle) return false
-                const writable = await handle.createWritable()
-                await writable.write(JSON.stringify(payload, null, 2))
-                await writable.close()
-                return true
-            } catch {
-                return false
-            }
-        }
-
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = fallbackName
-        document.body.appendChild(anchor)
-        anchor.click()
-        anchor.remove()
-        URL.revokeObjectURL(url)
-        return true
+    const hashString = (input) => {
+        const text = String(input || '')
+        let out = 0
+        for (let i = 0; i < text.length; i += 1) out = ((out << 5) - out) + text.charCodeAt(i)
+        return Math.abs(out)
     }
 
-    const openPresetFromLocalFile = async () => {
-        if (typeof window.showOpenFilePicker === 'function') {
-            try {
-                const [handle] = await window.showOpenFilePicker({
-                    multiple: false,
-                    excludeAcceptAllOption: false,
-                    types: [{
-                        description: 'SEESOUND Preset',
-                        accept: { 'application/json': [PRESET_FILE_EXTENSION, '.json'] },
-                    }],
-                })
-                if (!handle) return null
-                const file = await handle.getFile()
-                const text = await file.text()
-                return parsePresetText(text, file.name)
-            } catch {
-                return null
-            }
-        }
-
-        return new Promise((resolve) => {
-            const input = document.createElement('input')
-            input.type = 'file'
-            input.accept = `${PRESET_FILE_EXTENSION},.json`
-            input.style.display = 'none'
-            input.addEventListener('change', async () => {
-                try {
-                    const file = input.files?.[0]
-                    if (!file) {
-                        resolve(null)
-                        return
-                    }
-                    const text = await file.text()
-                    resolve(parsePresetText(text, file.name))
-                } catch {
-                    resolve(null)
-                } finally {
-                    input.remove()
-                }
+    const createTemplateThumb = (template, title) => {
+        const thumb = el('div', 'cp-template-thumb')
+        const imageUrl = String(template?.thumbnail || '').trim()
+        if (imageUrl) {
+            const img = el('img', 'cp-template-thumb-image', { src: imageUrl, alt: title, loading: 'lazy' })
+            img.addEventListener('error', () => {
+                img.remove()
+                thumb.classList.add('is-generated')
+                const hue = hashString(title) % 360
+                thumb.style.setProperty('--template-hue', String(hue))
+                thumb.textContent = String(title || '?').trim().slice(0, 2).toUpperCase()
             }, { once: true })
-            document.body.appendChild(input)
-            input.click()
-        })
+            thumb.appendChild(img)
+            return thumb
+        }
+        const hue = hashString(title) % 360
+        thumb.classList.add('is-generated')
+        thumb.style.setProperty('--template-hue', String(hue))
+        thumb.textContent = String(title || '?').trim().slice(0, 2).toUpperCase()
+        return thumb
+    }
+
+    const getRecoveryMessage = (detail = {}) => {
+        const template = String(UI_TEXT?.file?.recoveryMessage || 'Recover previous session draft from {time}?').trim()
+        const fallbackTime = new Date().toLocaleString()
+        const updatedAt = Number(detail?.updatedAt)
+        const formattedTime = Number.isFinite(updatedAt)
+            ? new Date(updatedAt).toLocaleString()
+            : fallbackTime
+        const projectName = String(detail?.projectName || detail?.fileName || '').trim()
+        return template
+            .replaceAll('{time}', formattedTime)
+            .replaceAll('{project}', projectName || (UI_TEXT?.file?.projectNew || 'New Project'))
     }
 
     const projectNameFromFile = (rawName = '') => {
         const fileName = String(rawName || '').trim()
         if (!fileName) return ''
-        if (/\.ssp\.json$/i.test(fileName)) return fileName.replace(/\.ssp\.json$/i, '')
+        if (/\.sspp$/i.test(fileName)) return fileName.replace(/\.sspp$/i, '')
+        if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
         return fileName.replace(/\.[^./\\]+$/g, '')
     }
 
     const projectSection = el('section', 'cp-section')
     const projectTitleRow = el('div', 'cp-section-title-row')
-    const projectTitle = el('h3', 'cp-section-title', { text: UI_TEXT.file.project })
+    const projectTitle = el('h3', 'cp-section-title', { text: UI_TEXT.file.myProject || UI_TEXT.file.project })
     const projectNameLabel = el('span', 'cp-project-name')
     const defaultProjectLabel = UI_TEXT.file.projectNew || 'New Project'
     const updateProjectTitle = (detail = {}) => {
         const rawProjectName = String(detail?.projectName || '').trim()
         const rawFileName = String(detail?.fileName || '').trim()
-        const shownName = rawProjectName || projectNameFromFile(rawFileName) || defaultProjectLabel
+        const shownName = rawProjectName || shortNameFromFile(rawFileName) || defaultProjectLabel
         projectNameLabel.textContent = shownName
         projectNameLabel.title = shownName
     }
     updateProjectTitle()
     projectTitleRow.append(projectTitle, projectNameLabel)
     projectSection.appendChild(projectTitleRow)
-    const projectActions = el('div', 'cp-button-grid')
-    const btnLoadProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectLoad })
+    const projectActions = el('div', 'cp-button-grid cp-start-project-actions')
+    const btnNewProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectNew })
+    const btnLoadProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectOpen || UI_TEXT.file.projectLoad })
     const btnSaveProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSave })
     const btnSaveAsProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSaveAs })
-    applyButtonIcon(btnLoadProject, BUTTON_ICON_MAP.load, UI_TEXT.file.projectLoad)
+    applyButtonIcon(btnNewProject, BUTTON_ICON_MAP.add, UI_TEXT.file.projectNew)
+    applyButtonIcon(btnLoadProject, BUTTON_ICON_MAP.load, UI_TEXT.file.projectOpen || UI_TEXT.file.projectLoad)
     applyButtonIcon(btnSaveProject, BUTTON_ICON_MAP.save, UI_TEXT.file.projectSave)
     applyButtonIcon(btnSaveAsProject, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.projectSaveAs)
-    projectActions.append(btnLoadProject, btnSaveProject, btnSaveAsProject)
+    projectActions.append(btnNewProject, btnLoadProject, btnSaveProject, btnSaveAsProject)
     projectSection.appendChild(projectActions)
 
+    const exportRow = el('div', 'cp-start-export-row')
+    const exportSelect = el('select', 'cp-input-select')
+    for (const entry of buildExportOptions()) {
+        const option = el('option', '', { value: entry.value, text: entry.label })
+        if (entry.hint) option.title = String(entry.hint)
+        exportSelect.appendChild(option)
+    }
+    applySelectedOptionTooltip(exportSelect)
+    exportSelect.addEventListener('change', () => applySelectedOptionTooltip(exportSelect))
+    const btnExportAs = el('button', 'cp-btn', { text: UI_TEXT.file.exportAsAction || UI_TEXT.file.export })
+    applyButtonIcon(btnExportAs, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.exportAsAction || UI_TEXT.file.export)
+    exportRow.append(exportSelect, btnExportAs)
+    projectSection.appendChild(exportRow)
+
+    btnNewProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-new-request')))
     btnLoadProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-open-request')))
     btnSaveProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-request')))
     btnSaveAsProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-as-request')))
+    btnExportAs.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-export-request', {
+            detail: { format: String(exportSelect.value || 'project-package') },
+        }))
+    })
 
     window.addEventListener('seesound:project-file-state', (e) => {
         updateProjectTitle(e?.detail || {})
@@ -1742,125 +1884,101 @@ function buildFileMenu(body) {
         updateProjectTitle(e?.detail || {})
     })
 
-    const presetsSection = el('section', 'cp-section cp-preset-bar')
-    presetsSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.file.presets }))
-    const presetRow = el('div', 'cp-preset-row')
-    const presetSelect = el('select', 'cp-input-select cp-preset-sel')
-    const presetName = el('input', 'cp-input-text cp-preset-name', { type: 'text', placeholder: UI_TEXT.file.presetNamePlaceholder })
-    const btnLoadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetLoad })
-    const btnUploadPreset = el('button', 'cp-btn', { text: UI_TEXT.file.presetUpload || 'Upload' })
-    const btnSavePresetProject = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave })
-    const btnSavePresetLocal = el('button', 'cp-btn', { text: UI_TEXT.file.presetSaveLocal || 'Save Local' })
-    const btnDeletePreset = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.file.presetRemove })
-    applyButtonIcon(btnLoadPreset, BUTTON_ICON_MAP.load, UI_TEXT.file.presetLoad)
-    applyButtonIcon(btnUploadPreset, BUTTON_ICON_MAP.upload, UI_TEXT.file.presetUpload || 'Upload')
-    applyButtonIcon(btnSavePresetProject, BUTTON_ICON_MAP.save, UI_TEXT.file.presetSaveProject || UI_TEXT.file.presetSave)
-    applyButtonIcon(btnSavePresetLocal, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.presetSaveLocal || 'Save Local')
-    applyButtonIcon(btnDeletePreset, BUTTON_ICON_MAP.remove, UI_TEXT.file.presetRemove)
-    presetRow.append(presetSelect, btnLoadPreset, btnUploadPreset, btnDeletePreset, presetName, btnSavePresetProject, btnSavePresetLocal)
-    presetsSection.appendChild(presetRow)
+    const templatesSection = el('section', 'cp-section')
+    templatesSection.appendChild(el('h3', 'cp-section-title', {
+        text: UI_TEXT.file.factoryTemplates || UI_TEXT.file.presets,
+    }))
+    const templateStatus = el('div', 'cp-template-status', {
+        text: UI_TEXT.file.templatesLoading || 'Loading templates...',
+    })
+    const templateGrid = el('div', 'cp-template-grid')
+    templatesSection.append(templateStatus, templateGrid)
 
-    async function refreshPresets() {
-        const names = await listPresets()
-        const selected = String(presetSelect.value || '')
-        presetSelect.innerHTML = ''
-        presetSelect.appendChild(el('option', '', { value: '', text: UI_TEXT.file.presetSelectPlaceholder }))
-        for (const name of names) {
-            presetSelect.appendChild(el('option', '', { value: name, text: name }))
+    const renderTemplateList = (templates) => {
+        const list = Array.isArray(templates) ? templates : []
+        templateGrid.innerHTML = ''
+        if (!list.length) {
+            templateStatus.textContent = UI_TEXT.file.templatesEmpty || 'No templates available.'
+            return
         }
-        if (selected && names.includes(selected)) presetSelect.value = selected
+        templateStatus.textContent = ''
+        for (const template of list) {
+            const title = String(template?.title || template?.name || template?.presetName || '').trim() || 'Template'
+            const button = el('button', 'cp-template-card', { type: 'button' })
+            button.append(
+                createTemplateThumb(template, title),
+                el('span', 'cp-template-card-title', { text: title }),
+            )
+            button.addEventListener('click', () => {
+                window.dispatchEvent(new CustomEvent('seesound:factory-template-load-request', {
+                    detail: {
+                        id: String(template?.id || title).trim(),
+                        title,
+                        presetName: String(template?.presetName || '').trim(),
+                        presetPath: String(template?.presetPath || '').trim(),
+                        projectPath: String(template?.projectPath || '').trim(),
+                        demoAudioPath: String(template?.demoAudioPath || '').trim(),
+                    },
+                }))
+            })
+            templateGrid.appendChild(button)
+        }
     }
 
-    presetSelect.addEventListener('change', () => {
-        if (presetSelect.value) presetName.value = presetSelect.value
-    })
-
-    btnLoadPreset.addEventListener('click', async () => {
-        const name = String(presetSelect.value || '').trim()
-        if (!name) return
-        const data = await loadPreset(name)
-        if (data?.params) setMany(data.params)
-    })
-
-    btnUploadPreset.addEventListener('click', async () => {
-        const loaded = await openPresetFromLocalFile()
-        if (!loaded?.params || typeof loaded.params !== 'object') return
-        const nextName = String(loaded.name || '').trim()
-        setMany(loaded.params)
-        if (nextName) {
-            await savePreset(nextName, loaded.params)
-            await refreshPresets()
-            presetSelect.value = nextName
-            presetName.value = nextName
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    const loadFactoryTemplates = async () => {
+        templateStatus.textContent = UI_TEXT.file.templatesLoading || 'Loading templates...'
+        let templates = []
+        try {
+            const response = await fetch(TEMPLATE_MANIFEST_URL, { cache: 'no-store' })
+            if (response.ok) {
+                const parsed = await response.json()
+                if (Array.isArray(parsed?.templates)) templates = parsed.templates
+                else if (Array.isArray(parsed)) templates = parsed
+            }
+        } catch {
+            templates = []
         }
+        if (!templates.length) templates = FALLBACK_FACTORY_TEMPLATES
+        renderTemplateList(templates)
+    }
+
+    const recoveryToast = el('section', 'cp-recovery-toast is-hidden')
+    const recoveryTitle = el('div', 'cp-recovery-toast__title', {
+        text: UI_TEXT.file.recoveryTitle || 'Recover Project',
+    })
+    const recoveryText = el('div', 'cp-recovery-toast__text')
+    const recoveryActions = el('div', 'cp-recovery-toast__actions')
+    const btnRecoveryRestore = el('button', 'cp-btn', { text: UI_TEXT.file.recoveryRestore || 'Recover' })
+    const btnRecoveryDismiss = el('button', 'cp-btn', { text: UI_TEXT.file.recoveryDismiss || 'Dismiss' })
+    recoveryActions.append(btnRecoveryRestore, btnRecoveryDismiss)
+    recoveryToast.append(recoveryTitle, recoveryText, recoveryActions)
+
+    let pendingRecoveryDetail = null
+    const hideRecoveryToast = () => {
+        recoveryToast.classList.add('is-hidden')
+        pendingRecoveryDetail = null
+    }
+
+    window.addEventListener('seesound:project-recovery-available', (e) => {
+        pendingRecoveryDetail = e?.detail || {}
+        recoveryText.textContent = getRecoveryMessage(pendingRecoveryDetail)
+        recoveryToast.classList.remove('is-hidden')
     })
 
-    btnSavePresetProject.addEventListener('click', async () => {
-        const typed = String(presetName.value || '').trim()
-        const selected = String(presetSelect.value || '').trim()
-        const name = typed || selected
-        if (!name) return
-        const snapshot = getSnapshot()
-        window.dispatchEvent(new CustomEvent('seesound:project-preset-save-request', {
-            detail: {
-                name,
-                params: snapshot,
-            },
-        }))
-        await savePreset(name, snapshot)
-        await refreshPresets()
-        presetSelect.value = name
-        presetName.value = name
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    window.addEventListener('seesound:project-recovery-resolved', hideRecoveryToast)
+
+    btnRecoveryRestore.addEventListener('click', () => {
+        if (!pendingRecoveryDetail) return
+        window.dispatchEvent(new CustomEvent('seesound:project-recovery-restore'))
+    })
+    btnRecoveryDismiss.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-recovery-dismiss'))
     })
 
-    btnSavePresetLocal.addEventListener('click', async () => {
-        const typed = String(presetName.value || '').trim()
-        const selected = String(presetSelect.value || '').trim()
-        const name = typed || selected
-        if (!name) return
-        const didSave = await savePresetToLocalFile(name, getSnapshot())
-        if (!didSave) return
-        presetName.value = name
-    })
-
-    btnDeletePreset.addEventListener('click', async () => {
-        const name = String(presetSelect.value || '').trim()
-        if (!name) return
-        await deletePreset(name)
-        presetName.value = ''
-        await refreshPresets()
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-    })
-
-    window.addEventListener('seesound:preset-library-changed', () => {
-        refreshPresets()
-    })
-
-    const exportSection = el('section', 'cp-section')
-    exportSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.file.export }))
-    const exportActions = el('div', 'cp-button-grid')
-    const btnExportImage = el('button', 'cp-btn', { text: UI_TEXT.file.exportImage })
-    const btnExportImageNoBg = el('button', 'cp-btn', { text: UI_TEXT.file.exportImageNoBg })
-    const btnExportVideo = el('button', 'cp-btn', { text: UI_TEXT.file.exportVideo })
-    const btnExportObj = el('button', 'cp-btn', { text: UI_TEXT.file.exportObj })
-    applyButtonIcon(btnExportImage, BUTTON_ICON_MAP.exportImage, UI_TEXT.file.exportImage)
-    applyButtonIcon(btnExportImageNoBg, BUTTON_ICON_MAP.exportImageNoBg, UI_TEXT.file.exportImageNoBg)
-    applyButtonIcon(btnExportVideo, BUTTON_ICON_MAP.exportVideo, UI_TEXT.file.exportVideo)
-    applyButtonIcon(btnExportObj, BUTTON_ICON_MAP.exportObj, UI_TEXT.file.exportObj)
-    exportActions.append(btnExportImage, btnExportImageNoBg, btnExportVideo, btnExportObj)
-    exportSection.appendChild(exportActions)
-
-    btnExportImage.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-image')))
-    btnExportImageNoBg.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-image-no-bg')))
-    btnExportVideo.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-video-toggle')))
-    btnExportObj.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:export-obj')))
-
-    panel.append(projectSection, presetsSection, exportSection)
+    panel.append(projectSection, templatesSection, recoveryToast)
     body.appendChild(panel)
 
-    refreshPresets()
+    void loadFactoryTemplates()
 }
 
 function buildViewMenu(body, syncRegistry) {
@@ -2481,6 +2599,10 @@ function buildRulesMenu(body, syncRegistry) {
             draggingPill: null,
             dropMarker: null,
             editorEventsBound: false,
+            suppressNextBlurRerender: false,
+            pillContextMenu: null,
+            pillContextMenuTarget: null,
+            pillContextMenuEventsBound: false,
         }
     }
 
@@ -2500,6 +2622,8 @@ function buildRulesMenu(body, syncRegistry) {
         rowState.enumValue = rowState.definition.options?.[0] || 'square'
         rowState.activePill = null
         rowState.draggingPill = null
+        rowState.suppressNextBlurRerender = false
+        rowState.pillContextMenuTarget = null
         rowState.dropMarker?.remove()
         rowState.dropMarker = null
     }
@@ -2914,7 +3038,11 @@ function buildRulesMenu(body, syncRegistry) {
             })
 
             expressionInput.addEventListener('input', commitExpression)
-            expressionInput.addEventListener('blur', () => commitExpression({ rerender: true }))
+            expressionInput.addEventListener('blur', () => {
+                const shouldSuppress = !!rowState.suppressNextBlurRerender
+                rowState.suppressNextBlurRerender = false
+                commitExpression({ rerender: !shouldSuppress })
+            })
             expressionInput.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter') event.preventDefault()
                 if ((event.key === 'Backspace' || event.key === 'Delete') && replaceActiveSlotWithText(expressionInput, '')) {
@@ -3023,6 +3151,8 @@ function buildRulesMenu(body, syncRegistry) {
             const rowIdx = rows.indexOf(rowState)
             if (rowIdx >= 0) rows.splice(rowIdx, 1)
             rowState.card?.remove()
+            rowState.pillContextMenu?.remove()
+            rowState.pillContextMenu = null
             commitRuleBlocks()
         })
 
@@ -3294,7 +3424,7 @@ export function initControlPanel(container) {
         })
     }
 
-    buildFileMenu(menuPanes.get('file').body)
+    buildFileMenu(menuPanes.get('start').body)
     buildViewMenu(menuPanes.get('view').body, syncRegistry)
     buildSettingsMenu(menuPanes.get('settings').body, syncRegistry)
     buildRulesMenu(menuPanes.get('rules').body, syncRegistry)

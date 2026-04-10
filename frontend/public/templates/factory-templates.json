@@ -1,0 +1,39 @@
+{
+    "templates": [
+        {
+            "id": "holistic-3d",
+            "title": "Holistic 3d",
+            "presetPath": "/templates/presets/holistic-3d.json",
+            "presetName": "holistic 3d",
+            "thumbnail": "/templates/thumbnails/holistic-3d.svg"
+        },
+        {
+            "id": "linear-basic",
+            "title": "Linear Basic",
+            "presetPath": "/templates/presets/linear-basic.json",
+            "presetName": "linear basic",
+            "thumbnail": "/templates/thumbnails/linear-basic.svg"
+        },
+        {
+            "id": "linear-colors",
+            "title": "Linear Colors",
+            "presetPath": "/templates/presets/linear-colors.json",
+            "presetName": "linear colors",
+            "thumbnail": "/templates/thumbnails/linear-colors.svg"
+        },
+        {
+            "id": "linear-textured",
+            "title": "Textured Timbre Colors",
+            "presetPath": "/templates/presets/linear-textured.json",
+            "presetName": "textured timbre colors",
+            "thumbnail": "/templates/thumbnails/linear-textured.svg"
+        },
+        {
+            "id": "linear-timbre-colors",
+            "title": "Linear Timbre Colors",
+            "presetPath": "/templates/presets/linear-timbre-colors.json",
+            "presetName": "linear timbre colors",
+            "thumbnail": "/templates/thumbnails/linear-timbre-colors.svg"
+        }
+    ]
+}
