@@ -793,7 +793,7 @@ input[type=number]::-webkit-inner-spin-button {
     background: color-mix(in srgb, var(--color-bg) 80%, transparent);
     color: var(--color-text);
     text-align: left;
-    padding: var(--padding-s);
+    padding: 0 0 6px 0;
     cursor: pointer;
     transition: transform var(--transition-mid), filter var(--transition-mid);
 }
