@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
+import { ParticleArchive } from './ParticleArchive.js'
 
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
@@ -120,6 +121,7 @@ uniform float uViewportHeight;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vShapeType;
+varying float vFogDepth;
 
 void main() {
     vColor = color;
@@ -130,6 +132,7 @@ void main() {
     float clipW = max(1e-6, abs(clipPos.w));
     float pxPerWorld = 0.5 * uViewportHeight * projectionMatrix[1][1] / clipW;
     gl_PointSize = max(1.0, psize * pxPerWorld);
+    vFogDepth = -mvPosition.z;
     gl_Position = clipPos;
 }
 `
@@ -139,6 +142,10 @@ precision mediump float;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vShapeType;
+varying float vFogDepth;
+uniform float uFogEnabled;
+uniform float uFogDensity;
+uniform vec3 uFogColor;
 
 void main() {
     if (vShapeType > 0.5) {
@@ -149,7 +156,13 @@ void main() {
 
     float alpha = clamp(vAlpha, 0.0, 1.0);
     if (alpha <= 0.001) discard;
-    gl_FragColor = vec4(vColor, alpha);
+    vec3 color = vColor;
+    if (uFogEnabled > 0.5 && uFogDensity > 0.0) {
+        float fogFactor = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+        color = mix(color, uFogColor, fogFactor);
+    }
+    gl_FragColor = vec4(color, alpha);
 }
 `
 
@@ -169,8 +182,6 @@ export class ParticleSystem {
         this._visibleCount = 0
         this._paintCount = 0
         this._lineVisibleCount = 0
-        this._physicalVisibleCount = 0
-        this._physicalPaintCount = 0
 
         const geo = new THREE.BufferGeometry()
         const lineGeo = new THREE.BufferGeometry()
@@ -183,6 +194,9 @@ export class ParticleSystem {
             fragmentShader: POINT_FRAGMENT_SHADER,
             uniforms: {
                 uViewportHeight: { value: 1 },
+                uFogEnabled: { value: 0 },
+                uFogDensity: { value: 0 },
+                uFogColor: { value: new THREE.Color(0, 0, 0) },
             },
             transparent: true,
             depthWrite: true,
@@ -202,31 +216,6 @@ export class ParticleSystem {
         this._lineMesh.frustumCulled = false
         scene.add(this._mesh)
         scene.add(this._lineMesh)
-
-        this._physicalGeometry = new THREE.SphereGeometry(0.5, 16, 12)
-        this._physicalMaterial = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(1, 1, 1),
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 1,
-            roughness: 0.7,
-            metalness: 0.1,
-            emissive: new THREE.Color(0, 0, 0),
-            emissiveIntensity: 0,
-        })
-        this._physicalMesh = new THREE.InstancedMesh(this._physicalGeometry, this._physicalMaterial, this._N)
-        this._physicalMesh.count = 0
-        this._physicalMesh.frustumCulled = false
-        scene.add(this._physicalMesh)
-
-        this._physicalAmbientLight = new THREE.AmbientLight(0xffffff, 0.45)
-        this._physicalKeyLight = new THREE.DirectionalLight(0xffffff, 0.95)
-        this._physicalKeyLight.position.set(0.5, 0.8, 1.2)
-        scene.add(this._physicalAmbientLight)
-        scene.add(this._physicalKeyLight)
-
-        this._physicalDummy = new THREE.Object3D()
-        this._tmpInstanceColor = new THREE.Color()
         this._mat = mat
         this._lineMat = lineMat
         this._lastBlending = mat.blending
@@ -245,9 +234,8 @@ export class ParticleSystem {
         this._ruleCompileState = this._compiledRules
         this._frameCounter = 0
         this._lastUpdateT = performance.now()
-        this._archiveChunks = []
-        this._archivePointCount = 0
-        this._archiveOffloadBatch = Math.max(256, Math.floor(this._N * 0.1))
+        this._archive = new ParticleArchive()
+        this._archive.updateOffloadBatch(this._N)
     }
 
     _allocateBuffers(maxParticles) {
@@ -255,7 +243,7 @@ export class ParticleSystem {
         this._N = this._capacity
         this._maxActiveParticles = this._capacity
         this._insertIndex = 0
-        this._archiveOffloadBatch = Math.max(256, Math.floor(this._N * 0.1))
+        if (this._archive) this._archive.updateOffloadBatch(this._N)
         this._pos = new Float32Array(this._N * 3)
         this._col = new Float32Array(this._N * 3)
         this._sz = new Float32Array(this._N)
@@ -267,13 +255,6 @@ export class ParticleSystem {
         this._lineCol = new Float32Array(this._N * 2 * 3)
         this._lineThickness = new Float32Array(this._N)
         this._lineAlpha = new Float32Array(this._N)
-        this._physicalPos = new Float32Array(this._N * 3)
-        this._physicalSize = new Float32Array(this._N)
-        this._physicalCol = new Float32Array(this._N * 3)
-        this._physicalOpacity = new Float32Array(this._N)
-        this._physicalRoughness = new Float32Array(this._N)
-        this._physicalMetalness = new Float32Array(this._N)
-        this._physicalLuminosity = new Float32Array(this._N)
 
         this._aPos = new THREE.BufferAttribute(this._pos, 3)
         this._aCol = new THREE.BufferAttribute(this._col, 3)
@@ -293,14 +274,6 @@ export class ParticleSystem {
         this._geo.setAttribute('shapeType', this._aShape)
         this._lineGeo.setAttribute('position', this._aLinePos)
         this._lineGeo.setAttribute('color', this._aLineCol)
-
-        if (this._physicalMesh) {
-            this._scene.remove(this._physicalMesh)
-            this._physicalMesh = new THREE.InstancedMesh(this._physicalGeometry, this._physicalMaterial, this._N)
-            this._physicalMesh.count = 0
-            this._physicalMesh.frustumCulled = false
-            this._scene.add(this._physicalMesh)
-        }
 
         this.clear()
     }
@@ -360,119 +333,22 @@ export class ParticleSystem {
         this._markAttributeRange(this._aLineCol, min * 6, span * 6)
     }
 
-    _pruneArchive(params, nowSec) {
-        const maxArchivedPoints = Math.max(0, Math.floor(params?.archiveMaxPoints ?? 1500000))
-        const maxAgeSec = Math.max(0, Number(params?.archiveMaxAgeSec ?? 0))
-
-        while (this._archivePointCount > maxArchivedPoints && this._archiveChunks.length > 0) {
-            const drop = this._archiveChunks.shift()
-            this._archivePointCount -= drop.count
-        }
-
-        if (maxAgeSec > 0) {
-            while (this._archiveChunks.length > 0) {
-                const age = nowSec - this._archiveChunks[0].timestampSec
-                if (age <= maxAgeSec) break
-                const drop = this._archiveChunks.shift()
-                this._archivePointCount -= drop.count
-            }
-        }
-
-        if (this._archivePointCount < 0) this._archivePointCount = 0
-    }
-
-    _archiveAndCompactOldest(removeCount, activeCount, params, nowSec) {
-        const n = Math.max(0, Math.min(removeCount, activeCount))
-        if (n <= 0) return 0
-
-        const chunk = {
-            count: n,
-            timestampSec: nowSec,
-            pos: this._pos.slice(0, n * 3),
-            col: this._col.slice(0, n * 3),
-            sz: this._sz.slice(0, n),
-            alpha: this._alpha.slice(0, n),
-            shape: this._shape.slice(0, n),
-            pan: this._pan.slice(0, n),
-            binRms: this._binRms.slice(0, n),
-        }
-        this._archiveChunks.push(chunk)
-        this._archivePointCount += n
-        this._pruneArchive(params, nowSec)
-
-        const remain = activeCount - n
-        for (let i = 0; i < remain; i++) {
-            const src = i + n
-            this._pos[i * 3] = this._pos[src * 3]
-            this._pos[i * 3 + 1] = this._pos[src * 3 + 1]
-            this._pos[i * 3 + 2] = this._pos[src * 3 + 2]
-            this._col[i * 3] = this._col[src * 3]
-            this._col[i * 3 + 1] = this._col[src * 3 + 1]
-            this._col[i * 3 + 2] = this._col[src * 3 + 2]
-            this._sz[i] = this._sz[src]
-            this._alpha[i] = this._alpha[src]
-            this._shape[i] = this._shape[src]
-            this._pan[i] = this._pan[src]
-            this._binRms[i] = this._binRms[src]
-        }
-
-        return n
-    }
-
     rehydrateArchivedToActive(request = {}) {
-        if (this._archiveChunks.length === 0) return { rehydrated: 0, mode: request.mode ?? 'latest' }
-
-        const mode = request.mode === 'oldest' ? 'oldest' : 'latest'
-        const target = Math.max(0, Math.min(this._N, Math.floor(request.maxPoints ?? this._N)))
-        if (target <= 0) return { rehydrated: 0, mode }
-
-        let cursor = 0
-        if (mode === 'oldest') {
-            for (let c = 0; c < this._archiveChunks.length && cursor < target; c++) {
-                const chunk = this._archiveChunks[c]
-                const take = Math.min(chunk.count, target - cursor)
-                for (let i = 0; i < take; i++) {
-                    this._pos[(cursor + i) * 3] = chunk.pos[i * 3]
-                    this._pos[(cursor + i) * 3 + 1] = chunk.pos[i * 3 + 1]
-                    this._pos[(cursor + i) * 3 + 2] = chunk.pos[i * 3 + 2]
-                    this._col[(cursor + i) * 3] = chunk.col[i * 3]
-                    this._col[(cursor + i) * 3 + 1] = chunk.col[i * 3 + 1]
-                    this._col[(cursor + i) * 3 + 2] = chunk.col[i * 3 + 2]
-                    this._sz[cursor + i] = chunk.sz[i]
-                    this._alpha[cursor + i] = chunk.alpha[i]
-                    this._shape[cursor + i] = chunk.shape[i]
-                    this._pan[cursor + i] = chunk.pan ? chunk.pan[i] : 0
-                    this._binRms[cursor + i] = chunk.binRms ? chunk.binRms[i] : 0
-                }
-                cursor += take
-            }
-        } else {
-            for (let c = this._archiveChunks.length - 1; c >= 0 && cursor < target; c--) {
-                const chunk = this._archiveChunks[c]
-                const take = Math.min(chunk.count, target - cursor)
-                const start = chunk.count - take
-                for (let i = 0; i < take; i++) {
-                    const src = start + i
-                    this._pos[(target - cursor - take + i) * 3] = chunk.pos[src * 3]
-                    this._pos[(target - cursor - take + i) * 3 + 1] = chunk.pos[src * 3 + 1]
-                    this._pos[(target - cursor - take + i) * 3 + 2] = chunk.pos[src * 3 + 2]
-                    this._col[(target - cursor - take + i) * 3] = chunk.col[src * 3]
-                    this._col[(target - cursor - take + i) * 3 + 1] = chunk.col[src * 3 + 1]
-                    this._col[(target - cursor - take + i) * 3 + 2] = chunk.col[src * 3 + 2]
-                    this._sz[target - cursor - take + i] = chunk.sz[src]
-                    this._alpha[target - cursor - take + i] = chunk.alpha[src]
-                    this._shape[target - cursor - take + i] = chunk.shape[src]
-                    this._pan[target - cursor - take + i] = chunk.pan ? chunk.pan[src] : 0
-                    this._binRms[target - cursor - take + i] = chunk.binRms ? chunk.binRms[src] : 0
-                }
-                cursor += take
-            }
+        const buffers = {
+            pos: this._pos,
+            col: this._col,
+            sz: this._sz,
+            alpha: this._alpha,
+            shape: this._shape,
+            pan: this._pan,
+            binRms: this._binRms
         }
+        const { rehydrated, mode } = this._archive.rehydrateArchivedToActive(request, buffers, this._N)
 
-        this._paintCount = cursor
-        this._visibleCount = cursor
-        this._insertIndex = cursor % this._getActiveParticleCapacity()
-        this._geo.setDrawRange(0, cursor)
+        this._paintCount = rehydrated
+        this._visibleCount = rehydrated
+        this._insertIndex = rehydrated % this._getActiveParticleCapacity()
+        this._geo.setDrawRange(0, rehydrated)
         this._lineVisibleCount = 0
         this._lineGeo.setDrawRange(0, 0)
         this._aPos.needsUpdate = true
@@ -483,19 +359,25 @@ export class ParticleSystem {
         this._aLinePos.needsUpdate = true
         this._aLineCol.needsUpdate = true
 
-        return { rehydrated: cursor, mode }
+        return { rehydrated, mode }
     }
 
     getArchiveStats() {
         return {
             activePoints: this._visibleCount,
-            archivedPoints: this._archivePointCount,
-            archivedChunks: this._archiveChunks.length,
+            archivedPoints: this._archive.pointCount,
+            archivedChunks: this._archive.chunks.length,
         }
     }
 
     setMaxParticles(nextMax) {
         const wanted = Math.max(1, Math.floor(nextMax || 1))
+
+        // Allow increasing capacity at runtime; otherwise startup capacity becomes a hidden hard ceiling.
+        if (wanted > this._capacity) {
+            this._allocateBuffers(wanted)
+        }
+
         const clamped = Math.max(1, Math.min(this._capacity, wanted))
         if (clamped === this._maxActiveParticles) return
 
@@ -503,13 +385,10 @@ export class ParticleSystem {
         this._visibleCount = Math.min(this._visibleCount, clamped)
         this._paintCount = this._visibleCount
         this._lineVisibleCount = Math.min(this._lineVisibleCount, clamped)
-        this._physicalVisibleCount = Math.min(this._physicalVisibleCount, clamped)
-        this._physicalPaintCount = this._physicalVisibleCount
         this._insertIndex = this._visibleCount % clamped
 
         this._geo.setDrawRange(0, this._visibleCount)
         this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
-        if (this._physicalMesh) this._physicalMesh.count = this._physicalVisibleCount
     }
 
     clear() {
@@ -517,13 +396,9 @@ export class ParticleSystem {
         this._visibleCount = 0
         this._insertIndex = 0
         this._lineVisibleCount = 0
-        this._physicalPaintCount = 0
-        this._physicalVisibleCount = 0
-        this._archiveChunks = []
-        this._archivePointCount = 0
+        if (this._archive) this._archive.clear()
         this._geo.setDrawRange(0, 0)
         this._lineGeo.setDrawRange(0, 0)
-        if (this._physicalMesh) this._physicalMesh.count = 0
         this._aPos.needsUpdate = true
         this._aCol.needsUpdate = true
         this._aSz.needsUpdate = true
@@ -545,13 +420,7 @@ export class ParticleSystem {
             this._sz[i] = Math.max(0, this._sz[i] * r)
         }
 
-        for (const chunk of this._archiveChunks) {
-            const count = Math.max(0, Number(chunk?.count) || 0)
-            if (!chunk?.sz) continue
-            for (let i = 0; i < count; i++) {
-                chunk.sz[i] = Math.max(0, chunk.sz[i] * r)
-            }
-        }
+        if (this._archive) this._archive.scaleAllParticleSizes(ratio)
 
         this._aSz.needsUpdate = true
     }
@@ -560,6 +429,19 @@ export class ParticleSystem {
         const h = Math.max(1, Number(pxHeight) || 1)
         if (this._mat?.uniforms?.uViewportHeight) {
             this._mat.uniforms.uViewportHeight.value = h
+        }
+    }
+
+    setFogState({ enabled = false, density = 0, color = null } = {}) {
+        const fogEnabled = !!enabled
+        const fogDensity = Math.max(0, Number(density) || 0)
+        if (this._mat?.uniforms?.uFogEnabled) this._mat.uniforms.uFogEnabled.value = fogEnabled ? 1 : 0
+        if (this._mat?.uniforms?.uFogDensity) this._mat.uniforms.uFogDensity.value = fogDensity
+        if (this._mat?.uniforms?.uFogColor && color?.isColor) this._mat.uniforms.uFogColor.value.copy(color)
+
+        if (this._lineMat && this._lineMat.fog !== fogEnabled) {
+            this._lineMat.fog = fogEnabled
+            this._lineMat.needsUpdate = true
         }
     }
 
@@ -638,8 +520,7 @@ export class ParticleSystem {
 
     getVisibleBounds() {
         const n = Math.max(0, this._visibleCount)
-        const m = Math.max(0, this._physicalVisibleCount)
-        if (n === 0 && m === 0) {
+        if (n === 0) {
             return {
                 empty: true,
                 min: new THREE.Vector3(),
@@ -661,20 +542,6 @@ export class ParticleSystem {
             if (x > max.x) max.x = x
             if (y > max.y) max.y = y
             if (z > max.z) max.z = z
-        }
-
-        for (let i = 0; i < m; i++) {
-            const s = Math.max(0, this._physicalSize[i])
-            const r = s * 0.5
-            const x = this._physicalPos[i * 3]
-            const y = this._physicalPos[i * 3 + 1]
-            const z = this._physicalPos[i * 3 + 2]
-            if ((x - r) < min.x) min.x = x - r
-            if ((y - r) < min.y) min.y = y - r
-            if ((z - r) < min.z) min.z = z - r
-            if ((x + r) > max.x) max.x = x + r
-            if ((y + r) > max.y) max.y = y + r
-            if ((z + r) > max.z) max.z = z + r
         }
 
         const center = min.clone().add(max).multiplyScalar(0.5)
@@ -780,12 +647,6 @@ export class ParticleSystem {
         this._compiledRules.applyLineRules(ctx, lineState)
     }
 
-    applyPhysicalRules(ctx, particleState) {
-        // Legacy disabled: physical/sphere rule execution intentionally turned off.
-        void ctx
-        void particleState
-    }
-
     applyCameraRules(ctx, currentCamera) {
         const state = {
             x: currentCamera?.x ?? 0,
@@ -886,8 +747,6 @@ export class ParticleSystem {
         const rulesEnabled = params.ruleEngineEnabled !== false
         const emitLightParticles = rulesEnabled && this._compiledRules.spawnRuleCount > 0
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
-        // Legacy disabled: physical/sphere emission intentionally turned off.
-        const emitPhysicalParticles = false
 
         // Adjust Three.js blending mode
         if (!blendEnabled) {
@@ -1080,7 +939,6 @@ export class ParticleSystem {
             ? (this._insertIndex % activeParticleCapacity)
             : 0
         let lineWriteIndex = (persistMode === 1 && emitLines) ? Math.min(this._lineVisibleCount, activeParticleCapacity) : 0
-        let physicalWriteIndex = (persistMode === 1 && emitPhysicalParticles) ? Math.min(this._physicalPaintCount, activeParticleCapacity) : 0
         let wroteParticles = 0
 
         let pointDirtyMin = Number.POSITIVE_INFINITY
@@ -1370,120 +1228,6 @@ export class ParticleSystem {
             lineWriteIndex = lineSlotIndex + 1
         }
 
-        const writePhysical = (bucket) => {
-            if (!emitPhysicalParticles) return
-            if (physicalWriteIndex >= activeParticleCapacity) return
-
-            const hz = bucket.hz
-            const rawNorm = freqToLogNorm(hz)
-            const freqNorm = normalizeByRange(rawNorm, logNormMin, logNormMax)
-            const binPan = Number.isFinite(bucket.binPan) ? bucket.binPan : (ae.pan ?? 0)
-            const energy = Number.isFinite(bucket.energy) ? bucket.energy : 0
-            const binMagnitude = Number.isFinite(bucket.binMagnitude) ? bucket.binMagnitude : undefined
-            const binPhaseMetric = Number.isFinite(bucket.binPhase) ? bucket.binPhase : undefined
-            const binFluxMetric = Number.isFinite(bucket.binFlux) ? bucket.binFlux : undefined
-            const binPhaseDevMetric = Number.isFinite(bucket.binPhaseDeviation) ? bucket.binPhaseDeviation : undefined
-            const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
-            const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
-            const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
-
-            const y = (freqNorm * 2 - 1) * hh
-            const x = 0
-            const z = 0
-            const brightness = clamp01(energy)
-
-            const particle = {
-                x,
-                y,
-                z,
-                size: Math.max(1.0, 0.5 + energy * 1.5),
-                particleCount: 1,
-                red: brightness,
-                green: brightness,
-                blue: brightness,
-                luminosity: brightness * 0.2,
-                transparency: Math.max(0, 1 - clamp01(0.1 + energy * 1.25)),
-                roughness: 0.7,
-                metalness: 0.1,
-            }
-
-            if (emitPhysicalParticles) {
-                this.applyPhysicalRules({
-                    params,
-                    inputs: this._buildRuleInputs(ae, {
-                        frequencyHz: hz,
-                        normFreq: freqNorm,
-                        pan: binPan,
-                        spectralCentroid: frameBinInputs.spectralCentroid,
-                        spectralFlux: frameBinInputs.spectralFlux,
-                        spectralFlatness: frameBinInputs.spectralFlatness,
-                        inharmonicity: frameBinInputs.inharmonicity,
-                        peakAmplitude: frameBinInputs.peakAmplitude,
-                        zeroCrossingRate: frameBinInputs.zeroCrossingRate,
-                        spectralRolloff: frameBinInputs.spectralRolloff,
-                        spectralSpread: frameBinInputs.spectralSpread,
-                        spectralSkewness: frameBinInputs.spectralSkewness,
-                        chromagram: frameBinInputs.chromagram,
-                        binMagnitude,
-                        binPhase: binPhaseMetric,
-                        binFlux: binFluxMetric,
-                        binPhaseDeviation: binPhaseDevMetric,
-                        binAttackTime: binAttackTimeMetric,
-                        binEnvelope: binEnvelopeMetric,
-                        binEnvelopeState: binEnvelopeMetric,
-                        binRMSEnergy: binRmsMetric,
-                        globalRmsEnergy: frameBinInputs.globalRmsEnergy,
-                        amplitude: frameBinInputs.amplitude,
-                        time: currentTime,
-                        deltaTime,
-                        canvasWidthPx: canvasW,
-                        canvasHeightPx: canvasH,
-                        canvasWidthUnits: canvasUnitsW,
-                        canvasHeightUnits: canvasUnitsH,
-                        audioLengthSec,
-                    }),
-                }, particle)
-            }
-
-            const spawnProb = Number.isFinite(particle.particleCount) ? clamp01(particle.particleCount) : 0
-            if (spawnProb <= 0) return
-            if (spawnProb < 1 && Math.random() > spawnProb) return
-
-            this._physicalPos[physicalWriteIndex * 3] = Number.isFinite(particle.x) ? particle.x : x
-            this._physicalPos[physicalWriteIndex * 3 + 1] = Number.isFinite(particle.y) ? particle.y : y
-            this._physicalPos[physicalWriteIndex * 3 + 2] = Number.isFinite(particle.z) ? particle.z : z
-            const unscaledPhysicalSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
-            this._physicalSize[physicalWriteIndex] = unscaledPhysicalSize * sizeMultiplier
-
-            let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
-            let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
-            let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : brightness
-            if (this._compiledRules.usesPhysicalHsb) {
-                const baseHsv = rgbToHsv(nextR, nextG, nextB)
-                const hh = normalizeHue(particle.hue)
-                const ss = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : baseHsv.s
-                const vv = Number.isFinite(particle.brightness) ? clamp01(particle.brightness) : baseHsv.v
-                const rgb = hsvToRgb(hh ?? baseHsv.h, ss, vv)
-                nextR = rgb.r
-                nextG = rgb.g
-                nextB = rgb.b
-            }
-
-            const yellowRgb = applyYellowModifier(nextR, nextG, nextB, particle.yellow)
-            nextR = yellowRgb.r
-            nextG = yellowRgb.g
-            nextB = yellowRgb.b
-
-            this._physicalCol[physicalWriteIndex * 3] = nextR
-            this._physicalCol[physicalWriteIndex * 3 + 1] = nextG
-            this._physicalCol[physicalWriteIndex * 3 + 2] = nextB
-            this._physicalOpacity[physicalWriteIndex] = 1 - clamp01(Number(particle.transparency) || 0)
-            this._physicalRoughness[physicalWriteIndex] = clamp01(Number(particle.roughness) || 0)
-            this._physicalMetalness[physicalWriteIndex] = clamp01(Number(particle.metalness) || 0)
-            this._physicalLuminosity[physicalWriteIndex] = Math.max(0, Number(particle.luminosity) || 0)
-            physicalWriteIndex++
-        }
-
         const fftBinsPerHz = freqData.length / Math.max(1e-6, nyquist)
         // Log-frequency spacing from user range:
         // k = (freqMax/freqMin)^(1/N), where N = particlesByFrame.
@@ -1579,19 +1323,6 @@ export class ParticleSystem {
                 binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
                 binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
             })
-            writePhysical({
-                hz: hzCenter,
-                byte: peakByteBucket,
-                energy: bucketEnergy,
-                binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
-                binRMSEnergy: clamp01(avgRaw),
-                binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
-                binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
-                binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
-                binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
-                binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
-                binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-            })
             hzStart = hzEnd
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
         }
@@ -1610,9 +1341,7 @@ export class ParticleSystem {
 
             this._lineVisibleCount = Math.min(activeParticleCapacity, lineWriteIndex)
             this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
-            this._physicalPaintCount = Math.min(activeParticleCapacity, physicalWriteIndex)
-            this._physicalVisibleCount = this._physicalPaintCount
-            this._pruneArchive(params, currentTime)
+            if (this._archive) this._archive.prune(params, currentTime)
         } else {
             this._insertIndex = 0
             this._paintCount = 0
@@ -1620,55 +1349,6 @@ export class ParticleSystem {
             this._geo.setDrawRange(0, this._visibleCount)
             this._lineVisibleCount = Math.min(activeParticleCapacity, lineWriteIndex)
             this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
-            this._physicalPaintCount = 0
-            this._physicalVisibleCount = Math.min(activeParticleCapacity, physicalWriteIndex)
-        }
-
-        if (this._physicalMesh) {
-            const visible = Math.max(0, Math.min(this._N, this._physicalVisibleCount))
-            let avgRoughness = 0
-            let avgMetalness = 0
-            let avgLuminosity = 0
-            let avgOpacity = 0
-
-            for (let i = 0; i < visible; i++) {
-                const x = this._physicalPos[i * 3]
-                const y = this._physicalPos[i * 3 + 1]
-                const z = this._physicalPos[i * 3 + 2]
-                const size = Math.max(0, this._physicalSize[i])
-                this._physicalDummy.position.set(x, y, z)
-                this._physicalDummy.scale.set(size, size, size)
-                this._physicalDummy.rotation.set(0, 0, 0)
-                this._physicalDummy.updateMatrix()
-                this._physicalMesh.setMatrixAt(i, this._physicalDummy.matrix)
-
-                const r = clamp01(this._physicalCol[i * 3])
-                const g = clamp01(this._physicalCol[i * 3 + 1])
-                const b = clamp01(this._physicalCol[i * 3 + 2])
-                this._tmpInstanceColor.setRGB(r, g, b)
-                this._physicalMesh.setColorAt(i, this._tmpInstanceColor)
-
-                avgRoughness += this._physicalRoughness[i]
-                avgMetalness += this._physicalMetalness[i]
-                avgLuminosity += this._physicalLuminosity[i]
-                avgOpacity += this._physicalOpacity[i]
-            }
-
-            this._physicalMesh.count = visible
-            this._physicalMesh.instanceMatrix.needsUpdate = true
-            if (this._physicalMesh.instanceColor) this._physicalMesh.instanceColor.needsUpdate = true
-
-            if (visible > 0) {
-                const inv = 1 / visible
-                this._physicalMaterial.roughness = clamp01(avgRoughness * inv)
-                this._physicalMaterial.metalness = clamp01(avgMetalness * inv)
-                this._physicalMaterial.opacity = clamp01(avgOpacity * inv)
-                this._physicalMaterial.transparent = this._physicalMaterial.opacity < 0.999
-                const lum = Math.max(0, avgLuminosity * inv)
-                this._physicalMaterial.emissiveIntensity = lum
-                this._physicalMaterial.emissive.setScalar(Math.min(1, lum))
-            }
-            this._physicalMaterial.needsUpdate = true
         }
 
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visibleCount > 0

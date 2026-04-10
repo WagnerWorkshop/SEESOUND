@@ -21,7 +21,7 @@
             "exportProjectPackageOption": "Paquet projet (.sspp)",
             "exportImageOption": "Image (.png)",
             "exportImageNoBgOption": "Image transparente (.png)",
-            "exportObjOption": "Objet 3D (.obj)",
+            "exportObjOption": "Mesh 3D (.ply)",
             "exportSettingsJson": "Réglages (.json)",
             "exportHintProjectFile": "Projet avec tous les réglages",
             "exportHintProjectPackage": "Tous les réglages, règles et audio",
@@ -50,7 +50,7 @@
             "exportImage": "PNG",
             "exportImageNoBg": "PNG transparent",
             "exportVideo": "Vidéo",
-            "exportObj": "OBJ"
+            "exportObj": "PLY"
         },
         "view": {
             "canvasSize": "Taille du Canevas",

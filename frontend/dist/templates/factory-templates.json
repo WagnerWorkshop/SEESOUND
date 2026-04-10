@@ -22,6 +22,12 @@
             "thumbnail": "/templates/thumbnails/linear-colors.svg"
         },
         {
+            "id": "linear-spectrogram-particles",
+            "title": "Linear Spectrogram Particles",
+            "presetPath": "/templates/presets/linear-spectrogram-particles.json",
+            "presetName": "linear spectrogram particles"
+        },
+        {
             "id": "linear-textured",
             "title": "Textured Timbre Colors",
             "presetPath": "/templates/presets/linear-textured.json",

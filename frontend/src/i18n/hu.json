@@ -21,7 +21,7 @@
             "exportProjectPackageOption": "Projektcsomag (.sspp)",
             "exportImageOption": "Kép (.png)",
             "exportImageNoBgOption": "Átlátszó kép (.png)",
-            "exportObjOption": "3D objektum (.obj)",
+            "exportObjOption": "3D háló (.ply)",
             "exportSettingsJson": "Beállítások (.json)",
             "exportHintProjectFile": "Projektfájl minden beállíással",
             "exportHintProjectPackage": "Beállítások, szabályok és hangfájl",
@@ -50,7 +50,7 @@
             "exportImage": "PNG",
             "exportImageNoBg": "Átlátszó PNG",
             "exportVideo": "Videó",
-            "exportObj": "OBJ"
+            "exportObj": "PLY"
         },
         "view": {
             "canvasSize": "Vászon mérete",

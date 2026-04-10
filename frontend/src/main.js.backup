@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import {
     params,
     set,
@@ -46,10 +47,20 @@ import {
     buildProjectPackageBlob,
     triggerBlobDownload,
 } from './engine/project/ProjectIO.js'
-import { ExportManager } from './engine/project/ExportManager.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
-import { AudioEngine, snapFftSize } from './engine/audio/AudioEngine.js'
-import { CameraController } from './engine/renderer/CameraController.js'
+import {
+    computeSpectralCentroid,
+    computeSpectralFlux,
+    computeSpectralFlatness,
+    computeInharmonicity,
+    computePeakAmplitude,
+    computeZeroCrossingRate,
+    computeSpectralRolloff,
+    computeSpectralSpread,
+    computeSpectralSkewness,
+    computeChromagram,
+    normalizeCentroidHzToUnit,
+} from './engine/audio/AudioFeatures.js'
 import resetIcon from './icons/reset.svg?raw'
 import fitIcon from './icons/fit.svg?raw'
 import clearIcon from './icons/clear.svg?raw'
@@ -180,27 +191,6 @@ function syncPostProcessingFromParams() {
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
 }
 
-function syncFogFromParams(backgroundColor = null) {
-    const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
-    const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
-    const bg = (backgroundColor && backgroundColor.isColor) ? backgroundColor : ps.getBackgroundColor()
-
-    if (!fogEnabled || fogDensity <= 0) {
-        scene.fog = null
-        ps.setFogState({ enabled: false, density: 0, color: bg })
-        return
-    }
-
-    if (!(scene.fog instanceof THREE.FogExp2)) {
-        scene.fog = new THREE.FogExp2(bg.clone(), fogDensity)
-    } else {
-        scene.fog.color.copy(bg)
-        scene.fog.density = fogDensity
-    }
-
-    ps.setFogState({ enabled: true, density: fogDensity, color: bg })
-}
-
 function shouldUsePostProcessing() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     if (!postEnabled) return false
@@ -217,14 +207,25 @@ const orbitState = {
     azimuth: 0,
     elevation: 0,
 }
-let cameraController = null
 
 function syncOrbitFromCamera() {
-    cameraController?.syncOrbitFromCamera()
+    const x = camera.position.x - orbitTarget.x
+    const y = camera.position.y - orbitTarget.y
+    const z = camera.position.z - orbitTarget.z
+    const r = Math.max(0.001, Math.sqrt(x * x + y * y + z * z) || 1)
+    orbitState.radius = r
+    orbitState.azimuth = Math.atan2(x, z)
+    orbitState.elevation = Math.asin(Math.max(-1, Math.min(1, y / r)))
 }
 
 function applyOrbitToCamera() {
-    cameraController?.applyOrbitToCamera()
+    const ce = Math.cos(orbitState.elevation)
+    camera.position.set(
+        orbitTarget.x + orbitState.radius * ce * Math.sin(orbitState.azimuth),
+        orbitTarget.y + orbitState.radius * Math.sin(orbitState.elevation),
+        orbitTarget.z + orbitState.radius * ce * Math.cos(orbitState.azimuth),
+    )
+    camera.lookAt(orbitTarget)
 }
 
 function _axoAnglesForPreset(presetName) {
@@ -291,6 +292,8 @@ function applyAxoPresetFromParams(forceDefaultRadius = false) {
     applyOrbitToCamera()
     syncOrbitFromCamera()
 }
+
+syncOrbitFromCamera()
 
 const pointerState = {
     active: false,
@@ -378,7 +381,7 @@ navZoomInBtn.addEventListener('click', () => bumpCanvasScale(10))
 
 const navZoomOutBtn = document.createElement('button')
 navZoomOutBtn.type = 'button'
-navZoomOutBtn.className = 'canvas-nav-actions__btn cp-btn'
+navZoomOutBtn.className = 'canvas-nav-actions__btn canvas-nav-actions__btn--conditional cp-btn'
 navZoomOutBtn.title = getCanvasNavText('zoomOutTooltip', 'Decrease canvas zoom')
 applyNavButtonIcon(navZoomOutBtn, magnifierMinusIcon, getCanvasNavText('zoomOut', 'Zoom Out'))
 navZoomOutBtn.addEventListener('click', () => bumpCanvasScale(-10))
@@ -388,8 +391,15 @@ const navHost = document.getElementById('app') || document.body
 if (navHost) navHost.appendChild(navActions)
 
 function updateZoomButtonsVisibility() {
-    const currentScale = Math.max(5, Math.min(2000, Math.floor(Number(params.canvasScale) || 100)))
-    navZoomOutBtn.disabled = currentScale <= 5
+    const ww = wrapper.clientWidth
+    const wh = wrapper.clientHeight
+    const cw = col.clientWidth
+    const ch = col.clientHeight
+
+    // Show Zoom Out only when the canvas is effectively maxed out in both axes.
+    const isLarge = (ww >= cw * 0.95) && (wh >= ch * 0.95)
+    navZoomOutBtn.classList.toggle('is-visible', isLarge)
+    navZoomOutBtn.disabled = !isLarge
 }
 window.addEventListener('resize', updateZoomButtonsVisibility)
 updateZoomButtonsVisibility()
@@ -398,21 +408,226 @@ function updateWrapperTransform() {
     wrapper.style.transform = `translate(${wrapperState.offsetX}px, ${wrapperState.offsetY}px) scale(${wrapperState.scale})`
 }
 
-cameraController = new CameraController({
-    getCamera: () => camera,
-    orbitTarget,
-    orbitState,
-    renderer,
-    col,
-    canvas,
-    wrapper,
-    pointerState,
-    wrapperState,
-    updateWrapperTransform,
-    setCanvasScale: (value) => set('canvasScale', value),
+canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+
+function handlePointerMove(dx, dy, button) {
+    if (button === 0) {
+        orbitState.azimuth -= dx * 0.006
+        orbitState.elevation = Math.max(
+            -Math.PI * 0.49,
+            Math.min(Math.PI * 0.49, orbitState.elevation - dy * 0.005),
+        )
+        applyOrbitToCamera()
+    } else if (button === 1) {
+        const viewH = Math.max(1, renderer.domElement.clientHeight || col.clientHeight || window.innerHeight)
+        const right = new THREE.Vector3()
+        const up = new THREE.Vector3()
+        const delta = new THREE.Vector3()
+
+        camera.updateMatrixWorld()
+        const m = camera.matrixWorld.elements
+        right.set(m[0], m[1], m[2]).normalize()
+        up.set(m[4], m[5], m[6]).normalize()
+
+        let unitsPerPixel = 0.01
+        if (camera.isOrthographicCamera) {
+            unitsPerPixel = (camera.top - camera.bottom) / (Math.max(0.01, camera.zoom) * viewH)
+        } else {
+            const dist = Math.max(0.001, camera.position.distanceTo(orbitTarget))
+            const fovRad = THREE.MathUtils.degToRad(camera.fov)
+            unitsPerPixel = (2 * Math.tan(fovRad * 0.5) * dist) / viewH
+            unitsPerPixel /= Math.max(0.01, camera.zoom)
+        }
+
+        delta.copy(right).multiplyScalar(-dx * unitsPerPixel)
+        delta.addScaledVector(up, dy * unitsPerPixel)
+        camera.position.add(delta)
+        orbitTarget.add(delta)
+        syncOrbitFromCamera()
+    } else if (button === 2) {
+        const yaw = -dx * 0.004
+        const pitch = -dy * 0.004
+        camera.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), yaw)
+        camera.rotateX(pitch)
+    }
+}
+
+function handleZoom(deltaY) {
+    if (camera.isPerspectiveCamera) {
+        const dir = new THREE.Vector3()
+        camera.getWorldDirection(dir)
+        const speed = Math.max(2, orbitState.radius * 0.08)
+        const step = (deltaY > 0 ? 1 : -1) * speed
+        camera.position.addScaledVector(dir, step)
+        syncOrbitFromCamera()
+    } else {
+        const factor = deltaY > 0 ? 0.92 : 1.08
+        camera.zoom = Math.max(0.05, Math.min(64, camera.zoom * factor))
+        camera.updateProjectionMatrix()
+    }
+}
+
+col.addEventListener('mousedown', (e) => {
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
+    if (e.button !== 0) return
+    wrapperState.active = true
+    wrapperState.lastX = e.clientX
+    wrapperState.lastY = e.clientY
+    e.preventDefault()
 })
-cameraController.bindEvents()
-syncOrbitFromCamera()
+
+col.addEventListener('touchstart', (e) => {
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
+    if (e.touches.length === 1) {
+        wrapperState.active = true
+        wrapperState.lastX = e.touches[0].clientX
+        wrapperState.lastY = e.touches[0].clientY
+    } else if (e.touches.length === 2) {
+        wrapperState.active = true
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        wrapperState.pinchDistance = Math.sqrt(dx * dx + dy * dy)
+    }
+}, { passive: false })
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
+    pointerState.active = true
+    pointerState.button = e.button
+    pointerState.lastX = e.clientX
+    pointerState.lastY = e.clientY
+    e.preventDefault()
+})
+
+canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+        pointerState.active = true
+        pointerState.button = 0 // Orbit
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+    } else if (e.touches.length === 2) {
+        pointerState.active = true
+        pointerState.button = 1 // Pan + Zoom
+        pointerState.lastX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        pointerState.lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        pointerState.pinchDistance = Math.sqrt(dx * dx + dy * dy)
+    }
+    if (e.cancelable) e.preventDefault()
+}, { passive: false })
+
+window.addEventListener('mouseup', () => {
+    pointerState.active = false
+    pointerState.button = -1
+    wrapperState.active = false
+})
+
+window.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+        pointerState.active = false
+        pointerState.button = -1
+        wrapperState.active = false
+    } else if (e.touches.length === 1) {
+        pointerState.button = 0
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+    }
+})
+
+window.addEventListener('mousemove', (e) => {
+    if (wrapperState.active) {
+        const dx = e.clientX - wrapperState.lastX
+        const dy = e.clientY - wrapperState.lastY
+        wrapperState.lastX = e.clientX
+        wrapperState.lastY = e.clientY
+        wrapperState.offsetX += dx
+        wrapperState.offsetY += dy
+        updateWrapperTransform()
+        return
+    }
+
+    if (!pointerState.active) return
+    const dx = e.clientX - pointerState.lastX
+    const dy = e.clientY - pointerState.lastY
+    pointerState.lastX = e.clientX
+    pointerState.lastY = e.clientY
+    handlePointerMove(dx, dy, pointerState.button)
+})
+
+window.addEventListener('touchmove', (e) => {
+    if (wrapperState.active) {
+        if (e.cancelable) e.preventDefault()
+
+        if (e.touches.length === 1) {
+            const dx = e.touches[0].clientX - wrapperState.lastX
+            const dy = e.touches[0].clientY - wrapperState.lastY
+            wrapperState.lastX = e.touches[0].clientX
+            wrapperState.lastY = e.touches[0].clientY
+            wrapperState.offsetX += dx
+            wrapperState.offsetY += dy
+            updateWrapperTransform()
+        } else if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX
+            const dy = e.touches[0].clientY - e.touches[1].clientY
+            const distance = Math.sqrt(dx * dx + dy * dy)
+
+            if (wrapperState.pinchDistance > 0) {
+                const scaleDiff = (distance - wrapperState.pinchDistance) * 0.005
+                const newScale = Math.max(0.05, Math.min(20, wrapperState.scale + scaleDiff))
+                set('canvasScale', Math.round(newScale * 100))
+            }
+            wrapperState.pinchDistance = distance
+        }
+        return
+    }
+
+    if (!pointerState.active) return
+    if (e.cancelable) e.preventDefault()
+
+    if (e.touches.length === 1 && pointerState.button === 0) {
+        const dx = e.touches[0].clientX - pointerState.lastX
+        const dy = e.touches[0].clientY - pointerState.lastY
+        pointerState.lastX = e.touches[0].clientX
+        pointerState.lastY = e.touches[0].clientY
+        handlePointerMove(dx, dy, 0)
+    } else if (e.touches.length === 2 && pointerState.button === 1) {
+        const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+
+        const dxPinch = e.touches[0].clientX - e.touches[1].clientX
+        const dyPinch = e.touches[0].clientY - e.touches[1].clientY
+        const currentPinch = Math.sqrt(dxPinch * dxPinch + dyPinch * dyPinch)
+
+        const dxPan = currentX - pointerState.lastX
+        const dyPan = currentY - pointerState.lastY
+        handlePointerMove(dxPan, dyPan, 1)
+
+        const pinchDelta = pointerState.pinchDistance - currentPinch
+        if (Math.abs(pinchDelta) > 1) {
+            handleZoom(pinchDelta * 0.75) // Apply zoom step mapped from pinch
+            pointerState.pinchDistance = currentPinch
+        }
+
+        pointerState.lastX = currentX
+        pointerState.lastY = currentY
+    }
+}, { passive: false })
+
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    handleZoom(e.deltaY)
+}, { passive: false })
+
+col.addEventListener('wheel', (e) => {
+    if (e.target === canvas || wrapper.contains(e.target) && e.target !== col) return
+    e.preventDefault()
+    const scaleSpeed = 0.001
+    const delta = -e.deltaY * scaleSpeed
+    const newScale = Math.max(0.05, Math.min(20, wrapperState.scale + delta))
+    set('canvasScale', Math.round(newScale * 100))
+}, { passive: false })
 
 function applyRuleCameraOutput(output) {
     if (!output) return
@@ -583,12 +798,12 @@ syncPostProcessingFromParams()
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
 const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
-syncFogFromParams(ps.getBackgroundColor())
 
 function _collectUsedRuleInputs(requiredInputsByTarget = null) {
     return new Set([
         ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.physicalParticles) ? requiredInputsByTarget.physicalParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
         ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
     ])
@@ -757,9 +972,27 @@ function _normalizeByRange(value, minValue, maxValue) {
     return Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
 }
 
+const _ALLOWED_FFT_SIZES = Object.freeze([1024, 2048, 4096, 8192, 16384])
+
+function _snapFftSize(value) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return 2048
+    let best = _ALLOWED_FFT_SIZES[0]
+    let bestDist = Math.abs(n - best)
+    for (let i = 1; i < _ALLOWED_FFT_SIZES.length; i++) {
+        const candidate = _ALLOWED_FFT_SIZES[i]
+        const dist = Math.abs(n - candidate)
+        if (dist < bestDist) {
+            best = candidate
+            bestDist = dist
+        }
+    }
+    return best
+}
+
 function _buildBackendAudioAnalysisConfig(snapshot = {}, requiredInputsByTarget = null) {
     const usage = _deriveAudioUsage(requiredInputsByTarget)
-    const fftSize = snapFftSize(snapshot.fftSize)
+    const fftSize = _snapFftSize(snapshot.fftSize)
     return {
         sample_rate: 44100,
         fft_size: fftSize,
@@ -793,11 +1026,424 @@ window.addEventListener('seesound:particle-size-apply-all', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // § 3  AUDIO ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
-const ae = new AudioEngine({
-    initialFftSize: params.fftSize,
-    snapFftSizeFn: snapFftSize,
-    deriveAudioUsage: _deriveAudioUsage,
-})
+
+class AudioEngine {
+    constructor() {
+        this.ctx = null; this.analyser = null; this.source = null
+        this.outputGain = null
+        this.streamSource = null; this.streamNode = null
+        this.audioEl = null; this.splitter = null
+        this.analyserL = null; this.analyserR = null
+        this.binAnalysisNode = null
+        this._workletConnected = false
+        this._workletReady = false
+        this._workletLoadPromise = null
+        this._workletConfig = {
+            enabled: false,
+            needMagnitude: false,
+            needFlux: false,
+            needPhaseDeviation: false,
+            needPhase: false,
+            needEnvelope: false,
+            needAttackTime: false,
+            attackThreshold: 0.0005,
+            sustainFluxEps: 0.004,
+            sustainMagThreshold: 0.08,
+            decayThreshold: 0.008,
+        }
+        this._calcUsage = {
+            needRms: true,
+            needSpectralCentroid: false,
+            needGlobalSpectralFlux: false,
+            needSpectralFlatness: false,
+            needInharmonicity: false,
+            needPeakAmplitude: false,
+            needZeroCrossingRate: false,
+            needSpectralRolloff: false,
+            needSpectralSpread: false,
+            needSpectralSkewness: false,
+            needChromagram: false,
+        }
+
+        this.FFT_SIZE = _snapFftSize(params.fftSize)
+        this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this.timeDomainData = new Uint8Array(this.FFT_SIZE)
+        this._freqL = new Uint8Array(128)
+        this._freqR = new Uint8Array(128)
+        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+        this._binMagnitude = null
+        this._binFlux = null
+        this._binPhaseDeviation = null
+        this._binPhase = null
+        this._binEnvelope = null
+        this._binAttackTime = null
+        this.featureSmoothingAlpha = 0.2
+
+        this.bass = 0; this.mid = 0; this.high = 0
+        this.amplitude = 0; this.peakFreq = 0; this.peakByte = 0; this.pan = 0
+        this.rmsDbfs = -96
+        this.spectralCentroidHz = 0
+        this.spectralFluxAU = 0
+        this.spectralFlatnessRatio = 0
+        this.spectralCentroid = 0
+        this.spectralFlux = 0
+        this.spectralFlatness = 0
+        this.inharmonicity = 0
+        this.peakAmplitude = 0
+        this.zeroCrossingRate = 0
+        this.spectralRolloff = 0
+        this.spectralSpread = 0
+        this.spectralSkewness = 0
+        this.chromagram = 0
+        this.ctxState = 'none'
+        this.monitorMuted = false
+    }
+
+    _createBinAnalysisNode() {
+        if (!this.ctx) return null
+        const node = new AudioWorkletNode(this.ctx, 'bin-analysis-processor', {
+            numberOfInputs: 1,
+            numberOfOutputs: 0,
+            processorOptions: {
+                fftSize: this.FFT_SIZE,
+                hopSize: Math.floor(this.FFT_SIZE / 4),
+            },
+        })
+        node.port.onmessage = (event) => {
+            const msg = event.data || {}
+            if (msg.type !== 'binMetrics') return
+            if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
+            if (msg.flux) this._binFlux = new Float32Array(msg.flux)
+            if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
+            if (msg.phase) this._binPhase = new Float32Array(msg.phase)
+            if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
+            if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+        }
+        return node
+    }
+
+    _ensureWorkletLoaded() {
+        if (!this.ctx || this._workletReady) return
+        if (!this._workletLoadPromise) {
+            const moduleUrl = new URL('./engine/audio/BinAnalysisWorklet.js', import.meta.url)
+            this._workletLoadPromise = this.ctx.audioWorklet.addModule(moduleUrl)
+                .then(() => {
+                    this.binAnalysisNode = this._createBinAnalysisNode()
+                    this._workletReady = true
+                    this._connectSourceToWorklet()
+                    this._postWorkletConfig()
+                })
+                .catch((err) => {
+                    console.warn('[AudioWorklet] Failed to load bin analysis worklet:', err)
+                })
+        }
+    }
+
+    _postWorkletConfig() {
+        if (!this.binAnalysisNode) return
+        this.binAnalysisNode.port.postMessage({
+            type: 'config',
+            config: this._workletConfig,
+        })
+    }
+
+    _connectSourceToWorklet() {
+        if (!this.binAnalysisNode) return false
+        const srcNode = this.source || this.streamSource
+        if (!srcNode) return false
+        if (this._workletConnected) return true
+        try {
+            srcNode.connect(this.binAnalysisNode)
+            this._workletConnected = true
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    setRuleInputUsage(requiredInputsByTarget = null) {
+        const usage = _deriveAudioUsage(requiredInputsByTarget)
+        this._workletConfig.enabled = usage.worklet.enabled
+        this._workletConfig.needMagnitude = usage.worklet.needMagnitude
+        this._workletConfig.needFlux = usage.worklet.needFlux
+        this._workletConfig.needPhaseDeviation = usage.worklet.needPhaseDeviation
+        this._workletConfig.needPhase = usage.worklet.needPhase
+        this._workletConfig.needEnvelope = usage.worklet.needEnvelope
+        this._workletConfig.needAttackTime = usage.worklet.needAttackTime
+        this._calcUsage = usage.engine
+        this._postWorkletConfig()
+    }
+
+    setFftSize(nextValue) {
+        const nextSize = _snapFftSize(nextValue)
+        if (nextSize === this.FFT_SIZE) return
+        this.FFT_SIZE = nextSize
+        this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this.timeDomainData = new Uint8Array(this.FFT_SIZE)
+        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+        this._binMagnitude = null
+        this._binFlux = null
+        this._binPhaseDeviation = null
+        this._binPhase = null
+        this._binEnvelope = null
+        this._binAttackTime = null
+
+        if (this.analyser) {
+            this.analyser.fftSize = this.FFT_SIZE
+            this.analyser.smoothingTimeConstant = 0
+            this.analyser.minDecibels = -140
+        }
+
+        if (this.binAnalysisNode) {
+            try {
+                this.source?.disconnect(this.binAnalysisNode)
+            } catch { }
+            try {
+                this.streamSource?.disconnect(this.binAnalysisNode)
+            } catch { }
+            try {
+                this.binAnalysisNode.disconnect()
+            } catch { }
+            this.binAnalysisNode = null
+            this._workletConnected = false
+        }
+
+        if (this.ctx && this._workletReady) {
+            this.binAnalysisNode = this._createBinAnalysisNode()
+            this._connectSourceToWorklet()
+            this._postWorkletConfig()
+        }
+    }
+
+    init(el) {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)()
+            this.analyser = this.ctx.createAnalyser()
+            this.analyser.fftSize = this.FFT_SIZE
+            this.analyser.smoothingTimeConstant = 0
+            this.analyser.minDecibels = -140
+            this.outputGain = this.ctx.createGain()
+            this.outputGain.gain.value = this.monitorMuted ? 0 : 1
+            this.analyser.connect(this.outputGain)
+            this.outputGain.connect(this.ctx.destination)
+            this._ensureWorkletLoaded()
+        }
+        if (this.audioEl !== el || (!this.source && !this.streamSource)) {
+            this.source?.disconnect()
+            this.streamSource?.disconnect()
+            this.splitter?.disconnect()
+            this.analyserL?.disconnect()
+            this.analyserR?.disconnect()
+            this.audioEl = el
+            this.source = null
+            this.streamSource = null
+            this.streamNode = null
+            this._workletConnected = false
+
+            try {
+                this.source = this.ctx.createMediaElementSource(el)
+                this.source.connect(this.analyser)
+            } catch {
+                // Fallback path for environments where MediaElementSource creation
+                // fails (e.g. stale node bindings after hot reload).
+                const stream = (el.captureStream?.() || el.mozCaptureStream?.())
+                if (stream) {
+                    this.streamNode = stream
+                    this.streamSource = this.ctx.createMediaStreamSource(stream)
+                    this.streamSource.connect(this.analyser)
+                }
+            }
+            // Stereo splitter for per-channel pan data
+            try {
+                this.splitter = this.ctx.createChannelSplitter(2)
+                this.analyserL = this.ctx.createAnalyser()
+                this.analyserR = this.ctx.createAnalyser()
+                for (const a of [this.analyserL, this.analyserR]) {
+                    a.fftSize = 256
+                    a.minDecibels = -140
+                }
+                const srcNode = this.source || this.streamSource
+                srcNode?.connect(this.splitter)
+                this.splitter.connect(this.analyserL, 0)
+                this.splitter.connect(this.analyserR, 1)
+                this._connectSourceToWorklet()
+            } catch { /* mono */ }
+
+            // Ensure worklet receives source even if splitter setup fails.
+            this._connectSourceToWorklet()
+        }
+        if (this.ctx.state === 'suspended') this.ctx.resume()
+        this.ctxState = this.ctx.state
+    }
+
+    setMonitorMuted(muted) {
+        this.monitorMuted = !!muted
+        if (!this.outputGain) return
+        const next = this.monitorMuted ? 0 : 1
+        try {
+            this.outputGain.gain.setValueAtTime(next, this.ctx?.currentTime ?? 0)
+        } catch {
+            this.outputGain.gain.value = next
+        }
+    }
+
+    update() {
+        if (!this.analyser) return
+        if (this.ctx?.state === 'suspended' && this.audioEl && !this.audioEl.paused) {
+            this.ctx.resume()
+        }
+        this.ctxState = this.ctx?.state ?? 'none'
+        this.analyser.getByteFrequencyData(this.frequencyData)
+        this.analyser.getByteTimeDomainData(this.timeDomainData)
+
+        const bc = this.frequencyData.length
+        const sr = this.ctx?.sampleRate ?? 44100
+        const nyq = sr / 2
+        const hz = (b) => (b / bc) * nyq
+
+        let bS = 0, bC = 0, mS = 0, mC = 0, hS = 0, hC = 0, peak = 0, pb = 0
+        for (let i = 0; i < bc; i++) {
+            const v = this.frequencyData[i], f = hz(i)
+            if (f < 250) { bS += v; bC++ } else if (f < 4000) { mS += v; mC++ } else { hS += v; hC++ }
+            if (v > peak) { peak = v; pb = i }
+        }
+        this.bass = bC ? bS / bC / 255 : 0
+        this.mid = mC ? mS / mC / 255 : 0
+        this.high = hC ? hS / hC / 255 : 0
+        this.peakFreq = Math.round(hz(pb))
+        this.peakByte = peak
+
+        const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
+        const needsCentroidFrame = this._calcUsage.needSpectralCentroid || this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness
+        const frameCentroidHz = needsCentroidFrame ? computeSpectralCentroid(this.frequencyData, sr) : 0
+        if (this._calcUsage.needSpectralCentroid) {
+            this.spectralCentroidHz += (frameCentroidHz - this.spectralCentroidHz) * alpha
+            this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
+        } else {
+            this.spectralCentroidHz = 0
+            this.spectralCentroid = 0
+        }
+
+        if (this._calcUsage.needGlobalSpectralFlux) {
+            const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
+            const fluxAu = fluxNorm * 100
+            this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
+            this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
+        } else {
+            this.spectralFluxAU = 0
+            this.spectralFlux = 0
+        }
+
+        if (this._calcUsage.needSpectralFlatness) {
+            const flatnessNorm = computeSpectralFlatness(this.frequencyData)
+            this.spectralFlatnessRatio += (flatnessNorm - this.spectralFlatnessRatio) * alpha
+            this.spectralFlatness = Math.max(0, Math.min(1, this.spectralFlatnessRatio))
+        } else {
+            this.spectralFlatnessRatio = 0
+            this.spectralFlatness = 0
+        }
+
+        if (this._calcUsage.needInharmonicity) {
+            const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
+            this.inharmonicity += (inharmonicityNorm - this.inharmonicity) * alpha
+        } else {
+            this.inharmonicity = 0
+        }
+
+        if (this._calcUsage.needPeakAmplitude) {
+            this.peakAmplitude += (computePeakAmplitude(this.frequencyData) - this.peakAmplitude) * alpha
+        } else {
+            this.peakAmplitude = 0
+        }
+
+        if (this._calcUsage.needZeroCrossingRate) {
+            this.zeroCrossingRate += (computeZeroCrossingRate(this.timeDomainData) - this.zeroCrossingRate) * alpha
+        } else {
+            this.zeroCrossingRate = 0
+        }
+
+        if (this._calcUsage.needSpectralRolloff) {
+            this.spectralRolloff += (computeSpectralRolloff(this.frequencyData, sr, 0.85) - this.spectralRolloff) * alpha
+        } else {
+            this.spectralRolloff = 0
+        }
+
+        if (this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness) {
+            const spread = computeSpectralSpread(this.frequencyData, sr, frameCentroidHz)
+            if (this._calcUsage.needSpectralSpread) this.spectralSpread += (spread - this.spectralSpread) * alpha
+            else this.spectralSpread = 0
+            if (this._calcUsage.needSpectralSkewness) {
+                const skew = computeSpectralSkewness(this.frequencyData, sr, frameCentroidHz, spread)
+                this.spectralSkewness += (skew - this.spectralSkewness) * alpha
+            } else {
+                this.spectralSkewness = 0
+            }
+        } else {
+            this.spectralSpread = 0
+            this.spectralSkewness = 0
+        }
+
+        if (this._calcUsage.needChromagram) {
+            this.chromagram += (computeChromagram(this.frequencyData, sr) - this.chromagram) * alpha
+        } else {
+            this.chromagram = 0
+        }
+
+        // Keep an isolated copy of the current FFT frame for next-frame deltas.
+        this._prevFrequencyDataBins.set(this.frequencyData)
+
+        let sq = 0; for (const b of this.timeDomainData) sq += ((b - 128) / 128) ** 2
+        this.amplitude = Math.sqrt(sq / this.timeDomainData.length)
+        this.rmsDbfs = 20 * Math.log10(Math.max(1e-6, this.amplitude))
+
+        if (this.analyserL && this.analyserR) {
+            this.analyserL.getByteFrequencyData(this._freqL)
+            this.analyserR.getByteFrequencyData(this._freqR)
+            let sL = 0, sR = 0
+            for (let j = 0; j < this._freqL.length; j++) { sL += this._freqL[j]; sR += this._freqR[j] }
+            this.pan = (sR - sL) / (sL + sR + 1)
+        }
+    }
+
+    /** Per-bin stereo pan estimate from L/R FFT data */
+    getBinPan(bin) {
+        if (!this.analyserL || !this.analyserR) return this.pan
+        const i = Math.min(bin, this._freqL.length - 1)
+        const l = this._freqL[i], r = this._freqR[i]
+        return (r - l) / (l + r + 1)
+    }
+
+    /** Previous-frame FFT magnitudes for bin-local delta features (read-only). */
+    getPrevFrequencyData() {
+        return this._prevFrequencyDataBins
+    }
+
+    getBinMagnitude() {
+        return this._binMagnitude
+    }
+
+    getBinFlux() {
+        return this._binFlux
+    }
+
+    getBinPhaseDeviation() {
+        return this._binPhaseDeviation
+    }
+
+    getBinPhase() {
+        return this._binPhase
+    }
+
+    getBinEnvelope() {
+        return this._binEnvelope
+    }
+
+    getBinAttackTime() {
+        return this._binAttackTime
+    }
+}
+
+const ae = new AudioEngine()
 ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -875,6 +1521,11 @@ let isPlaying = false
 let frameN = 0
 let monitorMuted = false
 let _currentAudioFileName = ''
+let _mediaRecorder = null
+let _recordingStream = null
+let _recordedChunks = []
+let _recordingAudioCleanup = null
+let _recordingEndedHandler = null
 let _lastPerformanceDropSignalTs = 0
 
 const platformConfig = {
@@ -956,22 +1607,6 @@ function _currentAudioTitle() {
     return 'audio'
 }
 
-const exportManager = new ExportManager({
-    getCamera: () => camera,
-    renderer,
-    canvas,
-    scene,
-    ps,
-    params,
-    platformConfig,
-    emitToPlatform: _emitToPlatform,
-    ae,
-    triggerBlobDownload,
-    shouldUsePostProcessing,
-    getCurrentAudioTitle: _currentAudioTitle,
-    sanitizeFilePart: _sanitizeFilePart,
-})
-
 function _defaultProjectName() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
@@ -992,11 +1627,143 @@ function getDefaultProjectDefinition() {
 }
 
 async function saveCanvasPng({ transparent = false } = {}) {
-    return exportManager.saveCanvasPng({ transparent })
+    const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+    const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+    const defaultPngName = transparent
+        ? `${audioTitle} - ${presetTitle} - transparent.png`
+        : `${audioTitle} - ${presetTitle}.png`
+    const rawRequestedW = Math.max(1, Math.floor(Number(params.canvasWidth) || (renderer.domElement.width / Math.max(1, window.devicePixelRatio))))
+    const rawRequestedH = Math.max(1, Math.floor(Number(params.canvasHeight) || (renderer.domElement.height / Math.max(1, window.devicePixelRatio))))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    const requestedMaxEdge = Math.max(rawRequestedW, rawRequestedH)
+    const entitlementScale = Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && requestedMaxEdge > entitlementMaxRes
+        ? entitlementMaxRes / requestedMaxEdge
+        : 1
+    const requestedW = Math.max(1, Math.floor(rawRequestedW * entitlementScale))
+    const requestedH = Math.max(1, Math.floor(rawRequestedH * entitlementScale))
+
+    if (entitlementScale < 1) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: rawRequestedW,
+            requestedHeight: rawRequestedH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+    }
+
+    const exportCanvas = document.createElement('canvas')
+    const exportRenderer = new THREE.WebGLRenderer({
+        canvas: exportCanvas,
+        antialias: true,
+        alpha: true,
+        preserveDrawingBuffer: true,
+    })
+    let exportComposer = null
+
+    try {
+        const maxTex = exportRenderer.capabilities.maxTextureSize || 8192
+        const exportW = Math.min(requestedW, maxTex)
+        const exportH = Math.min(requestedH, maxTex)
+        const exportDpr = Math.max(1, Number(renderer.getPixelRatio?.() || window.devicePixelRatio || 1))
+        const logicalW = Math.max(1, Math.floor(exportW / exportDpr))
+        const logicalH = Math.max(1, Math.floor(exportH / exportDpr))
+
+        // Match live point-size perception: use same DPR model as live renderer.
+        exportRenderer.setPixelRatio(exportDpr)
+        exportRenderer.setSize(logicalW, logicalH, false)
+
+        let exportCamera = camera.clone()
+        if (camera === cameraOrtho || exportCamera.isOrthographicCamera) {
+            // Preserve current ortho frustum/zoom so export matches live framing.
+            exportCamera = camera.clone()
+            exportCamera.updateProjectionMatrix()
+        } else if (exportCamera.isPerspectiveCamera) {
+            // Keep perspective framing behavior while adapting aspect to export target.
+            exportCamera.aspect = exportW / Math.max(1, exportH)
+            exportCamera.updateProjectionMatrix()
+        }
+
+        const hiddenForExport = []
+        scene.traverse((obj) => {
+            if (obj?.userData?.excludeFromPng && obj.visible) {
+                hiddenForExport.push(obj)
+                obj.visible = false
+            }
+        })
+
+        exportRenderer.setClearColor(ps.getBackgroundColor(), transparent ? 0 : 1)
+        ps.setViewportHeight(exportRenderer.domElement.height)
+        if (!transparent && shouldUsePostProcessing()) {
+            const exportRenderPass = new RenderPass(scene, exportCamera)
+            const exportBloomPass = new UnrealBloomPass(
+                new THREE.Vector2(1, 1),
+                Math.max(0, Number(params.bloomStrength ?? 1.15) || 0),
+                Math.max(0, Number(params.bloomRadius ?? 0.7) || 0),
+                Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0)),
+            )
+            exportComposer = new EffectComposer(exportRenderer)
+            exportComposer.addPass(exportRenderPass)
+            exportComposer.addPass(exportBloomPass)
+            exportComposer.setPixelRatio(exportDpr)
+            exportComposer.setSize(logicalW, logicalH)
+            exportComposer.render()
+        } else {
+            exportRenderer.render(scene, exportCamera)
+        }
+
+        for (const obj of hiddenForExport) obj.visible = true
+
+        const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, 'image/png'))
+        if (!blob) throw new Error('PNG export failed (empty blob).')
+
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = defaultPngName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(a.href)
+
+        if (exportW !== requestedW || exportH !== requestedH) {
+            console.warn('[PNG] Export size clamped by GPU limits.', {
+                requested: { w: requestedW, h: requestedH },
+                exported: { w: exportW, h: exportH },
+                maxTextureSize: maxTex,
+            })
+        }
+    } finally {
+        ps.setViewportHeight(renderer.domElement.height)
+        try { exportComposer?.dispose?.() } catch { }
+        exportRenderer.dispose()
+    }
 }
 
-async function saveScenePly() {
-    return exportManager.saveScenePly()
+async function saveSceneObj() {
+    if (!platformConfig.canExportObj) {
+        _emitToPlatform('engine:export-blocked', { reason: 'obj_export_unavailable' })
+        alert('OBJ export is not available in this environment.')
+        return false
+    }
+
+    const exporter = new OBJExporter()
+    const exportRoot = new THREE.Group()
+    for (const child of scene.children) {
+        if (!child?.visible) continue
+        if (child?.userData?.excludeFromPng) continue
+        exportRoot.add(child.clone(true))
+    }
+
+    const objText = exporter.parse(exportRoot)
+    if (!objText || !String(objText).trim()) {
+        alert('OBJ export failed.')
+        return false
+    }
+
+    const blob = new Blob([objText], { type: 'text/plain;charset=utf-8' })
+    const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+    const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+    triggerBlobDownload(blob, `${audioTitle} - ${presetTitle}.obj`)
+    return true
 }
 
 function emitMuteState(playerEl, muted) {
@@ -1011,12 +1778,134 @@ function emitRecordState(playerEl, running) {
     }))
 }
 
+async function _buildRecordingAudioTrack(audioEl) {
+    if (!audioEl) return { track: null, cleanup: null }
+    try {
+        if (typeof audioEl.captureStream === 'function') {
+            const stream = audioEl.captureStream()
+            const track = stream.getAudioTracks()[0] || null
+            if (track) return { track, cleanup: null }
+        }
+    } catch {
+        // Fallback below.
+    }
+
+    ae.init(audioEl)
+    if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
+    const srcNode = ae.source || ae.streamSource
+    if (!srcNode || !ae.ctx) return { track: null, cleanup: null }
+
+    const dest = ae.ctx.createMediaStreamDestination()
+    srcNode.connect(dest)
+    const track = dest.stream.getAudioTracks()[0] || null
+    const cleanup = () => {
+        try { srcNode.disconnect(dest) } catch { }
+        try { dest.disconnect() } catch { }
+    }
+    return { track, cleanup }
+}
+
 async function startVideoRecording(playerEl, audioEl) {
-    return exportManager.startVideoRecording(playerEl, audioEl)
+    if (_mediaRecorder) return
+    if (!audioEl?.src) return
+    if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
+        alert('Video recording is not supported in this browser.')
+        return
+    }
+
+    const currentW = Math.max(1, Math.floor(renderer.domElement.width / Math.max(1, window.devicePixelRatio)))
+    const currentH = Math.max(1, Math.floor(renderer.domElement.height / Math.max(1, window.devicePixelRatio)))
+    const entitlementMaxRes = Number(platformConfig.maxExportResolution)
+    if (Number.isFinite(entitlementMaxRes) && entitlementMaxRes > 0 && Math.max(currentW, currentH) > entitlementMaxRes) {
+        _emitToPlatform('engine:export-blocked', {
+            reason: 'resolution_limit',
+            requestedWidth: currentW,
+            requestedHeight: currentH,
+            allowedMaxRes: entitlementMaxRes,
+        })
+        alert(`Free plan export limit is ${Math.floor(entitlementMaxRes)}p. Reduce canvas size or upgrade to Pro.`)
+        return
+    }
+
+    // Capture the renderer output surface so recorded video includes post-processing passes.
+    const captureSourceCanvas = renderer?.domElement || canvas
+    const canvasStream = captureSourceCanvas.captureStream(60)
+    const outputStream = new MediaStream()
+    for (const track of canvasStream.getVideoTracks()) outputStream.addTrack(track)
+
+    const { track: audioTrack, cleanup: audioCleanup } = await _buildRecordingAudioTrack(audioEl)
+    _recordingAudioCleanup = audioCleanup
+    if (audioTrack) outputStream.addTrack(audioTrack)
+
+    const mimeCandidates = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+    ]
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported?.(m)) || ''
+    const recorder = new MediaRecorder(outputStream, mimeType ? { mimeType } : undefined)
+    _recordedChunks = []
+    _recordingStream = outputStream
+    _mediaRecorder = recorder
+
+    recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) _recordedChunks.push(e.data)
+    }
+    recorder.onstop = () => {
+        const chunks = _recordedChunks
+        _recordedChunks = []
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
+        if (blob.size > 0) {
+            const audioTitle = _sanitizeFilePart(_currentAudioTitle(), 'audio')
+            const presetTitle = _sanitizeFilePart(_currentPresetTitle(), 'preset')
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = `${audioTitle} - ${presetTitle}.webm`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            URL.revokeObjectURL(a.href)
+        }
+
+        if (_recordingStream) {
+            for (const t of _recordingStream.getTracks()) {
+                try { t.stop() } catch { }
+            }
+        }
+        _recordingStream = null
+        if (typeof _recordingAudioCleanup === 'function') {
+            try { _recordingAudioCleanup() } catch { }
+        }
+        _recordingAudioCleanup = null
+        if (_recordingEndedHandler) {
+            audioEl.removeEventListener('ended', _recordingEndedHandler)
+            _recordingEndedHandler = null
+        }
+        _mediaRecorder = null
+        emitRecordState(playerEl, false)
+    }
+
+    if (audioEl.paused) {
+        try { await audioEl.play() } catch { }
+    }
+
+    _recordingEndedHandler = () => {
+        if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop()
+    }
+    audioEl.addEventListener('ended', _recordingEndedHandler, { once: true })
+
+    recorder.start(200)
+    emitRecordState(playerEl, true)
 }
 
 function stopVideoRecording(playerEl) {
-    exportManager.stopVideoRecording(playerEl)
+    if (!_mediaRecorder) return
+    try {
+        if (_mediaRecorder.state !== 'inactive') _mediaRecorder.stop()
+    } catch {
+        _mediaRecorder = null
+        emitRecordState(playerEl, false)
+    }
 }
 
 function getCameraCanvasUnits() {
@@ -1165,7 +2054,6 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
-    syncFogFromParams(bg)
     ps.setViewportHeight(renderer.domElement.height)
 
     if (shouldUsePostProcessing()) {
@@ -1233,7 +2121,7 @@ animate()
         }
     })
     playerEl.addEventListener('player:recordvideo-toggle', async () => {
-        if (exportManager.isRecording()) {
+        if (_mediaRecorder) {
             stopVideoRecording(playerEl)
             return
         }
@@ -1257,7 +2145,7 @@ animate()
         if (loadedAudioFile) {
             void _saveAudioFileToDb(loadedAudioFile)
         }
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
     emitMuteState(playerEl, monitorMuted)
 
@@ -1265,12 +2153,10 @@ animate()
     let projectFileName = ''
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
-    let projectLocalAutosaveInterval = null
-    let localDraftDirtySinceLastAutosave = false
+    let projectLocalSaveTimer = null
     let pendingRecoveryDraft = null
 
     const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
-    const LOCAL_PROJECT_AUTOSAVE_MS = 20000
     const AUDIO_DB_NAME = 'seesound_local_audio_v1'
     const AUDIO_DB_STORE = 'files'
     const AUDIO_DB_KEY = 'last-audio'
@@ -1529,8 +2415,6 @@ animate()
                     await _ensureTemplateAudioFallback(template)
                 }
 
-                _clearLocalProjectDraft()
-
                 return true
             }
 
@@ -1548,7 +2432,6 @@ animate()
                 // Apply template params/rules as one patch so a single Undo restores previous state.
                 setMany(presetParams)
                 await _ensureTemplateAudioFallback(template)
-                _clearLocalProjectDraft()
                 return true
             }
 
@@ -1569,7 +2452,6 @@ animate()
             await loadProjectFromPayload(payload)
             emitProjectFileState()
             await _ensureTemplateAudioFallback(template)
-            _clearLocalProjectDraft()
             return true
         } catch (err) {
             console.warn('[Template] load failed:', err)
@@ -1594,30 +2476,13 @@ animate()
         }
     }
 
-    const _clearLocalProjectDraft = () => {
-        try {
-            localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY)
-        } catch {
-            // ignore storage errors
-        }
-        pendingRecoveryDraft = null
-        window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
-    }
-
-    const _ensureLocalDraftAutosaveLoop = () => {
-        if (projectLocalAutosaveInterval) return
-        projectLocalAutosaveInterval = setInterval(async () => {
-            if (projectLoadInProgress) return
-            if (!localDraftDirtySinceLastAutosave) return
-            localDraftDirtySinceLastAutosave = false
-            await _saveLocalProjectDraft()
-        }, LOCAL_PROJECT_AUTOSAVE_MS)
-    }
-
-    const _markLocalProjectDraftDirty = () => {
+    const _scheduleLocalProjectDraftSave = () => {
         if (projectLoadInProgress) return
-        localDraftDirtySinceLastAutosave = true
-        _ensureLocalDraftAutosaveLoop()
+        if (projectLocalSaveTimer) clearTimeout(projectLocalSaveTimer)
+        projectLocalSaveTimer = setTimeout(async () => {
+            projectLocalSaveTimer = null
+            await _saveLocalProjectDraft()
+        }, 500)
     }
 
     const _readLocalProjectDraftIfAny = () => {
@@ -1668,7 +2533,7 @@ animate()
                 detail: { fileName: projectFileName || _defaultProjectName() },
             }))
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch (err) {
             console.warn('[Project] save failed:', err)
@@ -1741,8 +2606,8 @@ animate()
             return true
         }
 
-        if (target === 'obj' || target === 'ply') {
-            await saveScenePly()
+        if (target === 'obj') {
+            await saveSceneObj()
             return true
         }
 
@@ -1759,7 +2624,7 @@ animate()
                 fileName: suggestedName,
                 includeAudio: false,
             })
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
 
@@ -1772,7 +2637,7 @@ animate()
                 fileName: suggestedName,
                 includeAudio: true,
             })
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
 
@@ -1784,7 +2649,7 @@ animate()
             fileName: suggestedName,
             includeAudio: false,
         })
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
         return true
     }
 
@@ -1817,6 +2682,7 @@ animate()
             console.warn('[Project] load failed:', err)
         } finally {
             projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     }
 
@@ -1849,7 +2715,6 @@ animate()
             projectFileName = String(file.name || '').trim()
             await loadProjectFromPayload(parsed.payload)
             emitProjectFileState()
-            _clearLocalProjectDraft()
 
             if (parsed.audioFile instanceof File) {
                 loadFile(parsed.audioFile, parsed.audioFile.name)
@@ -1874,7 +2739,7 @@ animate()
             projectFileHandle = null
             projectFileName = String(suggested || getDefaultProjectDefinition().fileName || '').trim() || _defaultProjectName()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
         try {
@@ -1898,7 +2763,7 @@ animate()
             projectFileName = String(handle.name || suggestedName).trim()
             await saveProject()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch {
             return false
@@ -1906,36 +2771,11 @@ animate()
     }
 
     const saveProjectAsWithPicker = async (suggested = '') => {
-        const suggestedName = String(suggested || '').trim() || _defaultProjectName()
-        const normalizedSuggestedName = suggestedName.toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
-            ? suggestedName
-            : `${_nameWithoutExt(suggestedName)}${PROJECT_FILE_EXTENSION}`
-        let payload = null
+        if (typeof window.showSaveFilePicker !== 'function') return false
         try {
-            payload = await _buildCurrentProjectPayload()
-        } catch (err) {
-            console.warn('[Project] save as failed to build payload:', err)
-            alert('Failed to prepare project for Save As.')
-            return false
-        }
-
-        if (typeof window.showSaveFilePicker !== 'function') {
-            await _downloadProjectBundle({
-                payload,
-                fileName: normalizedSuggestedName,
-                includeAudio: false,
-            })
-            projectFileHandle = null
-            projectFileName = normalizedSuggestedName
-            emitProjectFileState()
-            _markLocalProjectDraftDirty()
-            alert('File picker is unavailable here. Downloaded the project file instead.')
-            return true
-        }
-
-        try {
+            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
             const handle = await window.showSaveFilePicker({
-                suggestedName: normalizedSuggestedName,
+                suggestedName,
                 types: [{
                     description: 'SEESOUND Project',
                     accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
@@ -1943,32 +2783,14 @@ animate()
             })
             if (!handle) return false
             projectFileHandle = handle
-            projectFileName = String(handle.name || normalizedSuggestedName).trim()
-            await _writeProjectToHandle(projectFileHandle, payload)
-            window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
-                detail: { fileName: projectFileName || normalizedSuggestedName },
-            }))
+            projectFileName = String(handle.name || suggestedName).trim()
+            await saveProject()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
             return true
-        } catch (err) {
-            if (err?.name === 'AbortError') return false
-            console.warn('[Project] save as failed; falling back to download:', err)
-            await _downloadProjectBundle({
-                payload,
-                fileName: normalizedSuggestedName,
-                includeAudio: false,
-            })
-            projectFileHandle = null
-            projectFileName = normalizedSuggestedName
-            emitProjectFileState()
-            _markLocalProjectDraftDirty()
-            alert('Could not access the save picker. Downloaded the project file instead.')
-            return true
+        } catch {
+            return false
         }
     }
-
-    _ensureLocalDraftAutosaveLoop()
 
     playerEl.addEventListener('player:saveproject', async () => {
         if (projectFileHandle) {
@@ -2022,6 +2844,7 @@ animate()
             projectFileHandle = null
             projectFileName = String(getDefaultProjectDefinition().fileName || `New Project${PROJECT_FILE_EXTENSION}`).trim()
             pendingRecoveryDraft = null
+            try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
             emitProjectFileState()
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
                 detail: {
@@ -2032,6 +2855,7 @@ animate()
             window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
         } finally {
             projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     })
     window.addEventListener('seesound:factory-template-load-request', async (e) => {
@@ -2043,17 +2867,18 @@ animate()
     })
     window.addEventListener('seesound:project-recovery-dismiss', () => {
         pendingRecoveryDraft = null
+        try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
         window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
     })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
 
     subscribe((_, key) => {
         if (!key || key === '*' || projectLoadInProgress) return
         scheduleProjectAutosave()
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
 
     const bootstrapDefaultProject = async () => {
@@ -2196,7 +3021,6 @@ subscribe((_, key) => {
         key === 'bloomRadius' ||
         key === 'bloomThreshold'
     ) syncPostProcessingFromParams()
-    if (key === 'fogEnabled' || key === 'fogDensity') syncFogFromParams(ps.getBackgroundColor())
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {
@@ -2253,5 +3077,4 @@ console.info(
 )
 
 console.log('%c SEESOUND v1.0 ready ', 'background:#111;color:#4ade80;padding:4px 8px;border-radius:4px;font-weight:bold')
-
 

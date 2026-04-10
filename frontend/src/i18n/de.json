@@ -22,7 +22,7 @@
             "exportProjectPackageOption": "Projektpaket (.sspp)",
             "exportImageOption": "Bild (.png)",
             "exportImageNoBgOption": "Transparentes Bild (.png)",
-            "exportObjOption": "3D-Objekt (.obj)",
+            "exportObjOption": "3D-Mesh (.ply)",
             "exportSettingsJson": "Einstellungen (.json)",
             "exportHintProjectFile": "Projekt mit allen Einstellungen",
             "exportHintProjectPackage": "Alle Einstellungen, Regeln und Audio",
@@ -50,7 +50,7 @@
             "exportImage": "PNG",
             "exportImageNoBg": "Transparente PNG",
             "exportVideo": "Video",
-            "exportObj": "OBJ"
+            "exportObj": "PLY"
         },
         "view": {
             "canvasSize": "Leinwandgröße",

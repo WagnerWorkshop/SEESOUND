@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "name": "linear spectrogram particles",
+  "params": {
+    "inputGain": 1.08,
+    "freqNormMin": 20,
+    "freqNormMax": 18000,
+    "fftSize": 16384,
+    "fluxWindowFrames": 10,
+    "binMagnitudeNormMin": -90,
+    "binMagnitudeNormMax": 0,
+    "binFluxNormMin": 0,
+    "binFluxNormMax": 0.5,
+    "binPhaseDeviationNormMin": 0,
+    "binPhaseDeviationNormMax": 3.14,
+    "binAttackTimeNormMin": 8,
+    "binAttackTimeNormMax": 650,
+    "globalRmsNormMin": -63,
+    "globalRmsNormMax": 0,
+    "spectralCentroidNormMin": 120,
+    "spectralCentroidNormMax": 10000,
+    "globalSpectralFluxNormMin": 0,
+    "globalSpectralFluxNormMax": 100,
+    "spectralFlatnessNormMin": 0,
+    "spectralFlatnessNormMax": 1,
+    "defaultParticleSize": 1,
+    "canvasWidth": 4200,
+    "canvasHeight": 1400,
+    "canvasScale": 48,
+    "defaultBackgroundHue": 0,
+    "defaultBackgroundSaturation": 0,
+    "defaultBackgroundLightness": 0,
+    "maxParticles": 2751488,
+    "particlesByFrame": 2600,
+    "blendMode": "source-over",
+    "cameraProjection": "axonometric",
+    "cameraAxoPreset": "orthoXY",
+    "persistMode": 1,
+    "ruleBlocks": [
+      {
+        "id": "spawned-x-time",
+        "group": "Light Particles/Position",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "x",
+            "expression": "((time / audioLengthSec) - 0.5) * canvasWidthPx"
+          }
+        ],
+        "order": 0
+      },
+      {
+        "id": "spawned-y-frequency",
+        "group": "Light Particles/Position",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "y",
+            "expression": "(normFreq - 0.5) * canvasHeightPx"
+          }
+        ],
+        "order": 1
+      },
+      {
+        "id": "spawned-z-timbre-depth",
+        "group": "Light Particles/Position",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "z",
+            "expression": "((spectralCentroid - 0.5) * 0.55 + binFlux * 0.25 + (octave / 12) * 0.2) * canvasHeightPx * 0.12"
+          }
+        ],
+        "order": 2
+      },
+      {
+        "id": "spawned-shape-circle",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "shapeType",
+            "value": "circle"
+          }
+        ],
+        "order": 3
+      },
+      {
+        "id": "spawned-count-density",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "particleCount",
+            "expression": "clamp(binMagnitude * 0.55 + binRMSEnergy * 0.35 + abs(binFlux) * 0.25 + amplitude * 0.15, 0.03, 1)"
+          }
+        ],
+        "order": 4
+      },
+      {
+        "id": "spawned-size-music-appearance",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "size",
+            "expression": "0.28 + pow(binAttackTime + 0.0001, 0.55) * 2.6 + binRMSEnergy * 1.15 + abs(binFlux) * 0.65"
+          }
+        ],
+        "order": 5
+      },
+      {
+        "id": "spawned-hue-sound-color",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hue",
+            "expression": "mod((notePitchClass / 12) + octave * 0.035 + spectralCentroid * 0.11 + inharmonicity * 0.18 + normFreq * 0.06, 1)"
+          }
+        ],
+        "order": 6
+      },
+      {
+        "id": "spawned-saturation-clarity",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "saturation",
+            "expression": "clamp(0.35 + spectralFlatness * 0.4 + abs(binFlux) * 0.2 + binPhaseDeviation * 0.25 + spectralSkewness * 0.18, 0, 1)"
+          }
+        ],
+        "order": 7
+      },
+      {
+        "id": "spawned-brightness-volume-sharpness",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "brightness",
+            "expression": "clamp(pow(binMagnitude + 0.0001, 0.75) * (0.5 + binRMSEnergy * 0.95) + binAttackTime * 0.25 + spectralSpread * 0.18 + peakAmplitude * 0.12, 0.02, 1)"
+          }
+        ],
+        "order": 8
+      },
+      {
+        "id": "spawned-opacity-volume-clarity",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "opacity",
+            "expression": "clamp(0.05 + binMagnitude * 0.42 + binRMSEnergy * 0.34 + abs(binFlux) * 0.17 + binAttackTime * 0.09 + spectralFlux * 0.1, 0.03, 0.98)"
+          }
+        ],
+        "order": 9
+      },
+      {
+        "id": "spawned-size-air-texture",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "size",
+            "expression": "0.74 + spectralFlatness * 0.5 + spectralRolloff * 0.3"
+          }
+        ],
+        "order": 10
+      },
+      {
+        "id": "spawned-low-band-dim",
+        "group": "Light Particles/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "spawnedParticles",
+        "scope": "spawnedOnly",
+        "condition": {
+          "operator": "<",
+          "input": "frequencyHz",
+          "value": 120
+        },
+        "actions": [
+          {
+            "operator": "multiply",
+            "output": "opacity",
+            "value": 0.72
+          }
+        ],
+        "order": 11
+      },
+      {
+        "id": "background-hsv-reactive",
+        "group": "Background/Appearance",
+        "subgroup": "",
+        "enabled": true,
+        "sectionDisabled": false,
+        "target": "background",
+        "scope": "allLivingFrame",
+        "condition": {
+          "operator": "always"
+        },
+        "actions": [
+          {
+            "operator": "set",
+            "output": "hsv",
+            "expression": "hsv(mod(0.58 + spectralCentroid * 0.08 + inharmonicity * 0.06 + spectralSkewness * 0.04, 1), clamp(0.12 + spectralFlatness * 0.24, 0, 0.45), clamp(0.02 + globalRmsEnergy * 0.15 + spectralFlux * 0.08, 0.02, 0.24))"
+          }
+        ],
+        "order": 12
+      }
+    ],
+    "ruleEngineEnabled": true,
+    "ruleSchemaVersion": 1,
+    "palettes": []
+  }
+}

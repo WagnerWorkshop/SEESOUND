@@ -21,7 +21,7 @@
             "exportProjectPackageOption": "Paquete de proyecto (.sspp)",
             "exportImageOption": "Imagen (.png)",
             "exportImageNoBgOption": "Imagen transparente (.png)",
-            "exportObjOption": "Objeto 3D (.obj)",
+            "exportObjOption": "Malla 3D (.ply)",
             "exportSettingsJson": "Ajustes (.json)",
             "exportHintProjectFile": "Proyecto con todos los ajustes",
             "exportHintProjectPackage": "Todo el proyecto en un solo archivo, incluyendo ajustes, reglas y audio",
@@ -50,7 +50,7 @@
             "exportImage": "PNG",
             "exportImageNoBg": "PNG transparente",
             "exportVideo": "Video",
-            "exportObj": "OBJ"
+            "exportObj": "PLY"
         },
         "view": {
             "canvasSize": "Tamaño del Lienzo",

@@ -21,7 +21,7 @@
             "exportProjectPackageOption": "Pacchetto progetto (.sspp)",
             "exportImageOption": "Immagine (.png)",
             "exportImageNoBgOption": "Immagine trasparente (.png)",
-            "exportObjOption": "Oggetto 3D (.obj)",
+            "exportObjOption": "Mesh 3D (.ply)",
             "exportSettingsJson": "Impostazioni (.json)",
             "exportHintProjectFile": "Progetto con tutte le impostazioni",
             "exportHintProjectPackage": "Tutte le impostazioni, le regole e l'audio",
@@ -50,7 +50,7 @@
             "exportImage": "PNG",
             "exportImageNoBg": "PNG trasparente",
             "exportVideo": "Video",
-            "exportObj": "OBJ"
+            "exportObj": "PLY"
         },
         "view": {
             "canvasSize": "Dimensioni Tela",
