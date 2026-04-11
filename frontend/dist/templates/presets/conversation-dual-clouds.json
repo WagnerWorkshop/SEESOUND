@@ -1,0 +1,343 @@
+{
+    "schemaVersion": 1,
+    "name": "conversation dual clouds",
+    "params": {
+        "inputGain": 1.12,
+        "freqNormMin": 70,
+        "freqNormMax": 9000,
+        "fftSize": 8192,
+        "fluxWindowFrames": 8,
+        "binMagnitudeNormMin": -84,
+        "binMagnitudeNormMax": 0,
+        "binFluxNormMin": 0,
+        "binFluxNormMax": 0.5,
+        "binPhaseDeviationNormMin": 0,
+        "binPhaseDeviationNormMax": 3.14,
+        "binAttackTimeNormMin": 20,
+        "binAttackTimeNormMax": 680,
+        "globalRmsNormMin": -68,
+        "globalRmsNormMax": 0,
+        "spectralCentroidNormMin": 200,
+        "spectralCentroidNormMax": 6500,
+        "globalSpectralFluxNormMin": 0,
+        "globalSpectralFluxNormMax": 100,
+        "spectralFlatnessNormMin": 0,
+        "spectralFlatnessNormMax": 1,
+        "defaultParticleSize": 1,
+        "canvasWidth": 2000,
+        "canvasHeight": 1000,
+        "canvasScale": 55,
+        "defaultBackgroundHue": 0.6,
+        "defaultBackgroundSaturation": 0.12,
+        "defaultBackgroundLightness": 0.04,
+        "maxParticles": 1999872,
+        "particlesByFrame": 2800,
+        "blendMode": "source-over",
+        "cameraProjection": "axonometric",
+        "cameraAxoPreset": "orthoXY",
+        "cameraPosX": 0,
+        "cameraPosY": 0,
+        "cameraPosZ": 420,
+        "cameraTargetX": 0,
+        "cameraTargetY": 0,
+        "cameraTargetZ": 0,
+        "cameraAngleOfView": 55,
+        "postProcessEnabled": 1,
+        "bloomEnabled": 1,
+        "bloomStrength": 0.75,
+        "bloomRadius": 0.8,
+        "bloomThreshold": 0.3,
+        "bokehEnabled": 0,
+        "persistMode": 0,
+        "originSignEnabled": 1,
+        "coordinateGuidesEnabled": 0,
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 1,
+        "ruleBlocks": [
+            {
+                "id": "conv-cloud-x-pan-core",
+                "group": "Conversation Clouds/Position",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "x",
+                        "expression": "(pan * 0.42 + (binPhase - 0.5) * (0.06 + spectralSpread * 0.22 + spectralFlatness * 0.16)) * canvasWidthPx"
+                    }
+                ],
+                "order": 0
+            },
+            {
+                "id": "conv-cloud-y-timbre-stack",
+                "group": "Conversation Clouds/Position",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "y",
+                        "expression": "((spectralCentroid - 0.5) * 0.55 + (binAttackTime - 0.5) * 0.22 + (spectralFlatness - 0.5) * 0.2 + (binPhase - 0.5) * 0.08) * canvasHeightPx"
+                    }
+                ],
+                "order": 1
+            },
+            {
+                "id": "conv-cloud-z-depth-texture",
+                "group": "Conversation Clouds/Position",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "z",
+                        "expression": "((inharmonicity - 0.5) * 0.7 + (spectralSpread - 0.5) * 0.45 + (binFlux - 0.5) * 0.2) * canvasHeightPx * 0.8"
+                    }
+                ],
+                "order": 2
+            },
+            {
+                "id": "conv-cloud-size-softness",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "size",
+                        "expression": "(0.35 + binMagnitude * 1.6 + (1 - clamp(spectralCentroid * 0.45 + binAttackTime * 0.3 + spectralRolloff * 0.2 + zeroCrossingRate * 0.15 - spectralFlatness * 0.1, 0, 1)) * 1.35) * defaultParticleSize"
+                    }
+                ],
+                "order": 3
+            },
+            {
+                "id": "conv-cloud-shape-sharp",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": ">=",
+                    "input": "binAttackTime",
+                    "value": 0.56
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "shapeType",
+                        "value": "square"
+                    }
+                ],
+                "order": 4
+            },
+            {
+                "id": "conv-cloud-shape-soft",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "<",
+                    "input": "binAttackTime",
+                    "value": 0.56
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "shapeType",
+                        "value": "circle"
+                    }
+                ],
+                "order": 5
+            },
+            {
+                "id": "conv-cloud-density",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "particleCount",
+                        "expression": "clamp(0.12 + binMagnitude * 0.65 + spectralFlux * 0.2, 0.05, 1)"
+                    }
+                ],
+                "order": 6
+            },
+            {
+                "id": "conv-cloud-red-yellow-axis",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "red",
+                        "expression": "clamp(0.14 + (spectralCentroid * 0.5 + binAttackTime * 0.25 + spectralRolloff * 0.2) * 0.9, 0, 1)"
+                    }
+                ],
+                "order": 7
+            },
+            {
+                "id": "conv-cloud-green-yellow-axis",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "green",
+                        "expression": "clamp(0.12 + (spectralCentroid * 0.42 + binAttackTime * 0.28 + spectralRolloff * 0.24) * 0.95, 0, 1)"
+                    }
+                ],
+                "order": 8
+            },
+            {
+                "id": "conv-cloud-blue-soft-axis",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "blue",
+                        "expression": "clamp(0.18 + (1 - (spectralCentroid * 0.45 + binAttackTime * 0.28 + spectralRolloff * 0.2)) * 0.82 + spectralFlatness * 0.08, 0, 1)"
+                    }
+                ],
+                "order": 9
+            },
+            {
+                "id": "conv-cloud-yellow-intensity",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "yellow",
+                        "expression": "clamp(spectralCentroid * 0.45 + binAttackTime * 0.3 + spectralRolloff * 0.2 + zeroCrossingRate * 0.15 - spectralFlatness * 0.1, 0, 1)"
+                    }
+                ],
+                "order": 10
+            },
+            {
+                "id": "conv-cloud-saturation",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "saturation",
+                        "expression": "clamp(0.3 + (spectralCentroid * 0.45 + binAttackTime * 0.3 + spectralRolloff * 0.2) * 0.55 + spectralFlatness * 0.18, 0, 1)"
+                    }
+                ],
+                "order": 11
+            },
+            {
+                "id": "conv-cloud-brightness",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "brightness",
+                        "expression": "clamp(0.08 + binMagnitude * 0.45 + (spectralCentroid * 0.45 + binAttackTime * 0.3 + spectralRolloff * 0.2) * 0.5, 0, 1)"
+                    }
+                ],
+                "order": 12
+            },
+            {
+                "id": "conv-cloud-opacity",
+                "group": "Conversation Clouds/Appearance",
+                "subgroup": "",
+                "enabled": true,
+                "sectionDisabled": false,
+                "target": "spawnedParticles",
+                "scope": "spawnedOnly",
+                "condition": {
+                    "operator": "always"
+                },
+                "actions": [
+                    {
+                        "operator": "set",
+                        "output": "opacity",
+                        "expression": "clamp(0.08 + binMagnitude * 0.45 + (1 - spectralFlatness) * 0.2 + (spectralCentroid * 0.45 + binAttackTime * 0.3 + spectralRolloff * 0.2) * 0.25, 0, 1)"
+                    }
+                ],
+                "order": 13
+            }
+        ]
+    }
+}

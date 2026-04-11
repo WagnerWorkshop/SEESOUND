@@ -42,6 +42,12 @@
             "thumbnail": "/templates/thumbnails/linear-timbre-colors.svg"
         },
         {
+            "id": "conversation-dual-clouds",
+            "title": "Conversation Dual Clouds",
+            "presetPath": "/templates/presets/conversation-dual-clouds.json",
+            "presetName": "conversation dual clouds"
+        },
+        {
             "id": "the-vortex",
             "title": "The Vortex",
             "presetPath": "/templates/presets/the-vortex.json",
