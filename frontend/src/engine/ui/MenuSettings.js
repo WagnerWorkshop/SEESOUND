@@ -16,7 +16,7 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     const resolutionLabelWrap = el('div', 'cp-setting-label-wrap')
     resolutionLabelWrap.appendChild(el('label', 'cp-setting-label', {
         text: UI_TEXT.settings.audioResolution,
-        title: 'Technical term: FFT Size. Frequency-domain analysis resolution.',
+        title: 'FFT Size. Frequency-domain analysis resolution.',
     }))
     const resolutionSelect = el('select', 'cp-input-select')
     resolutionSelect.appendChild(createSelectOptions(

@@ -73,7 +73,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 0,
         max: 3,
         step: 0.01,
-        tooltip: getSettingsTooltip('inputGain', 'Technical term: Input Gain. Scales all amplitude before analysis.'),
+        tooltip: getSettingsTooltip('inputGain', 'Input Gain. Scales all amplitude before analysis.'),
     },
     {
         key: 'defaultParticleSize',
@@ -81,7 +81,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 1,
         max: 40,
         step: 0.5,
-        tooltip: getSettingsTooltip('defaultParticleSize', 'Technical term: Default Size. Base object size before rule outputs.'),
+        tooltip: getSettingsTooltip('defaultParticleSize', 'Default Size. Base object size before rule outputs.'),
     },
     {
         key: 'maxParticles',
@@ -89,7 +89,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100000,
         max: 5000000,
         step: 50000,
-        tooltip: getSettingsTooltip('maxParticles', 'Technical term: Capacity. Total GPU object slots.'),
+        tooltip: getSettingsTooltip('maxParticles', 'Capacity. Total GPU object slots.'),
     },
     {
         key: 'particlesByFrame',
@@ -97,7 +97,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 100,
         max: 5000,
         step: 1,
-        tooltip: getSettingsTooltip('particlesByFrame', 'Technical term: Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.'),
+        tooltip: getSettingsTooltip('particlesByFrame', 'Objects By Frame. Number of log-frequency spawn buckets shared by light particles and lines.'),
     },
     {
         key: 'fluxWindowFrames',
@@ -105,7 +105,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 1,
         max: 64,
         step: 1,
-        tooltip: getSettingsTooltip('fluxWindowFrames', 'Technical term: Flux Window Frames. Rolling frame window for activity averaging.'),
+        tooltip: getSettingsTooltip('fluxWindowFrames', 'Flux Window Frames. Rolling frame window for activity averaging.'),
     },
 ])
 
