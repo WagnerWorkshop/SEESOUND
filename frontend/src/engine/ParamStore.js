@@ -147,6 +147,12 @@ const PARAMS_BASE = [
         desc: 'Rolling frame window used to smooth activity detection.',
         canDisable: false,
     },
+    {
+        key: 'adjustForHumanHearing', group: 'inputProcessing', label: 'Adjust for Human Hearing',
+        min: 0, max: 1, step: 1, default: 0, unit: '',
+        desc: 'Apply ISO 226 equal-loudness compensation to per-frequency volume.',
+        isToggle: true, toggleLabels: ['Off', 'On'],
+    },
     normRangeParam({
         key: 'binMagnitudeNormMin',
         label: 'Volume Min',

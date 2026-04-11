@@ -1,5 +1,12 @@
 import * as THREE from 'three'
 
+const TOUCH_ORBIT_SCALE = 0.72
+const TOUCH_PAN_SCALE = 0.68
+const TOUCH_ZOOM_SCALE = 0.42
+const TOUCH_GESTURE_LOCK_RATIO = 1.35
+const TOUCH_GESTURE_PAN_THRESHOLD_PX = 1.5
+const TOUCH_GESTURE_ZOOM_THRESHOLD_PX = 3
+
 export class CameraController {
     constructor({
         getCamera,
@@ -25,6 +32,7 @@ export class CameraController {
         this.wrapperState = wrapperState
         this.updateWrapperTransform = updateWrapperTransform
         this.setCanvasScale = setCanvasScale
+        this._touchGestureMode = null
 
         this._disposers = []
     }
@@ -164,11 +172,13 @@ export class CameraController {
 
         this._listen(this.canvas, 'touchstart', (e) => {
             if (e.touches.length === 1) {
+                this._touchGestureMode = null
                 this.pointerState.active = true
                 this.pointerState.button = 0
                 this.pointerState.lastX = e.touches[0].clientX
                 this.pointerState.lastY = e.touches[0].clientY
             } else if (e.touches.length === 2) {
+                this._touchGestureMode = null
                 this.pointerState.active = true
                 this.pointerState.button = 1
                 this.pointerState.lastX = (e.touches[0].clientX + e.touches[1].clientX) / 2
@@ -192,10 +202,12 @@ export class CameraController {
                 this.pointerState.active = false
                 this.pointerState.button = -1
                 this.wrapperState.active = false
+                this._touchGestureMode = null
             } else if (e.touches.length === 1) {
                 this.pointerState.button = 0
                 this.pointerState.lastX = e.touches[0].clientX
                 this.pointerState.lastY = e.touches[0].clientY
+                this._touchGestureMode = null
             }
         })
 
@@ -237,7 +249,7 @@ export class CameraController {
                     const distance = Math.sqrt(dx * dx + dy * dy)
 
                     if (this.wrapperState.pinchDistance > 0) {
-                        const scaleDiff = (distance - this.wrapperState.pinchDistance) * 0.005
+                        const scaleDiff = (distance - this.wrapperState.pinchDistance) * 0.003
                         const newScale = Math.max(0.05, Math.min(20, this.wrapperState.scale + scaleDiff))
                         this.setCanvasScale?.(Math.round(newScale * 100))
                     }
@@ -254,7 +266,7 @@ export class CameraController {
                 const dy = e.touches[0].clientY - this.pointerState.lastY
                 this.pointerState.lastX = e.touches[0].clientX
                 this.pointerState.lastY = e.touches[0].clientY
-                this.handlePointerMove(dx, dy, 0)
+                this.handlePointerMove(dx * TOUCH_ORBIT_SCALE, dy * TOUCH_ORBIT_SCALE, 0)
             } else if (e.touches.length === 2 && this.pointerState.button === 1) {
                 const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2
                 const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2
@@ -265,14 +277,32 @@ export class CameraController {
 
                 const dxPan = currentX - this.pointerState.lastX
                 const dyPan = currentY - this.pointerState.lastY
-                this.handlePointerMove(dxPan, dyPan, 1)
-
                 const pinchDelta = this.pointerState.pinchDistance - currentPinch
-                if (Math.abs(pinchDelta) > 1) {
-                    this.handleZoom(pinchDelta * 0.75)
-                    this.pointerState.pinchDistance = currentPinch
+
+                // Lock each two-finger gesture to either pan or zoom to avoid mixed jitter.
+                if (!this._touchGestureMode) {
+                    const panDistance = Math.hypot(dxPan, dyPan)
+                    const zoomDistance = Math.abs(pinchDelta)
+                    if (
+                        zoomDistance >= TOUCH_GESTURE_ZOOM_THRESHOLD_PX &&
+                        zoomDistance > panDistance * TOUCH_GESTURE_LOCK_RATIO
+                    ) {
+                        this._touchGestureMode = 'zoom'
+                    } else if (
+                        panDistance >= TOUCH_GESTURE_PAN_THRESHOLD_PX &&
+                        panDistance > zoomDistance * TOUCH_GESTURE_LOCK_RATIO
+                    ) {
+                        this._touchGestureMode = 'pan'
+                    }
                 }
 
+                if (this._touchGestureMode === 'zoom') {
+                    if (Math.abs(pinchDelta) > 0.75) this.handleZoom(pinchDelta * TOUCH_ZOOM_SCALE)
+                } else if (this._touchGestureMode === 'pan') {
+                    this.handlePointerMove(dxPan * TOUCH_PAN_SCALE, dyPan * TOUCH_PAN_SCALE, 1)
+                }
+
+                this.pointerState.pinchDistance = currentPinch
                 this.pointerState.lastX = currentX
                 this.pointerState.lastY = currentY
             }

@@ -394,9 +394,31 @@ export function buildViewMenu(body, syncRegistry, deps) {
     }
 
     const syncPostEnabled = () => {
-        postEnabled.checked = Number(params.postProcessEnabled ?? 0) >= 0.5
+        const postProcessingEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
+        const bloomActive = postProcessingEnabled && Number(params.bloomEnabled ?? 1) >= 0.5
+        const fogActive = postProcessingEnabled && Number(params.fogEnabled ?? 1) >= 0.5
+
+        postEnabled.checked = postProcessingEnabled
         bloomEnabled.checked = Number(params.bloomEnabled ?? 1) >= 0.5
         fogEnabled.checked = Number(params.fogEnabled ?? 1) >= 0.5
+
+        bloomEnabled.disabled = !postProcessingEnabled
+        fogEnabled.disabled = !postProcessingEnabled
+        bloomStrengthSlider.disabled = !bloomActive
+        bloomStrengthNumber.disabled = !bloomActive
+        bloomRadiusSlider.disabled = !bloomActive
+        bloomRadiusNumber.disabled = !bloomActive
+        bloomThresholdSlider.disabled = !bloomActive
+        bloomThresholdNumber.disabled = !bloomActive
+        fogDensitySlider.disabled = !fogActive
+        fogDensityNumber.disabled = !fogActive
+
+        bloomEnabledRow.classList.toggle('is-disabled', !postProcessingEnabled)
+        fogEnabledRow.classList.toggle('is-disabled', !postProcessingEnabled)
+        bloomStrengthRow.classList.toggle('is-disabled', !bloomActive)
+        bloomRadiusRow.classList.toggle('is-disabled', !bloomActive)
+        bloomThresholdRow.classList.toggle('is-disabled', !bloomActive)
+        fogDensityRow.classList.toggle('is-disabled', !fogActive)
     }
 
     const syncBloomStrength = () => {

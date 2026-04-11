@@ -739,6 +739,7 @@ export class ParticleSystem {
         const stepRatio = Number.isFinite(stepRatioRaw) && stepRatioRaw > 1 ? stepRatioRaw : 1
         const blendStr = params.blendMode ?? 'screen'
         const blendEnabled = Number(params.blendEnabled ?? 0) >= 0.5
+        const luminousMode = blendEnabled
         const bgHue = Number.isFinite(Number(params.defaultBackgroundHue)) ? Number(params.defaultBackgroundHue) : 0
         const bgSat = Number.isFinite(Number(params.defaultBackgroundSaturation)) ? Number(params.defaultBackgroundSaturation) : 0
         const bgLight = Number.isFinite(Number(params.defaultBackgroundLightness)) ? Number(params.defaultBackgroundLightness) : 0
@@ -761,7 +762,7 @@ export class ParticleSystem {
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
 
         // Adjust Three.js blending mode
-        if (!blendEnabled) {
+        if (!luminousMode) {
             if (this._mat.blending !== THREE.NormalBlending) {
                 this._mat.blending = THREE.NormalBlending
                 this._mat.needsUpdate = true
@@ -844,7 +845,7 @@ export class ParticleSystem {
             this._lineMat.blending = this._mat.blending
             this._lineMat.needsUpdate = true
         }
-        const wantsLineDepthWrite = !blendEnabled
+        const wantsLineDepthWrite = !luminousMode
         if (this._lineMat.depthWrite !== wantsLineDepthWrite) {
             this._lineMat.depthWrite = wantsLineDepthWrite
             this._lineMat.needsUpdate = true

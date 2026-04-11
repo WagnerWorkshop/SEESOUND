@@ -29,6 +29,23 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     resolutionRow.append(resolutionLabelWrap, resolutionSelect)
     sliderSection.appendChild(resolutionRow)
 
+    const hearingToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
+    const hearingLabel = UI_TEXT.settings.adjustForHumanHearing
+        || UI_TEXT.settings?.paramLabels?.adjustForHumanHearing
+        || 'Adjust for human hearing'
+    const hearingTooltip = UI_TEXT.settings?.tooltips?.adjustForHumanHearing
+        || 'Apply ISO 226 equal-loudness compensation to per-frequency volume.'
+    const hearingRow = el('label', 'cp-toggle-row')
+    hearingRow.title = hearingTooltip
+    hearingRow.append(
+        hearingToggle,
+        el('span', 'cp-setting-label', { text: hearingLabel, title: hearingTooltip }),
+    )
+    hearingToggle.addEventListener('change', () => {
+        set('adjustForHumanHearing', hearingToggle.checked ? 1 : 0)
+    })
+    sliderSection.appendChild(hearingRow)
+
     for (const definition of SETTINGS_SLIDERS) {
         sliderSection.appendChild(createSliderControl(definition, syncRegistry, deps))
     }
@@ -49,8 +66,13 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     const syncResolution = () => {
         resolutionSelect.value = String(params.fftSize || 2048)
     }
+    const syncHearingToggle = () => {
+        hearingToggle.checked = Number(params.adjustForHumanHearing ?? 0) >= 0.5
+    }
     registerSync(syncRegistry, syncResolution, ['fftSize'])
+    registerSync(syncRegistry, syncHearingToggle, ['adjustForHumanHearing'])
     syncResolution()
+    syncHearingToggle()
 
     panel.append(sliderSection, rangeSection)
     body.appendChild(panel)

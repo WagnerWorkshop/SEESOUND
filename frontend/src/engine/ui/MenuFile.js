@@ -137,7 +137,7 @@ export function buildFileMenu(body, deps) {
     applySelectedOptionTooltip(exportSelect)
     exportSelect.addEventListener('change', () => applySelectedOptionTooltip(exportSelect))
     const btnExportAs = el('button', 'cp-btn', { text: UI_TEXT.file.exportAsAction || UI_TEXT.file.export })
-    applyButtonIcon(btnExportAs, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.exportAsAction || UI_TEXT.file.export)
+    applyButtonIcon(btnExportAs, BUTTON_ICON_MAP.export, UI_TEXT.file.exportAsAction || UI_TEXT.file.export)
     exportRow.append(exportSelect, btnExportAs)
     projectSection.appendChild(exportRow)
 

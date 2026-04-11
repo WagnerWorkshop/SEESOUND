@@ -30,6 +30,7 @@ import loadIcon from '../icons/load.svg?raw'
 import saveIcon from '../icons/save.svg?raw'
 import savePresetIcon from '../icons/save-preset.svg?raw'
 import saveAsIcon from '../icons/save-as.svg?raw'
+import exportIcon from '../icons/export.svg?raw'
 import uploadIcon from '../icons/upload.svg?raw'
 import deleteIcon from '../icons/delete.svg?raw'
 import imageIcon from '../icons/image.svg?raw'
@@ -288,6 +289,7 @@ const BUTTON_ICON_MAP = Object.freeze({
     save: saveIcon,
     savePreset: savePresetIcon,
     saveAs: saveAsIcon,
+    export: exportIcon,
     upload: uploadIcon,
     remove: deleteIcon,
     exportImage: imageIcon,

@@ -113,6 +113,11 @@ export function initAudioPlayer(container) {
 
     const appRoot = document.getElementById('app')
 
+    function setAudioLoadedState(hasAudio) {
+        container.classList.toggle('audio-player--has-audio', !!hasAudio)
+        if (appRoot) appRoot.classList.toggle('app-awaiting-audio', !hasAudio)
+    }
+
     function setCollapseButtonVisual(isCollapsed) {
         collapseBtn.classList.toggle('audio-player__collapse-btn--icon', isCollapsed)
         if (isCollapsed) {
@@ -127,6 +132,7 @@ export function initAudioPlayer(container) {
     }
 
     setCollapseButtonVisual(false)
+    setAudioLoadedState(false)
 
     // Body
     const body = el('div', 'audio-player__body')
@@ -139,7 +145,9 @@ export function initAudioPlayer(container) {
         'for': 'audio-file-input',
         'title': getAudioPlayerText('openAudioFileTitle', 'Open audio file'),
     })
+    const openAudioFileLabel = getAudioPlayerText('openAudioFileLabel', 'Open Audio File')
     applyIcon(fileLabel, audioIcon, getAudioPlayerText('openAudioFileAria', 'Open audio file'))
+    fileLabel.appendChild(el('span', 'audio-player__file-label-text', { text: openAudioFileLabel }))
     const fileName = el('span', 'audio-player__file-name', { text: getAudioPlayerText('noFileLoaded', 'No file loaded') })
     fileRow.append(fileInput, fileLabel)
 
@@ -330,6 +338,7 @@ export function initAudioPlayer(container) {
         if (audioEl.src.startsWith('blob:')) URL.revokeObjectURL(audioEl.src)
         audioEl.src = URL.createObjectURL(file)
         audioEl.load()
+        setAudioLoadedState(true)
         fileName.textContent = labelText
         isPlaying = false
         setPlayButtonVisual(false)

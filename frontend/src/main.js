@@ -83,9 +83,23 @@ const composer = new EffectComposer(renderer)
 const scene = new THREE.Scene()
 const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
+let originSignEnabled = true
 originAxes.userData.excludeFromPng = true
-originAxes.userData.excludeFromExport = true
 scene.add(originAxes)
+function emitOriginSignState() {
+    window.dispatchEvent(new CustomEvent('seesound:origin-sign-state', {
+        detail: { enabled: originSignEnabled, size: ORIGIN_SIGN_SIZE },
+    }))
+}
+
+window.addEventListener('seesound:origin-sign-toggle', (e) => {
+    const requested = e?.detail?.enabled
+    if (typeof requested === 'boolean') originSignEnabled = requested
+    else originSignEnabled = !originSignEnabled
+    originAxes.visible = originSignEnabled
+    emitOriginSignState()
+})
+emitOriginSignState()
 const MIN_CAMERA_CLIP_EXTENT = 10000
 const MIN_CAMERA_CLIP_FAR = MIN_CAMERA_CLIP_EXTENT * 2
 const cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, MIN_CAMERA_CLIP_FAR)
@@ -129,34 +143,30 @@ function applyProjectionFromParams() {
     syncOrbitFromCamera()
 }
 
-function syncCameraFromParams({ includePose = true, includeFov = true } = {}) {
-    if (includePose) {
-        const px = Number(params.cameraPosX)
-        const py = Number(params.cameraPosY)
-        const pz = Number(params.cameraPosZ)
-        const tx = Number(params.cameraTargetX)
-        const ty = Number(params.cameraTargetY)
-        const tz = Number(params.cameraTargetZ)
+function syncCameraFromParams() {
+    const px = Number(params.cameraPosX)
+    const py = Number(params.cameraPosY)
+    const pz = Number(params.cameraPosZ)
+    const tx = Number(params.cameraTargetX)
+    const ty = Number(params.cameraTargetY)
+    const tz = Number(params.cameraTargetZ)
 
-        if (Number.isFinite(px)) camera.position.x = px
-        if (Number.isFinite(py)) camera.position.y = py
-        if (Number.isFinite(pz)) camera.position.z = pz
+    if (Number.isFinite(px)) camera.position.x = px
+    if (Number.isFinite(py)) camera.position.y = py
+    if (Number.isFinite(pz)) camera.position.z = pz
 
-        if (Number.isFinite(tx)) orbitTarget.x = tx
-        if (Number.isFinite(ty)) orbitTarget.y = ty
-        if (Number.isFinite(tz)) orbitTarget.z = tz
+    if (Number.isFinite(tx)) orbitTarget.x = tx
+    if (Number.isFinite(ty)) orbitTarget.y = ty
+    if (Number.isFinite(tz)) orbitTarget.z = tz
 
-        camera.lookAt(orbitTarget)
-        syncOrbitFromCamera()
+    const fov = Math.max(20, Math.min(120, Number(params.cameraAngleOfView ?? 55)))
+    if (Number.isFinite(fov) && cameraPerspective.fov !== fov) {
+        cameraPerspective.fov = fov
+        cameraPerspective.updateProjectionMatrix()
     }
 
-    if (includeFov) {
-        const fov = Math.max(20, Math.min(120, Number(params.cameraAngleOfView ?? 55)))
-        if (Number.isFinite(fov) && cameraPerspective.fov !== fov) {
-            cameraPerspective.fov = fov
-            cameraPerspective.updateProjectionMatrix()
-        }
-    }
+    camera.lookAt(orbitTarget)
+    syncOrbitFromCamera()
 }
 
 function syncPostProcessingFromParams() {
@@ -168,27 +178,6 @@ function syncPostProcessingFromParams() {
     bloomPass.strength = Math.max(0, Number(params.bloomStrength ?? 1.15) || 0)
     bloomPass.radius = Math.max(0, Number(params.bloomRadius ?? 0.7) || 0)
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
-}
-
-function syncFogFromParams(backgroundColor = null) {
-    const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
-    const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
-    const bg = (backgroundColor && backgroundColor.isColor) ? backgroundColor : ps.getBackgroundColor()
-
-    if (!fogEnabled || fogDensity <= 0) {
-        scene.fog = null
-        ps.setFogState({ enabled: false, density: 0, color: bg })
-        return
-    }
-
-    if (!(scene.fog instanceof THREE.FogExp2)) {
-        scene.fog = new THREE.FogExp2(bg.clone(), fogDensity)
-    } else {
-        scene.fog.color.copy(bg)
-        scene.fog.density = fogDensity
-    }
-
-    ps.setFogState({ enabled: true, density: fogDensity, color: bg })
 }
 
 function shouldUsePostProcessing() {
@@ -217,11 +206,36 @@ function applyOrbitToCamera() {
     cameraController?.applyOrbitToCamera()
 }
 
-function _normalizeAxoPreset(presetName) {
+function _axoAnglesForPreset(presetName) {
     const preset = String(presetName || 'orthoXY')
-    if (preset === 'topXZ') return 'orthoXZ'
-    if (preset === 'isometry') return 'isometric'
-    return preset
+    if (preset === 'isometric') {
+        return {
+            azimuth: Math.PI / 4,
+            elevation: Math.asin(1 / Math.sqrt(3)),
+        }
+    }
+    if (preset === 'fortyFive') {
+        return {
+            azimuth: Math.PI / 4,
+            elevation: Math.PI / 4,
+        }
+    }
+    if (preset === 'topXZ') {
+        return {
+            azimuth: 0,
+            elevation: Math.PI / 2 - 0.001,
+        }
+    }
+    if (preset === 'orthoYZ') {
+        return {
+            azimuth: Math.PI / 2,
+            elevation: 0,
+        }
+    }
+    return {
+        azimuth: 0,
+        elevation: 0,
+    }
 }
 
 function resetCameraPose() {
@@ -243,24 +257,17 @@ function resetCameraPose() {
 }
 
 function applyAxoPresetFromParams(forceDefaultRadius = false) {
-    const preset = _normalizeAxoPreset(params.cameraAxoPreset)
-    const fallbackDistance = forceDefaultRadius
+    if (params.cameraProjection === 'perspective') return
+    const preset = String(params.cameraAxoPreset || 'orthoXY')
+    const radius = forceDefaultRadius
         ? DEFAULT_ORBIT_RADIUS
         : Math.max(40, Number(orbitState.radius) || DEFAULT_ORBIT_RADIUS)
-    const axisValue = (value) => (Math.abs(Number(value) || 0) > 1e-4 ? Number(value) : fallbackDistance)
+    const { azimuth, elevation } = _axoAnglesForPreset(preset)
 
-    orbitTarget.set(0, 0, 0)
-
-    if (preset === 'isometric') {
-        camera.position.set(500, 500, 500)
-    } else if (preset === 'orthoYZ') {
-        camera.position.set(axisValue(camera.position.x), 0, 0)
-    } else if (preset === 'orthoXZ') {
-        camera.position.set(0, axisValue(camera.position.y), 0)
-    } else {
-        camera.position.set(0, 0, axisValue(camera.position.z))
-    }
-    camera.lookAt(orbitTarget)
+    orbitState.radius = radius
+    orbitState.azimuth = azimuth
+    orbitState.elevation = elevation
+    applyOrbitToCamera()
     syncOrbitFromCamera()
 }
 
@@ -350,7 +357,7 @@ navZoomInBtn.addEventListener('click', () => bumpCanvasScale(10))
 
 const navZoomOutBtn = document.createElement('button')
 navZoomOutBtn.type = 'button'
-navZoomOutBtn.className = 'canvas-nav-actions__btn cp-btn'
+navZoomOutBtn.className = 'canvas-nav-actions__btn canvas-nav-actions__btn--conditional cp-btn'
 navZoomOutBtn.title = getCanvasNavText('zoomOutTooltip', 'Decrease canvas zoom')
 applyNavButtonIcon(navZoomOutBtn, magnifierMinusIcon, getCanvasNavText('zoomOut', 'Zoom Out'))
 navZoomOutBtn.addEventListener('click', () => bumpCanvasScale(-10))
@@ -360,8 +367,15 @@ const navHost = document.getElementById('app') || document.body
 if (navHost) navHost.appendChild(navActions)
 
 function updateZoomButtonsVisibility() {
-    const currentScale = Math.max(5, Math.min(2000, Math.floor(Number(params.canvasScale) || 100)))
-    navZoomOutBtn.disabled = currentScale <= 5
+    const ww = wrapper.clientWidth
+    const wh = wrapper.clientHeight
+    const cw = col.clientWidth
+    const ch = col.clientHeight
+
+    // Show Zoom Out only when the canvas is effectively maxed out in both axes.
+    const isLarge = (ww >= cw * 0.95) && (wh >= ch * 0.95)
+    navZoomOutBtn.classList.toggle('is-visible', isLarge)
+    navZoomOutBtn.disabled = !isLarge
 }
 window.addEventListener('resize', updateZoomButtonsVisibility)
 updateZoomButtonsVisibility()
@@ -432,19 +446,11 @@ function fitCameraToVisible() {
     orbitTarget.copy(center)
 
     if (camera.isOrthographicCamera) {
-        const preset = _normalizeAxoPreset(params.cameraAxoPreset)
-        const fitDistance = Math.max(radius * 2.2, 60)
-        if (preset === 'isometric') {
-            camera.position.set(center.x + fitDistance, center.y + fitDistance, center.z + fitDistance)
-        } else if (preset === 'orthoYZ') {
-            camera.position.set(center.x + fitDistance, center.y, center.z)
-        } else if (preset === 'orthoXZ') {
-            camera.position.set(center.x, center.y + fitDistance, center.z)
-        } else {
-            camera.position.set(center.x, center.y, center.z + fitDistance)
-        }
-        camera.lookAt(center)
-        syncOrbitFromCamera()
+        const { azimuth, elevation } = _axoAnglesForPreset(params.cameraAxoPreset)
+        orbitState.azimuth = azimuth
+        orbitState.elevation = elevation
+        orbitState.radius = Math.max(radius * 2.2, 60)
+        applyOrbitToCamera()
 
         camera.updateMatrixWorld(true)
         const m = camera.matrixWorld.elements
@@ -542,7 +548,7 @@ function resizeRenderer(w, h) {
 
     cameraPerspective.aspect = w / Math.max(1, h)
     cameraPerspective.updateProjectionMatrix()
-    renderer.setSize(w, h, false)   // false -> do NOT set canvas style size
+    renderer.setSize(w, h, false)   // false → do NOT set canvas style size
     composer.setSize(w, h)
     bloomPass.setSize(w, h)
 }
@@ -563,12 +569,12 @@ syncPostProcessingFromParams()
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
 const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
-syncFogFromParams(ps.getBackgroundColor())
 
 function _collectUsedRuleInputs(requiredInputsByTarget = null) {
     return new Set([
         ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
+        ...(Array.isArray(requiredInputsByTarget?.physicalParticles) ? requiredInputsByTarget.physicalParticles : []),
         ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
         ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
     ])
@@ -833,48 +839,6 @@ function setCameraHudEnabled(nextEnabled) {
     emitCameraHudState()
 }
 
-const CAMERA_STATE_EMIT_INTERVAL_MS = 1000
-let _lastCameraStateEmitTs = 0
-let _lastCameraStateSignature = ''
-
-function emitCameraState(force = false) {
-    const now = performance.now()
-    if (!force && (now - _lastCameraStateEmitTs) < CAMERA_STATE_EMIT_INTERVAL_MS) return
-
-    const projection = camera === cameraPerspective ? 'perspective' : 'axonometric'
-    const signature = [
-        camera.position.x.toFixed(3),
-        camera.position.y.toFixed(3),
-        camera.position.z.toFixed(3),
-        orbitTarget.x.toFixed(3),
-        orbitTarget.y.toFixed(3),
-        orbitTarget.z.toFixed(3),
-        cameraPerspective.fov.toFixed(3),
-        projection,
-    ].join('|')
-
-    _lastCameraStateEmitTs = now
-    if (!force && signature === _lastCameraStateSignature) return
-    _lastCameraStateSignature = signature
-
-    window.dispatchEvent(new CustomEvent('seesound:camera-state', {
-        detail: {
-            position: {
-                x: camera.position.x,
-                y: camera.position.y,
-                z: camera.position.z,
-            },
-            target: {
-                x: orbitTarget.x,
-                y: orbitTarget.y,
-                z: orbitTarget.z,
-            },
-            fov: cameraPerspective.fov,
-            projection,
-        },
-    }))
-}
-
 window.addEventListener('seesound:camera-hud-toggle', (e) => {
     const requested = e?.detail?.enabled
     if (typeof requested === 'boolean') {
@@ -888,7 +852,6 @@ cameraHud.append(cameraReadout)
 const hudHost = document.getElementById('app') || document.body
 if (hudHost) hudHost.appendChild(cameraHud)
 setCameraHudEnabled(false)
-emitCameraState(true)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 6  ANIMATION LOOP
@@ -992,6 +955,7 @@ const exportManager = new ExportManager({
     triggerBlobDownload,
     shouldUsePostProcessing,
     getCurrentAudioTitle: _currentAudioTitle,
+    getCurrentPresetTitle: _currentPresetTitle,
     sanitizeFilePart: _sanitizeFilePart,
 })
 
@@ -1018,8 +982,8 @@ async function saveCanvasPng({ transparent = false } = {}) {
     return exportManager.saveCanvasPng({ transparent })
 }
 
-async function saveScenePly() {
-    return exportManager.saveScenePly()
+async function saveSceneObj() {
+    return exportManager.saveSceneObj()
 }
 
 function emitMuteState(playerEl, muted) {
@@ -1186,11 +1150,8 @@ function animate() {
         }))
     }
 
-    emitCameraState(false)
-
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
-    syncFogFromParams(bg)
     ps.setViewportHeight(renderer.domElement.height)
 
     if (shouldUsePostProcessing()) {
@@ -1212,7 +1173,7 @@ function animate() {
         const cameraUnits = getCameraCanvasUnits()
         const canvW = cameraUnits.w
         const canvH = cameraUnits.h
-        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()}${lineSegment} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)}`
+        cameraReadout.textContent = `cam p(${px},${py},${pz}) r(${rx},${ry},${rz}) pts ${ps.getVisibleCount()}${lineSegment} fft ${ae.peakByte} amp ${ae.amplitude.toFixed(3)} sc ${ae.spectralCentroid.toFixed(3)} sf ${ae.spectralFlux.toFixed(3)} sfl ${ae.spectralFlatness.toFixed(3)} inh ${ae.inharmonicity.toFixed(3)} canv ${canvW.toFixed(2)} × ${canvH.toFixed(2)} origin ${ORIGIN_SIGN_SIZE}u ${originSignEnabled ? 'on' : 'off'}`
     }
 }
 animate()
@@ -1282,7 +1243,7 @@ animate()
         if (loadedAudioFile) {
             void _saveAudioFileToDb(loadedAudioFile)
         }
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
     emitMuteState(playerEl, monitorMuted)
 
@@ -1290,13 +1251,10 @@ animate()
     let projectFileName = ''
     let projectAutoSaveTimer = null
     let projectLoadInProgress = false
-    let projectLocalAutosaveInterval = null
-    let localDraftDirtySinceLastAutosave = false
+    let projectLocalSaveTimer = null
     let pendingRecoveryDraft = null
-    let _lastAutosaveCameraSignature = ''
 
     const LOCAL_PROJECT_DRAFT_KEY = 'seesound_project_draft_v1'
-    const LOCAL_PROJECT_AUTOSAVE_MS = 20000
     const AUDIO_DB_NAME = 'seesound_local_audio_v1'
     const AUDIO_DB_STORE = 'files'
     const AUDIO_DB_KEY = 'last-audio'
@@ -1422,17 +1380,7 @@ animate()
     }
 
     const _buildCurrentProjectPayload = async () => {
-        const snapshot = {
-            ...getSnapshot(),
-            cameraPosX: Number(camera.position.x),
-            cameraPosY: Number(camera.position.y),
-            cameraPosZ: Number(camera.position.z),
-            cameraTargetX: Number(orbitTarget.x),
-            cameraTargetY: Number(orbitTarget.y),
-            cameraTargetZ: Number(orbitTarget.z),
-            cameraProjection: camera === cameraPerspective ? 'perspective' : 'axonometric',
-            cameraAngleOfView: Number(cameraPerspective.fov),
-        }
+        const snapshot = getSnapshot()
         const presetLibrary = await _collectPresetLibrary()
         const title = _currentPresetTitle()
         return buildProjectPayload({
@@ -1565,8 +1513,6 @@ animate()
                     await _ensureTemplateAudioFallback(template)
                 }
 
-                _clearLocalProjectDraft()
-
                 return true
             }
 
@@ -1584,7 +1530,6 @@ animate()
                 // Apply template params/rules as one patch so a single Undo restores previous state.
                 setMany(presetParams)
                 await _ensureTemplateAudioFallback(template)
-                _clearLocalProjectDraft()
                 return true
             }
 
@@ -1605,7 +1550,6 @@ animate()
             await loadProjectFromPayload(payload)
             emitProjectFileState()
             await _ensureTemplateAudioFallback(template)
-            _clearLocalProjectDraft()
             return true
         } catch (err) {
             console.warn('[Template] load failed:', err)
@@ -1630,55 +1574,14 @@ animate()
         }
     }
 
-    const _clearLocalProjectDraft = () => {
-        try {
-            localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY)
-        } catch {
-            // ignore storage errors
-        }
-        pendingRecoveryDraft = null
-        window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
-    }
-
-    const _ensureLocalDraftAutosaveLoop = () => {
-        if (projectLocalAutosaveInterval) return
-        projectLocalAutosaveInterval = setInterval(async () => {
-            if (projectLoadInProgress) return
-            if (!localDraftDirtySinceLastAutosave) return
-            localDraftDirtySinceLastAutosave = false
-            await _saveLocalProjectDraft()
-        }, LOCAL_PROJECT_AUTOSAVE_MS)
-    }
-
-    const _markLocalProjectDraftDirty = () => {
+    const _scheduleLocalProjectDraftSave = () => {
         if (projectLoadInProgress) return
-        localDraftDirtySinceLastAutosave = true
-        _ensureLocalDraftAutosaveLoop()
+        if (projectLocalSaveTimer) clearTimeout(projectLocalSaveTimer)
+        projectLocalSaveTimer = setTimeout(async () => {
+            projectLocalSaveTimer = null
+            await _saveLocalProjectDraft()
+        }, 500)
     }
-
-    window.addEventListener('seesound:camera-state', (event) => {
-        const detail = event?.detail || {}
-        const px = Number(detail.position?.x)
-        const py = Number(detail.position?.y)
-        const pz = Number(detail.position?.z)
-        const tx = Number(detail.target?.x)
-        const ty = Number(detail.target?.y)
-        const tz = Number(detail.target?.z)
-        const fov = Number(detail.fov)
-        const projection = String(detail.projection || '')
-
-        if (![px, py, pz, tx, ty, tz, fov].every(Number.isFinite)) return
-        if (projection !== 'perspective' && projection !== 'axonometric') return
-
-        const signature = [
-            px.toFixed(3), py.toFixed(3), pz.toFixed(3),
-            tx.toFixed(3), ty.toFixed(3), tz.toFixed(3),
-            fov.toFixed(3), projection,
-        ].join('|')
-        if (signature === _lastAutosaveCameraSignature) return
-        _lastAutosaveCameraSignature = signature
-        _markLocalProjectDraftDirty()
-    })
 
     const _readLocalProjectDraftIfAny = () => {
         try {
@@ -1728,7 +1631,7 @@ animate()
                 detail: { fileName: projectFileName || _defaultProjectName() },
             }))
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch (err) {
             console.warn('[Project] save failed:', err)
@@ -1801,8 +1704,8 @@ animate()
             return true
         }
 
-        if (target === 'obj' || target === 'ply') {
-            await saveScenePly()
+        if (target === 'obj') {
+            await saveSceneObj()
             return true
         }
 
@@ -1819,7 +1722,7 @@ animate()
                 fileName: suggestedName,
                 includeAudio: false,
             })
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
 
@@ -1832,7 +1735,7 @@ animate()
                 fileName: suggestedName,
                 includeAudio: true,
             })
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
 
@@ -1844,7 +1747,7 @@ animate()
             fileName: suggestedName,
             includeAudio: false,
         })
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
         return true
     }
 
@@ -1877,7 +1780,7 @@ animate()
             console.warn('[Project] load failed:', err)
         } finally {
             projectLoadInProgress = false
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
         }
     }
 
@@ -1910,7 +1813,6 @@ animate()
             projectFileName = String(file.name || '').trim()
             await loadProjectFromPayload(parsed.payload)
             emitProjectFileState()
-            _clearLocalProjectDraft()
 
             if (parsed.audioFile instanceof File) {
                 loadFile(parsed.audioFile, parsed.audioFile.name)
@@ -1935,7 +1837,7 @@ animate()
             projectFileHandle = null
             projectFileName = String(suggested || getDefaultProjectDefinition().fileName || '').trim() || _defaultProjectName()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         }
         try {
@@ -1959,7 +1861,7 @@ animate()
             projectFileName = String(handle.name || suggestedName).trim()
             await saveProject()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
+            _scheduleLocalProjectDraftSave()
             return true
         } catch {
             return false
@@ -1967,36 +1869,11 @@ animate()
     }
 
     const saveProjectAsWithPicker = async (suggested = '') => {
-        const suggestedName = String(suggested || '').trim() || _defaultProjectName()
-        const normalizedSuggestedName = suggestedName.toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
-            ? suggestedName
-            : `${_nameWithoutExt(suggestedName)}${PROJECT_FILE_EXTENSION}`
-        let payload = null
+        if (typeof window.showSaveFilePicker !== 'function') return false
         try {
-            payload = await _buildCurrentProjectPayload()
-        } catch (err) {
-            console.warn('[Project] save as failed to build payload:', err)
-            alert('Failed to prepare project for Save As.')
-            return false
-        }
-
-        if (typeof window.showSaveFilePicker !== 'function') {
-            await _downloadProjectBundle({
-                payload,
-                fileName: normalizedSuggestedName,
-                includeAudio: false,
-            })
-            projectFileHandle = null
-            projectFileName = normalizedSuggestedName
-            emitProjectFileState()
-            _markLocalProjectDraftDirty()
-            console.info('[Project] Save As fallback: browser download save dialog used (no File System Access handle).')
-            return true
-        }
-
-        try {
+            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
             const handle = await window.showSaveFilePicker({
-                suggestedName: normalizedSuggestedName,
+                suggestedName,
                 types: [{
                     description: 'SEESOUND Project',
                     accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
@@ -2004,32 +1881,14 @@ animate()
             })
             if (!handle) return false
             projectFileHandle = handle
-            projectFileName = String(handle.name || normalizedSuggestedName).trim()
-            await _writeProjectToHandle(projectFileHandle, payload)
-            window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
-                detail: { fileName: projectFileName || normalizedSuggestedName },
-            }))
+            projectFileName = String(handle.name || suggestedName).trim()
+            await saveProject()
             emitProjectFileState()
-            _markLocalProjectDraftDirty()
             return true
-        } catch (err) {
-            if (err?.name === 'AbortError') return false
-            console.warn('[Project] save as failed; falling back to download:', err)
-            await _downloadProjectBundle({
-                payload,
-                fileName: normalizedSuggestedName,
-                includeAudio: false,
-            })
-            projectFileHandle = null
-            projectFileName = normalizedSuggestedName
-            emitProjectFileState()
-            _markLocalProjectDraftDirty()
-            console.info('[Project] Save As fallback: browser download save dialog used after picker write failure.')
-            return true
+        } catch {
+            return false
         }
     }
-
-    _ensureLocalDraftAutosaveLoop()
 
     playerEl.addEventListener('player:saveproject', async () => {
         if (projectFileHandle) {
@@ -2083,6 +1942,7 @@ animate()
             projectFileHandle = null
             projectFileName = String(getDefaultProjectDefinition().fileName || `New Project${PROJECT_FILE_EXTENSION}`).trim()
             pendingRecoveryDraft = null
+            try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
             emitProjectFileState()
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
                 detail: {
@@ -2093,6 +1953,7 @@ animate()
             window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
         } finally {
             projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     })
     window.addEventListener('seesound:factory-template-load-request', async (e) => {
@@ -2104,17 +1965,18 @@ animate()
     })
     window.addEventListener('seesound:project-recovery-dismiss', () => {
         pendingRecoveryDraft = null
+        try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
         window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
     })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
 
     subscribe((_, key) => {
         if (!key || key === '*' || projectLoadInProgress) return
         scheduleProjectAutosave()
-        _markLocalProjectDraftDirty()
+        _scheduleLocalProjectDraftSave()
     })
 
     const bootstrapDefaultProject = async () => {
@@ -2133,7 +1995,6 @@ animate()
         projectFileName = defaults.fileName
         emitProjectFileState()
         await loadProjectFromPayload(_buildDefaultProjectPayload())
-        _markLocalProjectDraftDirty()
     }
 
     emitProjectFileState()
@@ -2240,20 +2101,17 @@ applyCanvasScaleFromParams()
     emitCanvasSize(s.w, s.h)
 }
 subscribe((_, key) => {
-    if (key === 'cameraProjection') {
-        applyProjectionFromParams()
-        if (params.cameraProjection !== 'perspective') applyAxoPresetFromParams()
-    }
-    if (key === 'cameraAxoPreset') applyAxoPresetFromParams()
+    if (key === 'cameraProjection') applyProjectionFromParams()
+    if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
     if (
         key === 'cameraPosX' ||
         key === 'cameraPosY' ||
         key === 'cameraPosZ' ||
         key === 'cameraTargetX' ||
         key === 'cameraTargetY' ||
-        key === 'cameraTargetZ'
-    ) syncCameraFromParams({ includePose: true, includeFov: false })
-    if (key === 'cameraAngleOfView') syncCameraFromParams({ includePose: false, includeFov: true })
+        key === 'cameraTargetZ' ||
+        key === 'cameraAngleOfView'
+    ) syncCameraFromParams()
     if (
         key === 'postProcessEnabled' ||
         key === 'bloomEnabled' ||
@@ -2261,7 +2119,6 @@ subscribe((_, key) => {
         key === 'bloomRadius' ||
         key === 'bloomThreshold'
     ) syncPostProcessingFromParams()
-    if (key === 'fogEnabled' || key === 'fogDensity') syncFogFromParams(ps.getBackgroundColor())
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()
     if (key === 'maxParticles') {
