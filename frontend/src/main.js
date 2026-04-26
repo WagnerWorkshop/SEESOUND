@@ -48,7 +48,7 @@ import {
 } from './engine/project/ProjectIO.js'
 import { ExportManager } from './engine/project/ExportManager.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
-import { AudioEngine, snapFftSize } from './engine/audio/AudioEngine.js'
+import { AudioEngine, snapCqtDetailsPer10Octaves, snapFftSize } from './engine/audio/AudioEngine.js'
 import { CameraController } from './engine/renderer/CameraController.js'
 import resetIcon from './icons/reset.svg?raw'
 import fitIcon from './icons/fit.svg?raw'
@@ -746,10 +746,13 @@ function _normalizeByRange(value, minValue, maxValue) {
 function _buildBackendAudioAnalysisConfig(snapshot = {}, requiredInputsByTarget = null) {
     const usage = _deriveAudioUsage(requiredInputsByTarget)
     const fftSize = snapFftSize(snapshot.fftSize)
+    const cqtDetails = snapCqtDetailsPer10Octaves(snapshot.cqtDetailsPer10Octaves)
     return {
         sample_rate: 44100,
         fft_size: fftSize,
         hop_size: Math.max(64, Math.floor(fftSize / 4)),
+        analysis_mode: 'cqt-multirate-goertzel',
+        cqt_details_per_10_octaves: cqtDetails,
         rolloff_percent: 0.85,
         n_mfcc: 13,
         ...usage.backend,
@@ -781,10 +784,13 @@ window.addEventListener('seesound:particle-size-apply-all', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const ae = new AudioEngine({
     initialFftSize: params.fftSize,
+    initialCqtDetailsPer10Octaves: params.cqtDetailsPer10Octaves,
     snapFftSizeFn: snapFftSize,
     deriveAudioUsage: _deriveAudioUsage,
 })
 ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
+ae.setFluxWindowFrames(params.fluxWindowFrames)
+ae.setCqtDetailsPer10Octaves(params.cqtDetailsPer10Octaves)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 4  STATUS (BROWSER-ONLY MODE)
@@ -2127,12 +2133,28 @@ subscribe((_, key) => {
         ps.setMaxParticles(nextCap)
     }
     if (key === 'fftSize') {
-        const snapped = _snapFftSize(params.fftSize)
+        const snapped = snapFftSize(params.fftSize)
         if (params.fftSize !== snapped) {
             set('fftSize', snapped)
             return
         }
         ae.setFftSize(snapped)
+    }
+    if (key === 'fluxWindowFrames') {
+        const next = Math.max(1, Math.min(64, Math.floor(Number(params.fluxWindowFrames) || 10)))
+        if (params.fluxWindowFrames !== next) {
+            set('fluxWindowFrames', next)
+            return
+        }
+        ae.setFluxWindowFrames(next)
+    }
+    if (key === 'cqtDetailsPer10Octaves') {
+        const next = snapCqtDetailsPer10Octaves(params.cqtDetailsPer10Octaves)
+        if (params.cqtDetailsPer10Octaves !== next) {
+            set('cqtDetailsPer10Octaves', next)
+            return
+        }
+        ae.setCqtDetailsPer10Octaves(next)
     }
     if (key === 'ruleBlocks') {
         const state = ps.onRulesChanged(params.ruleBlocks ?? [])

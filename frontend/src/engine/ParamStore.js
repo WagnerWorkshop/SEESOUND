@@ -142,6 +142,12 @@ const PARAMS_BASE = [
         canDisable: false,
     },
     {
+        key: 'cqtDetailsPer10Octaves', group: 'inputProcessing', label: 'CQT Detail Resolution',
+        min: 100, max: 5000, step: 10, default: 1000, unit: 'bins/10 oct',
+        desc: 'Log-spaced Constant-Q detail density measured per 10 octaves.',
+        canDisable: false,
+    },
+    {
         key: 'fluxWindowFrames', group: 'inputProcessing', label: 'Activity Interval',
         min: 1, max: 64, step: 1, default: 10, unit: 'frames',
         desc: 'Rolling frame window used to smooth activity detection.',

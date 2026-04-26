@@ -76,6 +76,14 @@ const SETTINGS_SLIDERS = Object.freeze([
         tooltip: getSettingsTooltip('inputGain', 'Input Gain. Scales all amplitude before analysis.'),
     },
     {
+        key: 'cqtDetailsPer10Octaves',
+        label: UI_TEXT.settings.cqtDetailResolution || 'CQT Detail Resolution',
+        min: 100,
+        max: 5000,
+        step: 10,
+        tooltip: getSettingsTooltip('cqtDetailsPer10Octaves', 'CQT Detail Resolution. Number of logarithmic bins computed per 10 octaves.'),
+    },
+    {
         key: 'defaultParticleSize',
         label: UI_TEXT.settings.particleDefaultSize,
         min: 1,

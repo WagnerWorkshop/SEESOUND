@@ -18,6 +18,29 @@ function freqToLogNorm(hz) {
     ))
 }
 
+function sampleLogCqtArrayAtHz(arrayLike, hz) {
+    if (!arrayLike || !Number.isFinite(arrayLike.length) || arrayLike.length <= 0) return null
+    if (arrayLike.length === 1) {
+        const only = Number(arrayLike[0])
+        return Number.isFinite(only) ? only : null
+    }
+
+    const safeHz = Math.max(FREQ_MIN_HZ, Math.min(FREQ_MAX_HZ, Number(hz) || FREQ_MIN_HZ))
+    const logNorm = (Math.log2(safeHz) - LOG_FREQ_MIN) / (LOG_FREQ_MAX - LOG_FREQ_MIN)
+    const t = Math.max(0, Math.min(1, logNorm))
+    const pos = t * (arrayLike.length - 1)
+    const i0 = Math.max(0, Math.min(arrayLike.length - 1, Math.floor(pos)))
+    const i1 = Math.max(0, Math.min(arrayLike.length - 1, i0 + 1))
+    const frac = pos - i0
+
+    const v0 = Number(arrayLike[i0])
+    const v1 = Number(arrayLike[i1])
+    if (!Number.isFinite(v0) && !Number.isFinite(v1)) return null
+    if (!Number.isFinite(v0)) return v1
+    if (!Number.isFinite(v1)) return v0
+    return v0 + (v1 - v0) * frac
+}
+
 function normalizeByRange(value, minValue, maxValue) {
     const lo = Number(minValue)
     const hi = Number(maxValue)
@@ -1277,25 +1300,42 @@ export class ParticleSystem {
 
             for (let i = binStart; i <= binEnd; i++) {
                 const byte = freqData[i]
-                const magNorm = (binMagArr && i < binMagArr.length)
-                    ? normalizeByRange(binMagArr[i], binMagnitudeNormMin, binMagnitudeNormMax)
+                const hzAtBin = binToHz(i)
+                const sampledMagnitude = sampleLogCqtArrayAtHz(binMagArr, hzAtBin)
+                const magNorm = Number.isFinite(sampledMagnitude)
+                    ? normalizeByRange(sampledMagnitude, binMagnitudeNormMin, binMagnitudeNormMax)
                     : (byte / 255)
                 sumRawEnergy += magNorm
                 if (needBinMagnitude) sumBinMagnitude += magNorm
-                if (needBinPhase && binPhaseArr && i < binPhaseArr.length) {
-                    sumBinPhase += normalizeByRange(binPhaseArr[i], -Math.PI, Math.PI)
+                if (needBinPhase && binPhaseArr) {
+                    const sampledPhase = sampleLogCqtArrayAtHz(binPhaseArr, hzAtBin)
+                    if (Number.isFinite(sampledPhase)) {
+                        sumBinPhase += normalizeByRange(sampledPhase, -Math.PI, Math.PI)
+                    }
                 }
-                if (needBinFlux && binFluxArr && i < binFluxArr.length) {
-                    sumBinFlux += normalizeByRange(binFluxArr[i], binFluxNormMin, binFluxNormMax)
+                if (needBinFlux && binFluxArr) {
+                    const sampledFlux = sampleLogCqtArrayAtHz(binFluxArr, hzAtBin)
+                    if (Number.isFinite(sampledFlux)) {
+                        sumBinFlux += normalizeByRange(sampledFlux, binFluxNormMin, binFluxNormMax)
+                    }
                 }
-                if (needBinPhaseDev && binPhaseDevArr && i < binPhaseDevArr.length) {
-                    sumBinPhaseDev += normalizeByRange(binPhaseDevArr[i], binPhaseDeviationNormMin, binPhaseDeviationNormMax)
+                if (needBinPhaseDev && binPhaseDevArr) {
+                    const sampledPhaseDev = sampleLogCqtArrayAtHz(binPhaseDevArr, hzAtBin)
+                    if (Number.isFinite(sampledPhaseDev)) {
+                        sumBinPhaseDev += normalizeByRange(sampledPhaseDev, binPhaseDeviationNormMin, binPhaseDeviationNormMax)
+                    }
                 }
-                if (needBinAttackTime && binAttackTimeArr && i < binAttackTimeArr.length) {
-                    sumBinAttackTime += normalizeByRange(binAttackTimeArr[i], binAttackTimeNormMin, binAttackTimeNormMax)
+                if (needBinAttackTime && binAttackTimeArr) {
+                    const sampledAttackTime = sampleLogCqtArrayAtHz(binAttackTimeArr, hzAtBin)
+                    if (Number.isFinite(sampledAttackTime)) {
+                        sumBinAttackTime += normalizeByRange(sampledAttackTime, binAttackTimeNormMin, binAttackTimeNormMax)
+                    }
                 }
-                if (needBinEnvelope && binEnvArr && i < binEnvArr.length) {
-                    sumBinEnvelope += normalizeByRange(binEnvArr[i] / 3, 0, 1)
+                if (needBinEnvelope && binEnvArr) {
+                    const sampledEnvelope = sampleLogCqtArrayAtHz(binEnvArr, hzAtBin)
+                    if (Number.isFinite(sampledEnvelope)) {
+                        sumBinEnvelope += normalizeByRange(sampledEnvelope / 3, 0, 1)
+                    }
                 }
                 const panValue = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
                 const panWeight = Math.max(1, byte)

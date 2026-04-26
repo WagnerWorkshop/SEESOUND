@@ -57,10 +57,22 @@ export function snapFftSize(value) {
     return best
 }
 
+export function snapCqtDetailsPer10Octaves(value) {
+    const n = Math.floor(Number(value))
+    if (!Number.isFinite(n)) return 1000
+    return Math.max(100, Math.min(5000, n))
+}
+
 export class AudioEngine {
-    constructor({ initialFftSize = 2048, snapFftSizeFn = snapFftSize, deriveAudioUsage } = {}) {
+    constructor({
+        initialFftSize = 2048,
+        initialCqtDetailsPer10Octaves = 1000,
+        snapFftSizeFn = snapFftSize,
+        deriveAudioUsage,
+    } = {}) {
         this._snapFftSize = typeof snapFftSizeFn === 'function' ? snapFftSizeFn : snapFftSize
         this._deriveAudioUsage = typeof deriveAudioUsage === 'function' ? deriveAudioUsage : defaultUsage
+        this._snapCqtDetailsPer10Octaves = snapCqtDetailsPer10Octaves
 
         this.ctx = null; this.analyser = null; this.source = null
         this.outputGain = null
@@ -79,10 +91,14 @@ export class AudioEngine {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
+            fluxWindowFrames: 10,
             attackThreshold: 0.0005,
             sustainFluxEps: 0.004,
             sustainMagThreshold: 0.08,
             decayThreshold: 0.008,
+            cqtDetailsPer10Octaves: this._snapCqtDetailsPer10Octaves(initialCqtDetailsPer10Octaves),
+            cqtMinHz: 16,
+            cqtMaxHz: 20000,
         }
         this._calcUsage = {
             needRms: true,
@@ -140,6 +156,10 @@ export class AudioEngine {
             processorOptions: {
                 fftSize: this.FFT_SIZE,
                 hopSize: Math.floor(this.FFT_SIZE / 4),
+                fluxWindowFrames: this._workletConfig.fluxWindowFrames,
+                cqtDetailsPer10Octaves: this._workletConfig.cqtDetailsPer10Octaves,
+                cqtMinHz: this._workletConfig.cqtMinHz,
+                cqtMaxHz: this._workletConfig.cqtMaxHz,
             },
         })
         node.port.onmessage = (event) => {
@@ -204,6 +224,33 @@ export class AudioEngine {
         this._workletConfig.needEnvelope = usage.worklet.needEnvelope
         this._workletConfig.needAttackTime = usage.worklet.needAttackTime
         this._calcUsage = usage.engine
+        this._postWorkletConfig()
+    }
+
+    setFluxWindowFrames(nextValue) {
+        const next = Math.max(1, Math.min(64, Math.floor(Number(nextValue) || 10)))
+        if (this._workletConfig.fluxWindowFrames === next) return
+        this._workletConfig.fluxWindowFrames = next
+        this._postWorkletConfig()
+    }
+
+    setCqtDetailsPer10Octaves(nextValue) {
+        const next = this._snapCqtDetailsPer10Octaves(nextValue)
+        if (this._workletConfig.cqtDetailsPer10Octaves === next) return
+        this._workletConfig.cqtDetailsPer10Octaves = next
+        this._postWorkletConfig()
+    }
+
+    setCqtFrequencyRange(minHz, maxHz) {
+        const nextMin = Math.max(8, Math.min(22050, Number(minHz) || 16))
+        const nextMaxRaw = Math.max(8, Math.min(22050, Number(maxHz) || 20000))
+        const nextMax = Math.max(nextMin * 1.05, nextMaxRaw)
+
+        const changed = this._workletConfig.cqtMinHz !== nextMin || this._workletConfig.cqtMaxHz !== nextMax
+        if (!changed) return
+
+        this._workletConfig.cqtMinHz = nextMin
+        this._workletConfig.cqtMaxHz = nextMax
         this._postWorkletConfig()
     }
 

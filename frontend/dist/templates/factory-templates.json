@@ -1,6 +1,12 @@
 {
     "templates": [
         {
+            "id": "conversation-dual-clouds",
+            "title": "Conversation Dual Clouds",
+            "presetPath": "/templates/presets/conversation-dual-clouds.json",
+            "presetName": "conversation dual clouds"
+        },
+        {
             "id": "holistic-3d",
             "title": "Holistic 3d",
             "presetPath": "/templates/presets/holistic-3d.json",
@@ -22,12 +28,6 @@
             "thumbnail": "/templates/thumbnails/linear-colors.svg"
         },
         {
-            "id": "linear-spectrogram-particles",
-            "title": "Linear Spectrogram Particles",
-            "presetPath": "/templates/presets/linear-spectrogram-particles.json",
-            "presetName": "linear spectrogram particles"
-        },
-        {
             "id": "linear-textured",
             "title": "Textured Timbre Colors",
             "presetPath": "/templates/presets/linear-textured.json",
@@ -40,12 +40,6 @@
             "presetPath": "/templates/presets/linear-timbre-colors.json",
             "presetName": "linear timbre colors",
             "thumbnail": "/templates/thumbnails/linear-timbre-colors.svg"
-        },
-        {
-            "id": "conversation-dual-clouds",
-            "title": "Conversation Dual Clouds",
-            "presetPath": "/templates/presets/conversation-dual-clouds.json",
-            "presetName": "conversation dual clouds"
         },
         {
             "id": "the-vortex",
