@@ -58,9 +58,12 @@ export function snapFftSize(value) {
 }
 
 export function snapCqtDetailsPer10Octaves(value) {
-    const n = Math.floor(Number(value))
+    const n = Math.round(Number(value))
     if (!Number.isFinite(n)) return 1000
-    return Math.max(100, Math.min(5000, n))
+    // Snap to discrete steps of 100 between 100 and 1000 (inclusive)
+    const clamped = Math.max(100, Math.min(1000, n))
+    const snapped = Math.round(clamped / 100) * 100
+    return Math.max(100, Math.min(1000, snapped))
 }
 
 export class AudioEngine {
@@ -100,6 +103,7 @@ export class AudioEngine {
             cqtMinHz: 16,
             cqtMaxHz: 20000,
         }
+        this._cqtUpdateTimeout = null
         this._calcUsage = {
             needRms: true,
             needSpectralCentroid: false,
@@ -238,7 +242,11 @@ export class AudioEngine {
         const next = this._snapCqtDetailsPer10Octaves(nextValue)
         if (this._workletConfig.cqtDetailsPer10Octaves === next) return
         this._workletConfig.cqtDetailsPer10Octaves = next
-        this._postWorkletConfig()
+        if (this._cqtUpdateTimeout) clearTimeout(this._cqtUpdateTimeout)
+        this._cqtUpdateTimeout = setTimeout(() => {
+            this._cqtUpdateTimeout = null
+            this._postWorkletConfig()
+        }, 150)
     }
 
     setCqtFrequencyRange(minHz, maxHz) {

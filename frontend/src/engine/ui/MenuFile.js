@@ -14,7 +14,6 @@ export function buildFileMenu(body, deps) {
     const shortNameFromFile = (rawName = '') => {
         const fileName = String(rawName || '').trim()
         if (!fileName) return ''
-        if (/\.sspp$/i.test(fileName)) return fileName.replace(/\.sspp$/i, '')
         if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
         return fileName.replace(/\.[^./\\]+$/g, '')
     }
@@ -38,9 +37,9 @@ export function buildFileMenu(body, deps) {
                 hint: labels.exportHintObj || 'Scene geometry',
             },
             {
-                value: 'project-package',
-                label: labels.exportProjectPackageOption || 'Project package (.sspp)',
-                hint: labels.exportHintProjectPackage || 'All settings, rules and audio',
+                value: 'project-file',
+                label: labels.exportProjectJson || 'Project (.ssp)',
+                hint: labels.exportHintProjectFile || 'Project file with all settings',
             },
             {
                 value: 'settings-json',
@@ -95,7 +94,6 @@ export function buildFileMenu(body, deps) {
     const projectNameFromFile = (rawName = '') => {
         const fileName = String(rawName || '').trim()
         if (!fileName) return ''
-        if (/\.sspp$/i.test(fileName)) return fileName.replace(/\.sspp$/i, '')
         if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
         return fileName.replace(/\.[^./\\]+$/g, '')
     }
@@ -147,7 +145,7 @@ export function buildFileMenu(body, deps) {
     btnSaveAsProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-as-request')))
     btnExportAs.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('seesound:project-export-request', {
-            detail: { format: String(exportSelect.value || 'project-package') },
+            detail: { format: String(exportSelect.value || 'project-file') },
         }))
     })
 

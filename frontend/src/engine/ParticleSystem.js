@@ -106,6 +106,15 @@ function rgbToHsv(r, g, b) {
     return { h, s, v }
 }
 
+function hydrateColorState(state, r, g, b) {
+    if (!state || typeof state !== 'object') return
+    const base = rgbToHsv(r, g, b)
+    if (!Number.isFinite(state.hue)) state.hue = base.h
+    if (!Number.isFinite(state.saturation)) state.saturation = base.s
+    if (!Number.isFinite(state.brightness)) state.brightness = base.v
+    if (!Number.isFinite(state.yellow)) state.yellow = 0
+}
+
 function hsvToRgb(h, s, v) {
     const hh = normalizeHue(h) ?? 0
     const ss = clamp01(s)
@@ -599,6 +608,7 @@ export class ParticleSystem {
                 opacity: this._alpha[i],
                 shapeType: this._shape[i] > 0.5 ? 'circle' : 'square',
             }
+            hydrateColorState(particle, particle.red, particle.green, particle.blue)
 
             this._compiledRules.applyLivingRules(loopCtx, particle)
 
@@ -791,10 +801,6 @@ export class ParticleSystem {
                 this._mat.needsUpdate = true
                 this._lastBlending = THREE.NormalBlending
             }
-            if (!this._mat.depthWrite) {
-                this._mat.depthWrite = true
-                this._mat.needsUpdate = true
-            }
         } else if (blendStr === 'alpha') {
             const mat = this._mat
             const needsUpdate = (
@@ -810,10 +816,6 @@ export class ParticleSystem {
                 mat.blendEquation = THREE.AddEquation
                 mat.needsUpdate = true
                 this._lastBlending = mat.blending
-            }
-            if (mat.depthWrite) {
-                mat.depthWrite = false
-                mat.needsUpdate = true
             }
         } else {
             const mat = this._mat
@@ -857,11 +859,13 @@ export class ParticleSystem {
                 }
             }
 
-            if (mat.depthWrite) {
-                mat.depthWrite = false
-                needsUpdate = true
-            }
             if (needsUpdate) mat.needsUpdate = true
+        }
+
+        const wantsPointDepthWrite = !luminousMode
+        if (this._mat.depthWrite !== wantsPointDepthWrite) {
+            this._mat.depthWrite = wantsPointDepthWrite
+            this._mat.needsUpdate = true
         }
 
         if (this._lineMat.blending !== this._mat.blending) {
@@ -1031,6 +1035,7 @@ export class ParticleSystem {
                 particleCount: 1,
                 shapeType: 'square',
             }
+            hydrateColorState(particle, particle.red, particle.green, particle.blue)
 
             if (emitLightParticles) {
                 this.applySpawnRulesToParticle({
@@ -1151,6 +1156,7 @@ export class ParticleSystem {
                 blue: brightness,
                 opacity: Math.min(1, (0.08 + energy * 1.4) * alphaBoost),
             }
+            hydrateColorState(line, line.red, line.green, line.blue)
 
             if (emitLines) {
                 this.applyLineRules({

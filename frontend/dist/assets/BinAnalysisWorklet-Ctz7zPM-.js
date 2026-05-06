@@ -71,6 +71,17 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._fluxHistoryWritePos = new Uint16Array(0)
         this._fluxHistoryFill = new Uint8Array(0)
 
+        this._framesUntilNextAnalysis = 0
+        this.rampGain = 0.0
+        this.rampStep = 1.0 / (sampleRate * 0.1)
+
+        // Internal math resolution is locked once at startup. UI changes to
+        // `cqtDetailsPer10Octaves` will only affect the visual thinning layer
+        // and will not trigger a plan rebuild. This avoids mid-stream buffer
+        // reallocations that cause audio artifacts.
+        this._internalResolution = DEFAULT_CQT_DETAILS_PER_10_OCTAVES
+        this._visualResolution = this._cfg.cqtDetailsPer10Octaves
+
         this._rebuildCqtPlan()
 
         this.port.onmessage = (event) => {
@@ -88,10 +99,15 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
             let requiresPlanRebuild = false
 
+            // When the UI requests a different details-per-10-octaves value,
+            // do not rebuild the internal math plan. Instead, update the
+            // visual resolution (thinner) which compresses the fixed internal
+            // output for UI consumption.
             const nextDetails = this._sanitizeCqtDetails(cfg.cqtDetailsPer10Octaves)
             if (nextDetails !== this._cfg.cqtDetailsPer10Octaves) {
                 this._cfg.cqtDetailsPer10Octaves = nextDetails
-                requiresPlanRebuild = true
+                this._visualResolution = nextDetails
+                // do NOT set requiresPlanRebuild
             }
 
             const nextMin = this._sanitizeHz(cfg.cqtMinHz, this._cfg.cqtMinHz)
@@ -201,10 +217,41 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._decimator.reset()
     }
 
+    _flushDspState() {
+        // Clear all ring buffer audio data to prevent DSP discontinuity artifacts
+        // when CQT parameters change. This eliminates the pink noise spike that occurs
+        // when reading stale history with new transform parameters.
+        for (let level = 0; level < this._levelCount; level++) {
+            this._levelRings[level].fill(0)
+        }
+
+        // Clear all derived metric state to ensure clean phase/magnitude/flux tracking
+        this._prevMag.fill(0)
+        this._prevPhase.fill(0)
+        this._prevPhaseDelta.fill(0)
+        this._attackElapsedMs.fill(0)
+        this._attackLastMs.fill(0)
+        this._attackActive.fill(0)
+
+        // Clear all flux history to restart activity detection
+        this._fluxHistory.fill(0)
+        this._fluxHistorySums.fill(0)
+        this._fluxHistoryWritePos.fill(0)
+        this._fluxHistoryFill.fill(0)
+
+        // Skip analysis for 2 frames while buffers refill with fresh data.
+        // This prevents discontinuity artifacts when the parameter change causes
+        // a temporary mismatch between window size and buffer fill level.
+        this._framesUntilNextAnalysis = 2
+        this.rampGain = 0.0
+    }
+
     _rebuildCqtPlan() {
         const minHz = Math.max(8, this._cfg.cqtMinHz)
         const maxHz = Math.max(minHz * 1.05, this._cfg.cqtMaxHz)
-        const detailsPer10 = Math.max(100, this._cfg.cqtDetailsPer10Octaves)
+        // Build the internal CQT plan using the locked internal resolution so
+        // the internal arrays are allocated exactly once at startup.
+        const detailsPer10 = this._internalResolution || Math.max(100, this._cfg.cqtDetailsPer10Octaves)
         const binsPerOctave = detailsPer10 / 10
         const octaveSpan = Math.max(0.125, Math.log2(maxHz / minHz))
         const requestedBinCount = Math.max(8, Math.min(6000, Math.round(octaveSpan * binsPerOctave)))
@@ -268,6 +315,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         this._resizeMetricBuffers(this.binCount)
         this._configureLevelRings(maxWindowByLevel, minWindowByLevel)
+        this._flushDspState()
     }
 
     _pushLevelSample(level, sample) {
@@ -416,6 +464,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needPhase || cfg.needEnvelope || cfg.needAttackTime
         if (!cfg.enabled || !needsAny || this.binCount === 0) return
 
+        // Skip analysis frames immediately after CQT parameter changes to allow
+        // ring buffers to refill with fresh data and prevent discontinuity artifacts.
+        if (this._framesUntilNextAnalysis > 0) {
+            this._framesUntilNextAnalysis--
+            return
+        }
+
         let analyzedAny = false
 
         for (let level = 0; level < this._levelCount; level++) {
@@ -443,18 +498,132 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         if (!analyzedAny) return
 
         const payload = { type: 'binMetrics' }
-        if (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) payload.magnitude = this._outMagnitude
-        if (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) payload.flux = this._outFlux
-        if (cfg.needPhaseDeviation) payload.phaseDeviation = this._outPhaseDeviation
-        if (cfg.needPhase) payload.phase = this._outPhase
-        if (cfg.needEnvelope) payload.envelope = this._outEnvelope
-        if (cfg.needAttackTime) payload.attackTime = this._outAttackTime
+
+        // Determine visual target bin count based on requested visual resolution
+        // relative to the internal math resolution.
+        const internalRes = this._internalResolution || DEFAULT_CQT_DETAILS_PER_10_OCTAVES
+        const visualReq = Math.max(1, Math.floor(Number(this._visualResolution) || this._cfg.cqtDetailsPer10Octaves))
+        let visualBinCount = Math.max(8, Math.min(this.binCount, Math.round(this.binCount * (visualReq / internalRes))))
+
+        // If visual bin count is >= actual bin count, just send the full buffers.
+        const shouldThin = visualBinCount < this.binCount
+
+        if (!shouldThin) {
+            if (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) payload.magnitude = this._outMagnitude
+            if (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) payload.flux = this._outFlux
+            if (cfg.needPhaseDeviation) payload.phaseDeviation = this._outPhaseDeviation
+            if (cfg.needPhase) payload.phase = this._outPhase
+            if (cfg.needEnvelope) payload.envelope = this._outEnvelope
+            if (cfg.needAttackTime) payload.attackTime = this._outAttackTime
+            this.port.postMessage(payload)
+            return
+        }
+
+        // Thinning via max-pooling: compress internal high-res arrays into fewer
+        // visual bins by taking the maximum value in each chunk.
+        const ratio = Math.ceil(this.binCount / visualBinCount)
+        const outLen = Math.ceil(this.binCount / ratio)
+        if (cfg.needMagnitude || cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) {
+            const thinnedMag = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                let chunkMax = -Infinity
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const v = this._outMagnitude[j]
+                    if (v > chunkMax) chunkMax = v
+                }
+                thinnedMag[out] = (chunkMax === -Infinity) ? -120 : chunkMax
+            }
+            payload.magnitude = thinnedMag
+        }
+        if (cfg.needFlux || cfg.needEnvelope || cfg.needAttackTime) {
+            const thinnedFlux = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                let chunkMax = -Infinity
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const v = this._outFlux[j]
+                    if (v > chunkMax) chunkMax = v
+                }
+                thinnedFlux[out] = (chunkMax === -Infinity) ? 0 : chunkMax
+            }
+            payload.flux = thinnedFlux
+        }
+        if (cfg.needPhaseDeviation) {
+            const thinned = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                let chunkMax = -Infinity
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const v = this._outPhaseDeviation[j]
+                    if (v > chunkMax) chunkMax = v
+                }
+                thinned[out] = (chunkMax === -Infinity) ? 0 : chunkMax
+            }
+            payload.phaseDeviation = thinned
+        }
+        if (cfg.needPhase) {
+            const thinned = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                // For phase we pick the phase of the max-magnitude bin inside the chunk
+                let maxMag = -Infinity
+                let phaseVal = 0
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const m = this._outMagnitude[j]
+                    if (m > maxMag) {
+                        maxMag = m
+                        phaseVal = this._outPhase[j]
+                    }
+                }
+                thinned[out] = phaseVal
+            }
+            payload.phase = thinned
+        }
+        if (cfg.needEnvelope) {
+            const thinned = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                let chunkMax = -Infinity
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const v = this._outEnvelope[j]
+                    if (v > chunkMax) chunkMax = v
+                }
+                thinned[out] = (chunkMax === -Infinity) ? 0 : chunkMax
+            }
+            payload.envelope = thinned
+        }
+        if (cfg.needAttackTime) {
+            const thinned = new Float32Array(outLen)
+            for (let out = 0, i = 0; i < this.binCount; i += ratio, out++) {
+                let chunkMax = -Infinity
+                const end = Math.min(i + ratio, this.binCount)
+                for (let j = i; j < end; j++) {
+                    const v = this._outAttackTime[j]
+                    if (v > chunkMax) chunkMax = v
+                }
+                thinned[out] = (chunkMax === -Infinity) ? 0 : chunkMax
+            }
+            payload.attackTime = thinned
+        }
+
         this.port.postMessage(payload)
     }
 
-    process(inputs) {
+    process(inputs, outputs) {
         const input = inputs[0]
         if (input && input.length) {
+            for (let channel = 0; channel < input.length; channel++) {
+                const channelData = input[channel]
+                if (!channelData) continue
+                for (let i = 0; i < channelData.length; i++) {
+                    if (this.rampGain < 1.0) {
+                        this.rampGain += this.rampStep
+                        if (this.rampGain > 1.0) this.rampGain = 1.0
+                    }
+                    channelData[i] *= this.rampGain
+                }
+            }
             this._pushSamples(input)
             this._analyzeAndPost()
         }

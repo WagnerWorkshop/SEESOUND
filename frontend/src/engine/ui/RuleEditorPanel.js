@@ -22,6 +22,141 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     const sectionBodyByName = new Map()
     const sectionRows = new Map()
     let duplicateSequence = 0
+    let latestProbeInputs = null
+
+    const RULE_INPUT_IDS = [...RULE_VARIABLE_ID_SET]
+    const expressionEvalCache = new Map()
+    const EVAL_HELPERS = Object.freeze({
+        clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
+        lerp: (a, b, t) => a + (b - a) * t,
+        smoothstep: (e0, e1, x) => {
+            const span = Math.max(1e-9, e1 - e0)
+            const t = Math.max(0, Math.min(1, (x - e0) / span))
+            return t * t * (3 - 2 * t)
+        },
+        pow: Math.pow,
+        mod: (value, max) => {
+            const v = Number(value)
+            const m = Number(max)
+            if (!Number.isFinite(v) || !Number.isFinite(m) || Math.abs(m) < 1e-9) return 0
+            return ((v % m) + m) % m
+        },
+        sin: Math.sin,
+        cos: Math.cos,
+        step: (edge, value) => (value < edge ? 0 : 1),
+        iif: (condition, trueVal, falseVal) => (condition ? trueVal : falseVal),
+        min: Math.min,
+        max: Math.max,
+        abs: Math.abs,
+        avg: (...values) => {
+            const nums = values.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+            if (nums.length === 0) return 0
+            return nums.reduce((sum, value) => sum + value, 0) / nums.length
+        },
+        floor: Math.floor,
+        ceil: Math.ceil,
+        round: Math.round,
+    })
+    const EVAL_HELPER_NAMES = Object.keys(EVAL_HELPERS)
+    const EVAL_HELPER_VALUES = EVAL_HELPER_NAMES.map((name) => EVAL_HELPERS[name])
+
+    function normalizeExpressionSyntax(expression) {
+        let next = String(expression || '').trim()
+        if (!next) return ''
+        next = next.replace(/×/g, '*').replace(/÷/g, '/')
+        next = next.replace(/\band\b/gi, '&&')
+        next = next.replace(/\bor\b/gi, '||')
+        next = next.replace(/\bnot\b/gi, '!')
+        next = next.replace(/\bif\s*\(/gi, 'iif(')
+        return next
+    }
+
+    function getInputValue(inputs, key) {
+        const raw = inputs && Object.prototype.hasOwnProperty.call(inputs, key) ? inputs[key] : 0
+        const numeric = Number(raw)
+        return Number.isFinite(numeric) ? numeric : 0
+    }
+
+    function getExpressionEvaluator(expression) {
+        const normalized = normalizeExpressionSyntax(expression)
+        if (!normalized) return null
+        if (expressionEvalCache.has(normalized)) return expressionEvalCache.get(normalized)
+
+        try {
+            const fn = new Function(...RULE_INPUT_IDS, ...EVAL_HELPER_NAMES, `return (${normalized});`)
+            const evaluator = (inputs) => {
+                const inputValues = RULE_INPUT_IDS.map((id) => getInputValue(inputs, id))
+                return fn(...inputValues, ...EVAL_HELPER_VALUES)
+            }
+            expressionEvalCache.set(normalized, evaluator)
+            return evaluator
+        } catch {
+            expressionEvalCache.set(normalized, null)
+            return null
+        }
+    }
+
+    function evaluateExpressionValue(expression, inputs) {
+        const text = String(expression || '').trim()
+        if (!text) return { value: null, error: false }
+
+        const executable = text.replace(RULE_SLOT_MARKER_REGEX, '0')
+        const numeric = Number(executable)
+        if (Number.isFinite(numeric) && /^[-+]?\d+(\.\d+)?$/.test(executable)) {
+            return { value: numeric, error: false }
+        }
+
+        if (RULE_VARIABLE_ID_SET.has(executable)) {
+            return { value: getInputValue(inputs, executable), error: false }
+        }
+
+        const evaluator = getExpressionEvaluator(executable)
+        if (!evaluator) return { value: null, error: true }
+        try {
+            return { value: evaluator(inputs), error: false }
+        } catch {
+            return { value: null, error: true }
+        }
+    }
+
+    function evaluateRowCondition(rowState, inputs) {
+        if (!rowState?.conditionEnabled || rowState.conditionOperator === 'always') return true
+
+        const lhsInputId = rowState.conditionDetail !== NONE_VAR
+            ? rowState.conditionDetail
+            : (rowState.conditionOverall !== NONE_VAR ? rowState.conditionOverall : '')
+        if (!lhsInputId) return true
+
+        const lhs = getInputValue(inputs, lhsInputId)
+        const rhs = rowState.conditionValueInput !== NONE_VAR
+            ? getInputValue(inputs, rowState.conditionValueInput)
+            : (Number(rowState.conditionValue) || 0)
+
+        switch (rowState.conditionOperator) {
+            case '>': return lhs > rhs
+            case '>=': return lhs >= rhs
+            case '<': return lhs < rhs
+            case '<=': return lhs <= rhs
+            case '==': return lhs === rhs
+            case '!=': return lhs !== rhs
+            default: return true
+        }
+    }
+
+    function formatOutputValue(value) {
+        if (Array.isArray(value)) {
+            return `[${value.map((entry) => formatOutputValue(entry)).join(', ')}]`
+        }
+        if (typeof value === 'boolean') return value ? 'true' : 'false'
+        if (typeof value === 'number') {
+            if (!Number.isFinite(value)) return 'NaN'
+            if (Math.abs(value) >= 1000 || Math.abs(value) < 0.0001) return value.toExponential(3)
+            const rounded = Math.round(value * 10000) / 10000
+            return String(rounded)
+        }
+        if (value === null || value === undefined) return '--'
+        return String(value)
+    }
 
     function rowKey(target, output) {
         return `${target}:${output}`
@@ -39,6 +174,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             definition,
             instanceId: createInstanceId(definition, isDuplicate),
             isDuplicate,
+            instanceNumber: isDuplicate ? 2 : 1,
             enabled: false,
             collapsed: false,
             conditionEnabled: false,
@@ -67,6 +203,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             removeBtn: null,
             collapseBtn: null,
             collapseIcon: null,
+            titleEl: null,
             activePill: null,
             draggingPill: null,
             dropMarker: null,
@@ -75,6 +212,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             pillContextMenu: null,
             pillContextMenuTarget: null,
             pillContextMenuEventsBound: false,
+            outputPreviewEl: null,
         }
     }
 
@@ -145,6 +283,79 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         return JSON.stringify(condition || { operator: 'always' })
     }
 
+    function refreshRowOutput(rowState) {
+        if (!rowState?.outputPreviewEl) return
+
+        const label = getRuleText('ruleOutputValue', 'Output')
+        const preview = rowState.outputPreviewEl
+        preview.classList.remove('is-live', 'is-error', 'is-inactive')
+
+        const sectionActive = isSectionEnabled(rowState.definition.section)
+        if (!latestProbeInputs) {
+            preview.textContent = `${label}: --`
+            preview.classList.add('is-inactive')
+            return
+        }
+
+        if (!rowState.enabled || !sectionActive) {
+            preview.textContent = `${label}: off`
+            preview.classList.add('is-inactive')
+            return
+        }
+
+        if (!evaluateRowCondition(rowState, latestProbeInputs)) {
+            preview.textContent = `${label}: no match`
+            preview.classList.add('is-inactive')
+            return
+        }
+
+        if (rowState.definition.type === 'enum') {
+            preview.textContent = `${label}: ${String(rowState.enumValue || rowState.definition.options?.[0] || '--')}`
+            preview.classList.add('is-live')
+            return
+        }
+
+        const evaluated = evaluateExpressionValue(rowState.expression, latestProbeInputs)
+        if (evaluated.error) {
+            preview.textContent = `${label}: err`
+            preview.classList.add('is-error')
+            return
+        }
+
+        preview.textContent = `${label}: ${formatOutputValue(evaluated.value)}`
+        preview.classList.add('is-live')
+    }
+
+    function refreshAllRowOutputs() {
+        for (const rowState of orderedRows) refreshRowOutput(rowState)
+    }
+
+    function getOutputDescription(outputId) {
+        switch (String(outputId || '')) {
+            case 'red':
+            case 'green':
+            case 'blue':
+            case 'luma':
+                return '0-255'
+            case 'hue':
+                return '0-360'
+            case 'saturation':
+            case 'brightness':
+                return '0-1'
+            case 'x':
+                return 'horizontal position'
+            case 'y':
+                return 'vertical position'
+            case 'size':
+            case 'radius':
+                return 'pixels'
+            case 'opacity':
+                return '0-1'
+            default:
+                return ''
+        }
+    }
+
     function updateContradictionState() {
         const seen = new Map()
         const conflictIds = new Set()
@@ -175,6 +386,35 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         row.card.classList.toggle('is-collapsed', !!row.collapsed)
         if (row.removeBtn) row.removeBtn.style.display = row.isDuplicate ? '' : 'none'
         if (row.collapseIcon) row.collapseIcon.textContent = row.collapsed ? '▸' : '▾'
+    }
+
+    function updateRowTitle(rowState) {
+        if (!rowState?.titleEl) return
+        const baseTitle = getRuleRowLabel(rowState.definition)
+        const number = Number(rowState.instanceNumber || 1)
+        rowState.titleEl.textContent = number > 1 ? `${baseTitle} #${number}` : baseTitle
+    }
+
+    function renumberRuleInstancesForKey(key) {
+        const familyRows = orderedRows.filter((rowState) => rowKey(rowState.definition.target, rowState.definition.output) === key)
+        for (let index = 0; index < familyRows.length; index += 1) {
+            const rowState = familyRows[index]
+            rowState.instanceNumber = index + 1
+            rowState.isDuplicate = index > 0
+            rowState.card?.classList.toggle('cp-rule-card--duplicate', rowState.isDuplicate)
+            updateRowTitle(rowState)
+            refreshRowCardState(rowState)
+        }
+    }
+
+    function renumberAllRuleInstances() {
+        const visited = new Set()
+        for (const rowState of orderedRows) {
+            const key = rowKey(rowState.definition.target, rowState.definition.output)
+            if (visited.has(key)) continue
+            visited.add(key)
+            renumberRuleInstancesForKey(key)
+        }
     }
 
     function syncColorMode(target, changedOutput = '', changedRow = null) {
@@ -242,8 +482,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     let syncingFromParamStore = false
-    let skipNextRuleBlocksApply = false
+    let pendingLocalRuleBlocksSignature = null
     const sectionEnabledState = new Map()
+
+    function serializeRuleBlocksSignature(blocks) {
+        try {
+            return JSON.stringify(Array.isArray(blocks) ? blocks : [])
+        } catch {
+            return ''
+        }
+    }
 
     function commitRowIfReady(rowState, force = false) {
         if (!rowState) return
@@ -284,10 +532,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             })
         }
 
-        // Local edits already updated rowState in-place; skip one immediate
-        // apply-from-store pass so transient UI state on other rows is preserved.
-        skipNextRuleBlocksApply = true
+        // Local edits already updated rowState in-place; ignore the immediate
+        // echo notification only when it matches exactly what we just wrote.
+        pendingLocalRuleBlocksSignature = serializeRuleBlocksSignature(nextBlocks)
         set('ruleBlocks', nextBlocks)
+        refreshAllRowOutputs()
     }
 
     function applyRowsFromRuleBlocks(blocks) {
@@ -317,63 +566,78 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const safeBlocks = Array.isArray(blocks) ? [...blocks] : []
             safeBlocks.sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0))
             const seenKeyCount = new Map()
+            const lastRowByKey = new Map()
+            const usedInstanceIds = new Set(orderedRows.map((rowState) => String(rowState.instanceId || '')).filter(Boolean))
             for (const rule of safeBlocks) {
                 const target = String(rule?.target || '')
-                const action = Array.isArray(rule?.actions) ? rule.actions[0] : null
-                const output = String(action?.output || '')
-                const key = rowKey(target, output)
-                const baseRow = baseRowsByKey.get(key)
-                if (!baseRow) continue
+                const actions = Array.isArray(rule?.actions) ? rule.actions : []
+                for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
+                    const action = actions[actionIndex]
+                    const output = String(action?.output || '')
+                    const key = rowKey(target, output)
+                    const baseRow = baseRowsByKey.get(key)
+                    if (!baseRow) continue
 
-                const seenCount = seenKeyCount.get(key) || 0
-                let rowState = baseRow
-                if (seenCount > 0) {
-                    const id = String(rule?.id || '')
-                    const explicitDuplicate = /-dup-\d+$/i.test(id)
-                    if (!explicitDuplicate) continue
-                    rowState = createRowState(baseRow.definition, true)
-                    rowState.instanceId = id || createInstanceId(baseRow.definition, true)
-                    attachRowCard(rowState, baseRow.card)
+                    const seenCount = seenKeyCount.get(key) || 0
+                    let rowState = baseRow
+                    let insertAfterCard = lastRowByKey.get(key)?.card || baseRow.card
+                    if (seenCount > 0) {
+                        rowState = createRowState(baseRow.definition, true)
+                        const incomingId = String(rule?.id || '').trim()
+                        let candidateId = incomingId
+                        if (!candidateId) candidateId = createInstanceId(baseRow.definition, true)
+                        while (candidateId && usedInstanceIds.has(candidateId)) {
+                            candidateId = createInstanceId(baseRow.definition, true)
+                        }
+                        if (candidateId) {
+                            rowState.instanceId = candidateId
+                            usedInstanceIds.add(candidateId)
+                        }
+                        insertAfterCard = lastRowByKey.get(key)?.card || baseRow.card
+                        attachRowCard(rowState, insertAfterCard)
+                    }
+                    lastRowByKey.set(key, rowState)
+                    seenKeyCount.set(key, seenCount + 1)
+
+                    if (rule?.sectionDisabled === true) {
+                        sectionEnabledState.set(rowState.definition.section, false)
+                    }
+
+                    rowState.enabled = rule.enabled !== false
+                    const operator = String(rule?.condition?.operator || 'always')
+                    rowState.conditionOperator = RULE_OPERATORS.includes(operator) ? operator : 'always'
+                    rowState.conditionValue = Number(rule?.condition?.value ?? 0)
+                    const rhsInputId = String(rule?.condition?.valueInput || '')
+                    rowState.conditionValueInput = RULE_VARIABLE_ID_SET.has(rhsInputId) ? rhsInputId : NONE_VAR
+
+                    const condInput = String(rule?.condition?.input || '')
+                    const inputMeta = getRuleVariableById(condInput)
+                    if (inputMeta?.group === 'detail') {
+                        rowState.conditionDetail = condInput
+                        rowState.conditionOverall = NONE_VAR
+                    } else if (inputMeta?.group === 'overall') {
+                        rowState.conditionOverall = condInput
+                        rowState.conditionDetail = NONE_VAR
+                    }
+                    rowState.conditionEnabled = rowState.conditionOperator !== 'always' && !!condInput
+
+                    if (rowState.definition.type === 'enum') {
+                        rowState.enumValue = String(action?.value || rowState.enumValue)
+                    } else if (typeof action?.expression === 'string') {
+                        rowState.expression = action.expression
+                    } else if (typeof action?.input === 'string') {
+                        rowState.expression = action.input
+                    } else if (action?.value !== undefined && action?.value !== null) {
+                        rowState.expression = String(action.value)
+                    }
+                    rowState.tokens = parseExpressionToTokens(rowState.expression)
                 }
-                seenKeyCount.set(key, 1)
-
-                if (rule?.sectionDisabled === true) {
-                    sectionEnabledState.set(rowState.definition.section, false)
-                }
-
-                rowState.enabled = rule.enabled !== false
-                const operator = String(rule?.condition?.operator || 'always')
-                rowState.conditionOperator = RULE_OPERATORS.includes(operator) ? operator : 'always'
-                rowState.conditionValue = Number(rule?.condition?.value ?? 0)
-                const rhsInputId = String(rule?.condition?.valueInput || '')
-                rowState.conditionValueInput = RULE_VARIABLE_ID_SET.has(rhsInputId) ? rhsInputId : NONE_VAR
-
-                const condInput = String(rule?.condition?.input || '')
-                const inputMeta = getRuleVariableById(condInput)
-                if (inputMeta?.group === 'detail') {
-                    rowState.conditionDetail = condInput
-                    rowState.conditionOverall = NONE_VAR
-                } else if (inputMeta?.group === 'overall') {
-                    rowState.conditionOverall = condInput
-                    rowState.conditionDetail = NONE_VAR
-                }
-                rowState.conditionEnabled = rowState.conditionOperator !== 'always' && !!condInput
-
-                if (rowState.definition.type === 'enum') {
-                    rowState.enumValue = String(action?.value || rowState.enumValue)
-                } else if (typeof action?.expression === 'string') {
-                    rowState.expression = action.expression
-                } else if (typeof action?.input === 'string') {
-                    rowState.expression = action.input
-                } else if (action?.value !== undefined && action?.value !== null) {
-                    rowState.expression = String(action.value)
-                }
-                rowState.tokens = parseExpressionToTokens(rowState.expression)
             }
 
             syncColorMode('spawnedParticles')
             syncColorMode('lines')
             syncColorMode('background')
+            renumberAllRuleInstances()
 
             for (const rowState of orderedRows) {
                 if (rowState.toggle) rowState.toggle.checked = rowState.enabled
@@ -390,6 +654,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 if (sectionEl) sectionEl.classList.toggle('is-section-disabled', !enabled)
             }
             updateContradictionState()
+            refreshAllRowOutputs()
         } finally {
             syncingFromParamStore = false
         }
@@ -449,9 +714,15 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         collapseBtn.appendChild(collapseIcon)
         headerTools.append(addConditionButton, clearTokensBtn, duplicateBtn, removeBtn, collapseBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-        const duplicateSuffix = getRuleText('duplicateSuffix', 'Duplicate')
-        const titleSuffix = rowState.isDuplicate ? ` (${duplicateSuffix})` : ''
-        const title = el('div', 'cp-rule-card-title', { text: `${getRuleRowLabel(definition)}${titleSuffix}` })
+        const title = el('div', 'cp-rule-card-title', { text: getRuleRowLabel(definition) })
+        const outputDesc = el('div', 'cp-rule-output-desc', {
+            text: getOutputDescription(definition.output),
+        })
+        const outputPreview = el('div', 'cp-rule-output-preview output-prev', {
+            text: `${getRuleText('ruleOutputValue', 'Output')}: --`,
+        })
+        const outputRow = el('div', 'cp-rule-output-row')
+        outputRow.append(outputDesc, outputPreview)
         header.append(toggle, title, headerTools)
 
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
@@ -823,7 +1094,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             rowState.parameterHint = parameterHint
         }
 
-        card.append(header, conditionRow, expressionRow)
+        card.append(header, outputRow, conditionRow, expressionRow)
         if (insertAfterCard?.parentNode === sectionBody) {
             insertAfterCard.after(card)
         } else {
@@ -836,12 +1107,14 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         rowState.removeBtn = removeBtn
         rowState.collapseBtn = collapseBtn
         rowState.collapseIcon = collapseIcon
+        rowState.titleEl = title
         rowState.conditionRow = conditionRow
         rowState.tokenEditor = tokenEditor
         rowState.expressionInput = expressionInput
         rowState.enumSelect = enumSelect
         rowState.valueActionSelect = definition.type !== 'enum' ? valueActionSelect : null
         rowState.actionSelect = null
+        rowState.outputPreviewEl = outputPreview
 
         rowState.syncConditionUi = () => {
             const showCondition = !!rowState.conditionEnabled
@@ -861,6 +1134,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             : orderedRows.length
         orderedRows.splice(orderedInsertIdx, 0, rowState)
         sectionRows.get(definition.section)?.push(rowState)
+        renumberRuleInstancesForKey(rowKey(definition.target, definition.output))
 
         duplicateBtn.addEventListener('click', () => {
             const duplicateState = createRowState(definition, true)
@@ -884,6 +1158,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
         removeBtn.addEventListener('click', () => {
             if (!rowState.isDuplicate) return
+            const key = rowKey(rowState.definition.target, rowState.definition.output)
             const idx = orderedRows.indexOf(rowState)
             if (idx >= 0) orderedRows.splice(idx, 1)
             const rows = sectionRows.get(definition.section) || []
@@ -892,6 +1167,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             rowState.card?.remove()
             rowState.pillContextMenu?.remove()
             rowState.pillContextMenu = null
+            renumberRuleInstancesForKey(key)
             commitRuleBlocks()
         })
 
@@ -980,6 +1256,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
         if (rowState.toggle) rowState.toggle.checked = rowState.enabled
         refreshRowCardState(rowState)
+        refreshRowOutput(rowState)
     }
 
     for (const definition of FIXED_RULE_ROWS) {
@@ -1028,26 +1305,31 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             wrapper.appendChild(section)
             currentSectionBody = sectionBody
         }
-
-        if (definition.subgroup !== currentSubgroup) {
-            currentSubgroup = definition.subgroup
-            currentSectionBody.appendChild(el('h4', 'cp-rule-subgroup-title', { text: getRuleSubgroupLabel(definition) }))
-        }
-
         const rowState = createRowState(definition, false)
         baseRowsByKey.set(rowKey(definition.target, definition.output), rowState)
         attachRowCard(rowState)
     }
 
     const applyRowsFromParams = () => {
-        if (skipNextRuleBlocksApply) {
-            skipNextRuleBlocksApply = false
+        const nextBlocks = Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []
+        const incomingSignature = serializeRuleBlocksSignature(nextBlocks)
+        if (pendingLocalRuleBlocksSignature !== null && incomingSignature === pendingLocalRuleBlocksSignature) {
+            pendingLocalRuleBlocksSignature = null
             return
         }
-        applyRowsFromRuleBlocks(Array.isArray(params.ruleBlocks) ? params.ruleBlocks : [])
+        pendingLocalRuleBlocksSignature = null
+        applyRowsFromRuleBlocks(nextBlocks)
     }
 
     registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks'])
     applyRowsFromParams()
+
+    window.addEventListener('seesound:rule-probe', (event) => {
+        const incoming = event?.detail?.inputs
+        latestProbeInputs = (incoming && typeof incoming === 'object') ? incoming : null
+        refreshAllRowOutputs()
+    })
+
+    refreshAllRowOutputs()
     body.appendChild(panel)
 }

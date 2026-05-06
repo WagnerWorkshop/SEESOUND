@@ -79,8 +79,8 @@ const SETTINGS_SLIDERS = Object.freeze([
         key: 'cqtDetailsPer10Octaves',
         label: UI_TEXT.settings.cqtDetailResolution || 'CQT Detail Resolution',
         min: 100,
-        max: 5000,
-        step: 10,
+        max: 1000,
+        step: 100,
         tooltip: getSettingsTooltip('cqtDetailsPer10Octaves', 'CQT Detail Resolution. Number of logarithmic bins computed per 10 octaves.'),
     },
     {

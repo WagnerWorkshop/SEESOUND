@@ -225,6 +225,16 @@ function _validateExpression(expr, inMap) {
             return `Expression references unknown identifier: ${token}`
         }
     }
+
+    // Reject syntactically invalid expressions early so malformed template
+    // rules are filtered out instead of breaking full rule compilation.
+    try {
+        // Parsing only; identifiers are validated above.
+        new Function(`return (${value});`)
+    } catch (err) {
+        const message = String(err?.message || 'Invalid expression syntax.')
+        return `Expression syntax error: ${message}`
+    }
     return null
 }
 

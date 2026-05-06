@@ -2,10 +2,10 @@ import * as THREE from 'three'
 
 const TOUCH_ORBIT_SCALE = 0.72
 const TOUCH_PAN_SCALE = 0.68
-const TOUCH_ZOOM_SCALE = 0.42
-const TOUCH_GESTURE_LOCK_RATIO = 1.35
-const TOUCH_GESTURE_PAN_THRESHOLD_PX = 1.5
-const TOUCH_GESTURE_ZOOM_THRESHOLD_PX = 3
+const TOUCH_ZOOM_SCALE = 0.22
+const TOUCH_GESTURE_LOCK_RATIO = 1.85
+const TOUCH_GESTURE_PAN_THRESHOLD_PX = 2.5
+const TOUCH_GESTURE_ZOOM_THRESHOLD_PX = 5
 
 export class CameraController {
     constructor({
@@ -297,7 +297,7 @@ export class CameraController {
                 }
 
                 if (this._touchGestureMode === 'zoom') {
-                    if (Math.abs(pinchDelta) > 0.75) this.handleZoom(pinchDelta * TOUCH_ZOOM_SCALE)
+                    if (Math.abs(pinchDelta) > 1.5) this.handleZoom(pinchDelta * TOUCH_ZOOM_SCALE)
                 } else if (this._touchGestureMode === 'pan') {
                     this.handlePointerMove(dxPan * TOUCH_PAN_SCALE, dyPan * TOUCH_PAN_SCALE, 1)
                 }

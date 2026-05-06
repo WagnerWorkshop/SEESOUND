@@ -42,8 +42,6 @@ import {
     buildProjectPayload,
     parseProjectFile,
     PROJECT_FILE_EXTENSION,
-    PROJECT_PACKAGE_EXTENSION,
-    buildProjectPackageBlob,
     triggerBlobDownload,
 } from './engine/project/ProjectIO.js'
 import { ExportManager } from './engine/project/ExportManager.js'
@@ -172,12 +170,22 @@ function syncCameraFromParams() {
 function syncPostProcessingFromParams() {
     const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
     const bloomEnabled = Number(params.bloomEnabled ?? 1) >= 0.5
+    const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
+    const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
 
     bloomPass.enabled = postEnabled && bloomEnabled
 
     bloomPass.strength = Math.max(0, Number(params.bloomStrength ?? 1.15) || 0)
     bloomPass.radius = Math.max(0, Number(params.bloomRadius ?? 0.7) || 0)
     bloomPass.threshold = Math.max(0, Math.min(1, Number(params.bloomThreshold ?? 0.18) || 0))
+
+    if (ps?.setFogState) {
+        ps.setFogState({
+            enabled: postEnabled && fogEnabled,
+            density: postEnabled && fogEnabled ? fogDensity : 0,
+            color: ps.getBackgroundColor?.() || null,
+        })
+    }
 }
 
 function shouldUsePostProcessing() {
@@ -560,7 +568,6 @@ resizeRenderer(initW, initH)
 applyProjectionFromParams()
 applyAxoPresetFromParams()
 syncCameraFromParams()
-syncPostProcessingFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 2  PARTICLE SYSTEM
@@ -569,6 +576,7 @@ syncPostProcessingFromParams()
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
 const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
+syncPostProcessingFromParams()
 
 function _collectUsedRuleInputs(requiredInputsByTarget = null) {
     return new Set([
@@ -970,10 +978,6 @@ function _defaultProjectName() {
     return `seesound-project-${stamp}${PROJECT_FILE_EXTENSION}`
 }
 
-function _defaultProjectPackageName() {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    return `seesound-project-package-${stamp}${PROJECT_PACKAGE_EXTENSION}`
-}
 
 function getDefaultProjectDefinition() {
     return {
@@ -1158,6 +1162,16 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
+    if (ps?.setFogState) {
+        const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
+        const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
+        const fogDensity = Math.max(0, Number(params.fogDensity ?? 0.002) || 0)
+        ps.setFogState({
+            enabled: postEnabled && fogEnabled,
+            density: postEnabled && fogEnabled ? fogDensity : 0,
+            color: bg,
+        })
+    }
     ps.setViewportHeight(renderer.domElement.height)
 
     if (shouldUsePostProcessing()) {
@@ -1371,17 +1385,11 @@ animate()
     }
 
     const _writeProjectToHandle = async (handle, payload) => {
-        const handleName = String(handle?.name || projectFileName || '').trim().toLowerCase()
-        const includeAudio = handleName.endsWith(PROJECT_PACKAGE_EXTENSION)
-        const thumbnailBlob = await _captureProjectThumbnailBlob()
-        const projectBlob = await buildProjectPackageBlob({
-            payload,
-            projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
-            audioFile: includeAudio && loadedAudioFile instanceof File ? loadedAudioFile : null,
-            thumbnailBlob,
-        })
+        // Write project as plain JSON (.ssp). We no longer write packaged archives.
+        const json = JSON.stringify(payload, null, 2)
+        const blob = new Blob([json], { type: 'application/json' })
         const writable = await handle.createWritable()
-        await writable.write(projectBlob)
+        await writable.write(blob)
         await writable.close()
     }
 
@@ -1406,90 +1414,13 @@ animate()
         })
     }
 
-    const _downloadProjectBundle = async ({ payload, fileName, includeAudio = false } = {}) => {
+    const _downloadProjectBundle = async ({ payload, fileName } = {}) => {
         const safePayload = payload && typeof payload === 'object'
             ? payload
             : await _buildCurrentProjectPayload()
-        const thumbnailBlob = await _captureProjectThumbnailBlob()
-        const packageBlob = await buildProjectPackageBlob({
-            payload: safePayload,
-            projectName: _nameWithoutExt(projectFileName || fileName),
-            audioFile: includeAudio && loadedAudioFile instanceof File ? loadedAudioFile : null,
-            thumbnailBlob,
-        })
-        triggerBlobDownload(packageBlob, String(fileName || _defaultProjectName()))
-    }
-
-    const _createDemoToneFile = () => {
-        const sampleRate = 22050
-        const durationSec = 7
-        const frameCount = Math.max(1, Math.floor(sampleRate * durationSec))
-        const dataBytes = frameCount * 2
-        const buffer = new ArrayBuffer(44 + dataBytes)
-        const view = new DataView(buffer)
-
-        const writeString = (offset, text) => {
-            for (let i = 0; i < text.length; i += 1) {
-                view.setUint8(offset + i, text.charCodeAt(i))
-            }
-        }
-
-        writeString(0, 'RIFF')
-        view.setUint32(4, 36 + dataBytes, true)
-        writeString(8, 'WAVE')
-        writeString(12, 'fmt ')
-        view.setUint32(16, 16, true)
-        view.setUint16(20, 1, true)
-        view.setUint16(22, 1, true)
-        view.setUint32(24, sampleRate, true)
-        view.setUint32(28, sampleRate * 2, true)
-        view.setUint16(32, 2, true)
-        view.setUint16(34, 16, true)
-        writeString(36, 'data')
-        view.setUint32(40, dataBytes, true)
-
-        const fadeLength = Math.floor(sampleRate * 0.12)
-        for (let i = 0; i < frameCount; i += 1) {
-            const t = i / sampleRate
-            const freqA = 164.81
-            const freqB = 246.94
-            const blend = 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.22 * t)
-            const wave = ((1 - blend) * Math.sin(2 * Math.PI * freqA * t)) + (blend * Math.sin(2 * Math.PI * freqB * t))
-            const attack = i < fadeLength ? (i / Math.max(1, fadeLength)) : 1
-            const release = i > frameCount - fadeLength ? ((frameCount - i) / Math.max(1, fadeLength)) : 1
-            const sample = Math.max(-1, Math.min(1, wave * 0.28 * attack * release))
-            view.setInt16(44 + (i * 2), Math.round(sample * 32767), true)
-        }
-
-        return new File([buffer], 'seesound-template-demo.wav', {
-            type: 'audio/wav',
-            lastModified: Date.now(),
-        })
-    }
-
-    const _ensureTemplateAudioFallback = async (detail = {}) => {
-        if (loadedAudioFile instanceof File) return
-
-        const demoAudioPath = String(detail?.demoAudioPath || '').trim()
-        if (demoAudioPath) {
-            try {
-                const response = await fetch(demoAudioPath, { cache: 'no-store' })
-                if (response.ok) {
-                    const blob = await response.blob()
-                    const fileName = demoAudioPath.split('/').pop() || 'template-demo-audio.wav'
-                    const audioFile = new File([blob], fileName, {
-                        type: blob.type || 'audio/*',
-                        lastModified: Date.now(),
-                    })
-                    if (loadFile(audioFile, audioFile.name)) return
-                }
-            } catch {
-                // fallback to generated tone below
-            }
-        }
-
-        const fallbackTone = _createDemoToneFile()
-        loadFile(fallbackTone, fallbackTone.name)
+        const json = JSON.stringify(safePayload, null, 2)
+        const blob = new Blob([json], { type: 'application/json' })
+        triggerBlobDownload(blob, String(fileName || _defaultProjectName()))
     }
 
     const _loadFactoryTemplateFromDetail = async (detail = {}) => {
@@ -1497,6 +1428,7 @@ animate()
         const templateTitle = String(template.title || template.id || template.presetName || UI_TEXT?.file?.projectNew || 'New Project').trim()
 
         try {
+            projectLoadInProgress = true
             if (template.projectPath) {
                 const response = await fetch(String(template.projectPath), { cache: 'no-store' })
                 if (!response.ok) return false
@@ -1507,18 +1439,11 @@ animate()
                     lastModified: Date.now(),
                 })
                 const parsed = await parseProjectFile(sourceFile)
-
+                set('ruleBlocks', [])
                 projectFileHandle = null
                 projectFileName = String(sourceFile.name || `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`).trim()
                 await loadProjectFromPayload(parsed.payload)
                 emitProjectFileState()
-
-                if (!(loadedAudioFile instanceof File) && parsed.audioFile instanceof File) {
-                    loadFile(parsed.audioFile, parsed.audioFile.name)
-                } else {
-                    await _ensureTemplateAudioFallback(template)
-                }
-
                 return true
             }
 
@@ -1534,8 +1459,8 @@ animate()
                 if (!presetParams) return false
 
                 // Apply template params/rules as one patch so a single Undo restores previous state.
+                set('ruleBlocks', [])
                 setMany(presetParams)
-                await _ensureTemplateAudioFallback(template)
                 return true
             }
 
@@ -1544,6 +1469,7 @@ animate()
             const preset = await loadPreset(presetName)
             if (!preset?.params || typeof preset.params !== 'object') return false
 
+            set('ruleBlocks', [])
             const payload = buildProjectPayload({
                 params: preset.params,
                 presetName,
@@ -1555,11 +1481,13 @@ animate()
             projectFileName = `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`
             await loadProjectFromPayload(payload)
             emitProjectFileState()
-            await _ensureTemplateAudioFallback(template)
             return true
         } catch (err) {
             console.warn('[Template] load failed:', err)
             return false
+        } finally {
+            projectLoadInProgress = false
+            _scheduleLocalProjectDraftSave()
         }
     }
 
@@ -1641,6 +1569,12 @@ animate()
             return true
         } catch (err) {
             console.warn('[Project] save failed:', err)
+            const errName = String(err?.name || '')
+            if (errName === 'NotAllowedError' || errName === 'InvalidStateError') {
+                projectFileHandle = null
+                emitProjectFileState()
+                alert('Project file access was lost. Use Save As to reattach autosave.')
+            }
             return false
         }
     }
@@ -1650,7 +1584,7 @@ animate()
         return new Promise((resolve) => {
             const input = document.createElement('input')
             input.type = 'file'
-            input.accept = `${PROJECT_FILE_EXTENSION},${PROJECT_PACKAGE_EXTENSION},.json,application/json,application/zip`
+            input.accept = `${PROJECT_FILE_EXTENSION},.json,application/json`
             input.style.display = 'none'
             document.body.appendChild(input)
 
@@ -1696,8 +1630,8 @@ animate()
         return true
     }
 
-    const exportProjectAs = async (format = 'project-package') => {
-        const target = String(format || 'project-package')
+    const exportProjectAs = async (format = 'project-file') => {
+        const target = String(format || 'project-file')
         const payload = await _buildCurrentProjectPayload()
 
         if (target === 'png') {
@@ -1732,33 +1666,20 @@ animate()
             return true
         }
 
-        if (target === 'project-package') {
-            const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_PACKAGE_EXTENSION)
-                ? projectFileName
-                : _defaultProjectPackageName()
-            await _downloadProjectBundle({
-                payload,
-                fileName: suggestedName,
-                includeAudio: true,
-            })
-            _scheduleLocalProjectDraftSave()
-            return true
-        }
+        // No project-package support; fall through to download JSON project file
 
         const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
             ? projectFileName
             : _defaultProjectName()
-        await _downloadProjectBundle({
-            payload,
-            fileName: suggestedName,
-            includeAudio: false,
-        })
+        await _downloadProjectBundle({ payload, fileName: suggestedName })
         _scheduleLocalProjectDraftSave()
         return true
     }
 
     const scheduleProjectAutosave = () => {
-        if (!projectFileHandle || projectLoadInProgress) return
+        if (projectLoadInProgress) return
+        _scheduleLocalProjectDraftSave()
+        if (!projectFileHandle) return
         if (projectAutoSaveTimer) clearTimeout(projectAutoSaveTimer)
         projectAutoSaveTimer = setTimeout(async () => {
             projectAutoSaveTimer = null
@@ -1802,7 +1723,6 @@ animate()
                         description: 'SEESOUND Project',
                         accept: {
                             'application/json': [PROJECT_FILE_EXTENSION, '.json'],
-                            'application/zip': [PROJECT_PACKAGE_EXTENSION],
                         },
                     }],
                 })
@@ -1875,9 +1795,32 @@ animate()
     }
 
     const saveProjectAsWithPicker = async (suggested = '') => {
-        if (typeof window.showSaveFilePicker !== 'function') return false
+        const suggestedName = String(suggested || '').trim() || _defaultProjectName()
+        const saveAsDownloadFallback = async (reason = '') => {
+            try {
+                const payload = await _buildCurrentProjectPayload()
+                await _downloadProjectBundle({
+                    payload,
+                    fileName: suggestedName,
+                    includeAudio: false,
+                })
+                projectFileHandle = null
+                projectFileName = suggestedName
+                emitProjectFileState()
+                _scheduleLocalProjectDraftSave()
+                if (reason) alert(reason)
+                return true
+            } catch (fallbackErr) {
+                console.warn('[Project] save-as download fallback failed:', fallbackErr)
+                alert('Save As failed. Please export the project manually from File menu.')
+                return false
+            }
+        }
+
+        if (typeof window.showSaveFilePicker !== 'function') {
+            return saveAsDownloadFallback('Save As file picker is unavailable here. Downloaded the project file instead.')
+        }
         try {
-            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
             const handle = await window.showSaveFilePicker({
                 suggestedName,
                 types: [{
@@ -1891,8 +1834,10 @@ animate()
             await saveProject()
             emitProjectFileState()
             return true
-        } catch {
-            return false
+        } catch (err) {
+            if (err?.name === 'AbortError') return false
+            console.warn('[Project] save-as picker failed:', err)
+            return saveAsDownloadFallback('Save As file handle could not be attached. Downloaded project file instead. Autosave to file requires Save As in a supported browser.')
         }
     }
 
@@ -1919,7 +1864,7 @@ animate()
         await saveProjectAsWithPicker(suggested)
     })
     window.addEventListener('seesound:project-export-request', async (e) => {
-        const format = String(e?.detail?.format || 'project-package')
+        const format = String(e?.detail?.format || 'project-file')
         await exportProjectAs(format)
     })
     window.addEventListener('seesound:project-load-request', async (e) => {
@@ -2123,7 +2068,9 @@ subscribe((_, key) => {
         key === 'bloomEnabled' ||
         key === 'bloomStrength' ||
         key === 'bloomRadius' ||
-        key === 'bloomThreshold'
+        key === 'bloomThreshold' ||
+        key === 'fogEnabled' ||
+        key === 'fogDensity'
     ) syncPostProcessingFromParams()
     if (key === 'canvasWidth' || key === 'canvasHeight') applyCanvasSizeFromParams()
     if (key === 'canvasScale') applyCanvasScaleFromParams()

@@ -67,6 +67,7 @@
     --fs-body: 16px;
     --fs-label: 12px;
     --fs-input: 14px;
+    --fs-aux: 11px;
 
     --menu-rail-size: 72px;
     --menu-icon-size: 32px;
@@ -474,7 +475,10 @@ input[type=number]::-webkit-inner-spin-button {
     bottom: 0;
     z-index: 140;
     pointer-events: none;
+    /* Only animate opacity for opening/closing; disable width transitions that cause sliding */
+    transition: opacity var(--transition-mid) !important;
 }
+
 
 .cp-shell,
 .cp-shell * {
@@ -584,16 +588,15 @@ input[type=number]::-webkit-inner-spin-button {
 
 .cp-menu-stack {
     position: relative;
-    width: 0;
+    width: min(var(--menu-tab-width), calc(100vw - 140px));
     max-width: calc(100vw - 130px);
     height: 100%;
     opacity: 0;
-    transition: width var(--transition-mid), opacity var(--transition-mid);
+    transition: opacity var(--transition-mid);
     pointer-events: none;
 }
 
 .cp-shell.is-open .cp-menu-stack {
-    width: min(var(--menu-tab-width), calc(100vw - 140px));
     opacity: 1;
     pointer-events: auto;
 }
@@ -840,6 +843,7 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 .cp-template-card-title {
+    padding: 0 var(--padding-s);
     font-family: var(--font-ui);
     font-size: var(--fs-label);
     font-weight: 600;
@@ -1295,7 +1299,6 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 
-
 .cp-rule-card-title {
     font-family: var(--font-display);
     font-size: var(--fs-body);
@@ -1303,10 +1306,42 @@ input[type=number]::-webkit-inner-spin-button {
     color: var(--color-text);
 }
 
-.cp-rule-card-expression {
+:is(.cp-rule-output-preview, .output-prev) {
+    font-family: var(--font-code);
+    font-size: var(--fs-label);
+    color: var(--color-text-muted);
+    letter-spacing: 0.01em;
+}
+
+:is(.cp-rule-output-preview, .output-prev).is-live {
+    color: var(--color-text);
+}
+
+:is(.cp-rule-output-preview, .output-prev).is-inactive {
+    opacity: 0.75;
+}
+
+:is(.cp-rule-output-preview, .output-prev).is-error {
+    color: var(--color-danger);
+}
+
+:is(.cp-rule-output-desc, .cp-rule-output-preview) {
+    font-size: var(--fs-aux);
+    white-space: nowrap;
+}
+
+:is(.cp-rule-output-row, .cp-rule-card-expression) {
     display: flex;
-    flex-direction: column;
     gap: var(--gap-m);
+}
+
+.cp-rule-output-row {
+    align-items: center;
+    justify-content: space-between;
+}
+
+.cp-rule-card-expression {
+    flex-direction: column;
     position: relative;
 }
 
@@ -1315,13 +1350,7 @@ input[type=number]::-webkit-inner-spin-button {
     border-color: color-mix(in srgb, var(--color-danger) 52%, var(--color-border));
 }
 
-.cp-rule-card.is-collapsed .cp-rule-card-condition-builder,
-.cp-rule-card.is-collapsed .cp-rule-card-expression {
-    display: none;
-}
-
-.cp-rule-card.is-disabled .cp-rule-card-condition-builder,
-.cp-rule-card.is-disabled .cp-rule-card-expression {
+.cp-rule-card.is-disabled :is(.cp-rule-card-condition-builder, .cp-rule-card-expression, .cp-rule-output-row) {
     display: none;
 }
 

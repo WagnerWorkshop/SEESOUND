@@ -7,6 +7,11 @@
             "presetName": "conversation dual clouds"
         },
         {
+            "id": "dolby",
+            "title": "Dolby",
+            "presetPath": "/templates/presets/Dolby.json"
+        },
+        {
             "id": "holistic-3d",
             "title": "Holistic 3d",
             "presetPath": "/templates/presets/holistic-3d.json",

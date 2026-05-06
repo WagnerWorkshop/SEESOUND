@@ -401,11 +401,11 @@ function _compileLumaAction(action) {
         '__baseRgb = [Number.isFinite(__r) ? __r : 0, Number.isFinite(__g) ? __g : 0, Number.isFinite(__b) ? __b : 0];',
         '} else if (Number.isFinite(__hIn) || Number.isFinite(__sIn) || Number.isFinite(__vIn)) {',
         'const __h = Number.isFinite(__hIn) ? __hIn : 0;',
-        'const __s = Number.isFinite(__sIn) ? __sIn : 0;',
-        'const __v = Number.isFinite(__vIn) ? __vIn : 0;',
+        'const __s = Number.isFinite(__sIn) ? __sIn : 1;',
+        'const __v = Number.isFinite(__vIn) ? __vIn : 1;',
         '__baseRgb = hsvToRgbColor(__h, __s, __v);',
         '}',
-        'if (!__baseRgb) __baseRgb = [0, 0, 0];',
+        'if (!__baseRgb) __baseRgb = [1, 1, 1];',
         'if (Number.isFinite(__yIn)) {',
         '__baseRgb = [clamp((__baseRgb[0] ?? 0) + __yIn, 0, 1), clamp((__baseRgb[1] ?? 0) + __yIn, 0, 1), clamp(__baseRgb[2] ?? 0, 0, 1)];',
         '}',
@@ -432,7 +432,7 @@ function _compileLumaAction(action) {
         case 'set':
             return [
                 resolveBaseRgb,
-                `const __nextLuma = Number(${rhs});`,
+                `const __raw = Number(${rhs}); const __nextLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : NaN;`,
                 'if (Number.isFinite(__nextLuma)) {',
                 applyMatchedColor,
                 '}',
@@ -440,7 +440,7 @@ function _compileLumaAction(action) {
         case 'add':
             return [
                 resolveBaseRgb,
-                `const __nextLuma = __baseLuma + Number(${rhs});`,
+                `const __raw = Number(${rhs}); const __rhsLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0; const __nextLuma = __baseLuma + __rhsLuma;`,
                 'if (Number.isFinite(__nextLuma)) {',
                 applyMatchedColor,
                 '}',
@@ -448,7 +448,7 @@ function _compileLumaAction(action) {
         case 'subtract':
             return [
                 resolveBaseRgb,
-                `const __nextLuma = __baseLuma - Number(${rhs});`,
+                `const __raw = Number(${rhs}); const __rhsLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0; const __nextLuma = __baseLuma - __rhsLuma;`,
                 'if (Number.isFinite(__nextLuma)) {',
                 applyMatchedColor,
                 '}',
@@ -473,7 +473,7 @@ function _compileLumaAction(action) {
         case 'clamp':
             return [
                 resolveBaseRgb,
-                `const __bound = Math.abs(Number(${rhs}));`,
+                `const __raw = Number(${rhs}); const __bound = Math.abs(Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0);`,
                 'const __nextLuma = clamp(__baseLuma, -__bound, __bound);',
                 'if (Number.isFinite(__nextLuma)) {',
                 applyMatchedColor,
