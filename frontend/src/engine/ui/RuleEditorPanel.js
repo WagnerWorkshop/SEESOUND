@@ -79,6 +79,13 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         return entity?.entityShapeType || 'particle'
     }
 
+    function getActiveEntitySpacingMode() {
+        if (activeOwner.type !== 'entity') return 'coordinates'
+        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
+        if (entity?.entityShapeType !== 'cloud') return 'coordinates'
+        return entity?.spacingMode || 'coordinates'
+    }
+
     function getAllowedTargetsForOwner() {
         if (activeOwner.type === 'background') return new Set(['background'])
         if (activeOwner.type === 'camera') return new Set(['camera'])
@@ -96,6 +103,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const shape = getActiveEntityShapeType()
         if (Array.isArray(definition?.entityShapes) && !definition.entityShapes.includes(shape)) return false
         if (Array.isArray(definition?.entityExclude) && definition.entityExclude.includes(shape)) return false
+        // Spacing mode gating (only for cloud entities)
+        if (shape === 'cloud' && Array.isArray(definition?.spacingModes)) {
+            const spacing = getActiveEntitySpacingMode()
+            if (!definition.spacingModes.includes(spacing)) return false
+        }
         return true
     }
 
@@ -797,12 +809,28 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 return '0.05–32'
             case 'angleOfView':
                 return '20°–120°'
-            case 'spread':
+            case 'auraAngle':
+                return 'normalized 0–1'
+            case 'auraDistance':
+                return 'normalized 0–1'
+            case 'auraHeight':
+                return 'normalized 0–1'
+            case 'auraSpread':
                 return 'scatter radius'
-            case 'networkTension':
-                return 'attraction'
-            case 'networkRepulsion':
-                return 'repulsion'
+            case 'centralGravity':
+                return '0–1 attract'
+            case 'lowGravity':
+                return '0–1 downward'
+            case 'highGravity':
+                return '0–1 upward'
+            case 'leftGravity':
+                return '0–1 left'
+            case 'rightGravity':
+                return '0–1 right'
+            case 'pullForce':
+                return '0–1 tension'
+            case 'pushForce':
+                return '0–1 repulsion'
             default:
                 return ''
         }

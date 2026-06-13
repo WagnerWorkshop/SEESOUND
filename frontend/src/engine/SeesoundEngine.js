@@ -23,6 +23,7 @@ import {
 import { compileRules, collectRuleInputs } from './rules/RuleCompiler.js'
 import { getInputDictionary } from './rules/RuleDictionary.js'
 import { resolveDependencyGraph, buildAudioUsage, isVariableLegalInMode, AXIOMATIC_VARS } from './DependencyGraph.js'
+import { GraphSolver } from './rules/GraphSolver.js'
 import { EngineEvent, createDefaultConfig } from './types.js'
 
 export class SeesoundEngine {
@@ -36,6 +37,11 @@ export class SeesoundEngine {
         this._mode = cfg.mode
         /** @type {import('./types').CloudPositioningMode} */
         this._cloudPositioning = cfg.cloudPositioning
+        /** @type {GraphSolver} */
+        this._graphSolver = new GraphSolver()
+        /** @type {Object|null} */
+        this._graphPositions = null
+
         this._isPlaying = false
         this._frameN = 0
         this._currentAudioFileName = ''
@@ -269,6 +275,7 @@ export class SeesoundEngine {
     /**
      * Call once per frame from main.js's animate() (standard mode).
      * Emits FRAME event with normalized probe inputs for UI consumption.
+     * Also drives the cloud network graph solver if network mode is active.
      */
     tick({ ae, ps, canvasW, canvasH, cameraUnitData } = {}) {
         this._frameN++
@@ -282,6 +289,51 @@ export class SeesoundEngine {
             time: engine.audioEl?.currentTime ?? 0, deltaTime: 1 / 60,
         })
         window.dispatchEvent(new CustomEvent('seesound:rule-probe', { detail: { inputs } }))
+
+        // ── Cloud network graph solver ──
+        if (this._cloudPositioning === 'network') {
+            const harmonicObjects = engine.getHarmonicObjects?.() ?? null
+            if (harmonicObjects) {
+                this._graphSolver.sync(harmonicObjects)
+                // Read modifier outputs from the particle system's compiled rule state
+                let cGrav = 1, lowGrav = 0, highGrav = 0
+                let leftGrav = 0, rightGrav = 0
+                let pullMul = 1, pushMul = 1
+                if (sys.cloudNetworkModifiers) {
+                    const m = sys.cloudNetworkModifiers
+                    if (Number.isFinite(m.centralGravity)) cGrav = Math.max(0, Math.min(1, m.centralGravity))
+                    if (Number.isFinite(m.lowGravity)) lowGrav = Math.max(0, Math.min(1, m.lowGravity))
+                    if (Number.isFinite(m.highGravity)) highGrav = Math.max(0, Math.min(1, m.highGravity))
+                    if (Number.isFinite(m.leftGravity)) leftGrav = Math.max(0, Math.min(1, m.leftGravity))
+                    if (Number.isFinite(m.rightGravity)) rightGrav = Math.max(0, Math.min(1, m.rightGravity))
+                    if (Number.isFinite(m.pullForce)) pullMul = Math.max(0, Math.min(1, m.pullForce))
+                    if (Number.isFinite(m.pushForce)) pushMul = Math.max(0, Math.min(1, m.pushForce))
+                }
+                this._graphSolver.step({
+                    deltaTime: 1 / 60,
+                    centralGravity: cGrav,
+                    lowGravity: lowGrav,
+                    highGravity: highGrav,
+                    leftGravity: leftGrav,
+                    rightGravity: rightGrav,
+                    pullForce: pullMul,
+                    pushForce: pushMul,
+                })
+                this._graphPositions = this._graphSolver.getAllPositions()
+                // Emit positions for main.js / particle system to consume
+                window.dispatchEvent(new CustomEvent('seesound:cloud-network-positions', {
+                    detail: { positions: this._graphPositions, count: this._graphPositions.size },
+                }))
+            }
+        }
+    }
+
+    /**
+     * Get the current cloud network graph positions.
+     * @returns {Map<number, {x: number, y: number, z: number}>|null}
+     */
+    getCloudNetworkPositions() {
+        return this._graphPositions
     }
 
     /** Build normalized probe inputs. */

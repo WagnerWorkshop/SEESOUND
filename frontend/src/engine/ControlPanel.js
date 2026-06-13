@@ -251,13 +251,20 @@ const SETTINGS_RANGES = Object.freeze([
 ])
 
 const FIXED_RULE_ROWS = Object.freeze([
-    // Cloud Positions
-    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
-    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
-    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
-    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
-    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
-    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
+    // Cloud — Coordinates (aura) mode
+    { target: 'spawnedParticles', section: 'Cloud Aura', subgroup: 'Positioning', output: 'auraAngle', label: 'Angle', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Aura Coords' },
+    { target: 'spawnedParticles', section: 'Cloud Aura', subgroup: 'Positioning', output: 'auraDistance', label: 'Distance', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Aura Coords' },
+    { target: 'spawnedParticles', section: 'Cloud Aura', subgroup: 'Positioning', output: 'auraHeight', label: 'Height', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Aura Coords' },
+    { target: 'spawnedParticles', section: 'Cloud Aura', subgroup: 'Positioning', output: 'auraSpread', label: 'Spread', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Aura Coords' },
+
+    // Cloud — Network (force graph) mode
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Gravity', output: 'centralGravity', label: 'Central', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Gravity', output: 'lowGravity', label: 'Low', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Gravity', output: 'highGravity', label: 'High', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Gravity', output: 'leftGravity', label: 'Left', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Gravity', output: 'rightGravity', label: 'Right', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Force', output: 'pullForce', label: 'Pull', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Force', output: 'pushForce', label: 'Push', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
 
     // Light Particles
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['particle'] },

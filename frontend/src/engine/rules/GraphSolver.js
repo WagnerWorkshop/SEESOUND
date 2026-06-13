@@ -146,23 +146,36 @@ export class GraphSolver {
      * Updates the X/Y/Z coordinates of all nodes in-place.
      * @param {Object} [options]
      * @param {number} [options.deltaTime] - Frame delta in seconds (default 1/60).
-     * @param {number} [options.networkTension] - Rule-driven tension multiplier (0-1, default 1).
-     * @param {number} [options.networkRepulsion] - Rule-driven repulsion multiplier (0-1, default 1).
+     * @param {number} [options.centralGravity] - Rule-driven center pull (0-1, default 1).
+     * @param {number} [options.lowGravity] - Rule-driven downward pull (0-1, default 0).
+     * @param {number} [options.highGravity] - Rule-driven upward pull (0-1, default 0).
+     * @param {number} [options.leftGravity] - Rule-driven left pull (0-1, default 0).
+     * @param {number} [options.rightGravity] - Rule-driven right pull (0-1, default 0).
+     * @param {number} [options.pullForce] - Rule-driven tension for shared-harmonics nodes (0-1, default 1).
+     * @param {number} [options.pushForce] - Rule-driven repulsion for non-shared nodes (0-1, default 1).
      */
     step(options = {}) {
         const cfg = this.config
         const dt = options.deltaTime ?? (1 / 60)
-        const tensionMul = options.networkTension ?? 1
-        const repulsionMul = options.networkRepulsion ?? 1
+        const cGrav = options.centralGravity ?? 1
+        const lowGrav = options.lowGravity ?? 0
+        const highGrav = options.highGravity ?? 0
+        const leftGrav = options.leftGravity ?? 0
+        const rightGrav = options.rightGravity ?? 0
+        const pullMul = options.pullForce ?? 1
+        const pushMul = options.pushForce ?? 1
 
         const nodes = [...this.nodes.values()]
         if (nodes.length < 2) {
-            // Single node or none — just apply center gravity
+            // Single node or none — just apply gravity modifiers
             for (const node of nodes) {
-                node.vx += -node.x * cfg.centerGravity
-                node.vy += -node.y * cfg.centerGravity
-                node.vz += -node.z * cfg.centerGravity * 0.5
-                // Clamp velocity
+                node.vx += -node.x * cfg.centerGravity * cGrav
+                node.vy += -node.y * cfg.centerGravity * cGrav + lowGrav * 0.5 - highGrav * 0.5
+                node.vz += -node.z * cfg.centerGravity * 0.5 * cGrav
+                // Directional gravity
+                node.vx += (rightGrav - leftGrav) * 2
+                node.vy += (highGrav - lowGrav) * 2
+                // Clamp velocity (automatic)
                 const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy + node.vz * node.vz)
                 if (speed > cfg.maxVelocity) {
                     const scale = cfg.maxVelocity / speed
@@ -180,10 +193,13 @@ export class GraphSolver {
             const a = nodes[i]
             let fx = 0, fy = 0, fz = 0
 
-            // Center gravity
-            fx += -a.x * cfg.centerGravity
-            fy += -a.y * cfg.centerGravity
-            fz += -a.z * cfg.centerGravity * 0.5
+            // Center gravity (scaled by rule)
+            fx += -a.x * cfg.centerGravity * cGrav
+            fy += -a.y * cfg.centerGravity * cGrav
+            fz += -a.z * cfg.centerGravity * 0.5 * cGrav
+            // Directional gravity (scaled by rules)
+            fx += (rightGrav - leftGrav) * 4
+            fy += (highGrav - lowGrav) * 4
 
             for (let j = i + 1; j < nodes.length; j++) {
                 const b = nodes[j]
@@ -193,14 +209,13 @@ export class GraphSolver {
                 const distSq = dx * dx + dy * dy + dz * dz
                 const dist = Math.sqrt(Math.max(0.001, distSq))
 
-                // Short-range repulsion (prevent overlap)
+                // Short-range repulsion (prevent overlap) — automatic
                 if (dist < cfg.repulsionRadius) {
-                    const repForce = cfg.repulsionStrength * (cfg.repulsionRadius - dist) / cfg.repulsionRadius * repulsionMul
+                    const repForce = cfg.repulsionStrength * (cfg.repulsionRadius - dist) / cfg.repulsionRadius * pushMul
                     const rfx = (dx / dist) * repForce
                     const rfy = (dy / dist) * repForce
                     const rfz = (dz / dist) * repForce
                     fx -= rfx; fy -= rfy; fz -= rfz
-                    // Apply to b in opposite direction (handled via symmetry)
                     b.vx += rfx; b.vy += rfy; b.vz += rfz
                     continue
                 }
@@ -208,9 +223,9 @@ export class GraphSolver {
                 const shareHarmonics = this._shareHarmonics(a.id, b.id)
 
                 if (shareHarmonics) {
-                    // PULL: spring toward rest length
+                    // PULL: spring toward rest length (scaled by pullForce rule)
                     const displacement = dist - cfg.pullRestLength
-                    const force = displacement * cfg.pullStiffness * tensionMul
+                    const force = displacement * cfg.pullStiffness * pullMul
                     const f = Math.min(cfg.maxForce, Math.abs(force)) * Math.sign(force)
                     const ffx = (dx / dist) * f
                     const ffy = (dy / dist) * f
@@ -221,7 +236,7 @@ export class GraphSolver {
                 } else {
                     // PUSH: spring away from rest length (negative)
                     const displacement = cfg.pushRestLength - dist
-                    const force = -displacement * cfg.pushStiffness * repulsionMul
+                    const force = -displacement * cfg.pushStiffness * pushMul
                     const f = Math.min(cfg.maxForce, Math.abs(force)) * Math.sign(force)
                     const ffx = (dx / dist) * f
                     const ffy = (dy / dist) * f

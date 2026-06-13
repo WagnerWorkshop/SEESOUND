@@ -136,10 +136,19 @@ const _outputEntries = [
     { id: 'direction', type: 'enum', values: ['x', 'y', 'z'], targets: ['lines'], modes: ['particle', 'cloud'] },
     { id: 'thickness', type: 'number', range: [0, 64], targets: ['lines'], modes: ['particle', 'cloud'] },
     { id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines'], modes: ['particle', 'cloud'] },
-    // Cloud-mode only outputs
-    { id: 'spread', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'networkTension', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'networkRepulsion', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    // Cloud-mode only outputs — Coordinates (aura)
+    { id: 'auraAngle', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraDistance', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraHeight', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraSpread', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    // Cloud-mode only outputs — Network modifiers
+    { id: 'centralGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'lowGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'highGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'leftGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'rightGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'pullForce', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'pushForce', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
 ]
 
 export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'lines', 'background', 'camera'])
