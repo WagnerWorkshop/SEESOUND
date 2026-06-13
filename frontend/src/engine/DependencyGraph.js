@@ -69,6 +69,7 @@ const MODE_GATED_VARS = new Map([
     ['entityVolume', new Set(['cloud'])],
     ['entityAge', new Set(['cloud'])],
     ['streamId', new Set(['cloud'])],
+    // isFundamental is legal in all modes (flagged at spawn/harmonic time)
     ['globalTransient', new Set(['cloud'])],
     // Output variables gated by mode
     // Cloud aura mode outputs

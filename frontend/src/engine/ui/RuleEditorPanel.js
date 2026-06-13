@@ -276,6 +276,37 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const row = el('div', 'cp-styles-entity-row')
             row.draggable = true
             row.dataset.entityId = entity.id
+            if (entity.enabled === false) row.classList.add('is-disabled')
+
+            // Eye toggle (enabled/disabled)
+            const eyeBtn = el('button', 'cp-btn cp-btn-icon cp-styles-entity-eye', {
+                type: 'button',
+                title: entity.enabled === false ? 'Show element' : 'Hide element',
+            })
+            applyIconOnlyButton(eyeBtn,
+                entity.enabled === false ? BUTTON_ICON_MAP.eyeClosed : BUTTON_ICON_MAP.eyeOpen,
+                entity.enabled === false ? 'Show element' : 'Hide element',
+            )
+            eyeBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                const nextEnabled = entity.enabled !== false ? false : true
+                const nextEntities = getRuleEntities().map((entry) =>
+                    entry.id === entity.id ? { ...entry, enabled: nextEnabled } : entry
+                )
+                setRuleEntities(nextEntities)
+                renderEntityList()
+            })
+
+            // Badge showing type + spacing
+            const typeBadge = el('span', 'cp-styles-entity-badge')
+            let badgeText = entity.entityShapeType || 'particle'
+            if (entity.entityShapeType === 'cloud' && entity.spacingMode === 'network') {
+                badgeText = 'cloud·net'
+            } else if (entity.entityShapeType === 'cloud') {
+                badgeText = `cloud·${entity.cloudShape || 'cyl'}`
+            }
+            typeBadge.textContent = badgeText
+
             const nameBtn = el('button', 'cp-btn cp-styles-entity-name', { text: entity.name || `Entity ${index + 1}` })
             const editBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.editEntity || 'Edit' })
             const removeBtn = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.rules?.removeEntity || 'Remove' })
@@ -314,7 +345,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 setRuleEntities(normalized)
             })
 
-            row.append(nameBtn, editBtn, removeBtn)
+            row.append(eyeBtn, typeBadge, nameBtn, editBtn, removeBtn)
             entityList.appendChild(row)
         })
     }
@@ -345,66 +376,19 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             popupTitle.textContent = nextName
             renderEntityList()
         })
-        const shapeSelect = el('select', 'cp-input-select')
-        shapeSelect.appendChild(createSelectOptions([
-            { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
-            { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
-            { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
-        ], entity.entityShapeType || 'particle'))
-        shapeSelect.addEventListener('change', () => {
-            const nextShape = String(shapeSelect.value || 'particle')
-            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? {
-                ...entry,
-                entityShapeType: nextShape,
-                spacingMode: nextShape === 'cloud' ? (entry.spacingMode || 'coordinates') : 'coordinates',
-            } : entry))
-            setRuleEntities(nextEntities)
-        })
-
-        // Spacing mode selector (only for cloud entities)
-        const spacingSelect = el('select', 'cp-input-select cp-spacing-select')
-        spacingSelect.appendChild(createSelectOptions([
-            { value: 'coordinates', label: UI_TEXT.rules?.spacingCoordinates || 'Coordinates' },
-            { value: 'network', label: UI_TEXT.rules?.spacingNetwork || 'Network' },
-        ], entity.spacingMode || 'coordinates'))
-        spacingSelect.style.display = entity.entityShapeType === 'cloud' ? '' : 'none'
-        shapeSelect.addEventListener('change', () => {
-            spacingSelect.style.display = shapeSelect.value === 'cloud' ? '' : 'none'
-        })
-        spacingSelect.addEventListener('change', () => {
-            const nextMode = String(spacingSelect.value || 'coordinates')
-            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, spacingMode: nextMode } : entry))
-            setRuleEntities(nextEntities)
-        })
-
-        // Cloud shape selector (only for cloud entities)
-        const cloudShapeSelect = el('select', 'cp-input-select cp-cloud-shape-select')
-        cloudShapeSelect.appendChild(createSelectOptions([
-            { value: 'cylindrical', label: UI_TEXT.rules?.cloudCylindrical || 'Cylindrical' },
-            { value: 'spherical', label: UI_TEXT.rules?.cloudSpherical || 'Spherical' },
-            { value: 'random', label: UI_TEXT.rules?.cloudRandom || 'Random 3D' },
-        ], entity.cloudShape || 'cylindrical'))
-        cloudShapeSelect.style.display = entity.entityShapeType === 'cloud' ? '' : 'none'
-        shapeSelect.addEventListener('change', () => {
-            const isCloud = shapeSelect.value === 'cloud'
-            spacingSelect.style.display = isCloud ? '' : 'none'
-            cloudShapeSelect.style.display = isCloud ? '' : 'none'
-        })
-        cloudShapeSelect.addEventListener('change', () => {
-            const nextShape = String(cloudShapeSelect.value || 'cylindrical')
-            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, cloudShape: nextShape } : entry))
-            setRuleEntities(nextEntities)
-        })
+        // Show a read-only badge for type/spacing
+        const infoLine = el('div', 'cp-styles-entity-info')
+        const shapeLabel = entity.entityShapeType || 'particle'
+        let infoText = `Type: ${shapeLabel}`
+        if (entity.entityShapeType === 'cloud') {
+            infoText += ` · Spacing: ${entity.spacingMode || 'coordinates'} · Shape: ${entity.cloudShape || 'cylindrical'}`
+        }
+        infoLine.textContent = infoText
 
         header.append(
             el('label', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Entity Name' }),
             nameInput,
-            el('label', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' }),
-            shapeSelect,
-            el('label', 'cp-setting-label cp-spacing-label', { text: UI_TEXT.rules?.spacingMode || 'Spacing' }),
-            spacingSelect,
-            el('label', 'cp-setting-label cp-cloud-shape-label', { text: UI_TEXT.rules?.cloudShape || 'Cloud Shape' }),
-            cloudShapeSelect,
+            infoLine,
         )
         popupMeta.appendChild(header)
 
@@ -517,21 +501,104 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         if (event.target === popup) closePopup()
     })
     addEntityBtn.addEventListener('click', () => {
-        const nextName = window.prompt(UI_TEXT.rules?.newEntityPrompt || 'Entity name', '')
-        if (!nextName) return
-        const nextEntities = [...getRuleEntities(), {
-            id: `entity-${Date.now()}`,
-            name: String(nextName).trim(),
-            enabled: true,
-            order: getRuleEntities().length,
-            entityShapeType: 'particle',
-            spacingMode: 'coordinates',
-            definitions: [],
-            rules: [],
-        }]
-        setRuleEntities(nextEntities)
-        renderEntityList()
+        openEntityCreationModal()
     })
+
+    function openEntityCreationModal() {
+        // Build a creation overlay
+        const backdrop = el('div', 'cp-modal-backdrop')
+        const panel = el('div', 'cp-entity-creation-panel')
+        const title = el('div', 'cp-entity-creation-title', { text: UI_TEXT.rules?.newEntityPrompt || 'Create Element' })
+        const closeBtn = el('button', 'cp-btn cp-btn-danger cp-entity-creation-close', { type: 'button' })
+        applyIconOnlyButton(closeBtn, BUTTON_ICON_MAP.close, 'Close')
+        closeBtn.addEventListener('click', () => backdrop.remove())
+
+        // Name
+        const nameRow = el('label', 'cp-setting-row')
+        const nameLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Name' })
+        const nameInput = el('input', 'cp-input-text', {
+            type: 'text',
+            placeholder: 'My Element',
+            value: '',
+        })
+        nameRow.append(nameLabel, nameInput)
+
+        // Entity type
+        const typeRow = el('label', 'cp-setting-row')
+        const typeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' })
+        const typeSelect = el('select', 'cp-input-select')
+        typeSelect.appendChild(createSelectOptions([
+            { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
+            { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
+            { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
+        ], 'particle'))
+        typeRow.append(typeLabel, typeSelect)
+
+        // Spacing mode (cloud only)
+        const spacingRow = el('label', 'cp-setting-row')
+        spacingRow.style.display = 'none'
+        const spacingLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.spacingMode || 'Spacing' })
+        const spacingSelect = el('select', 'cp-input-select')
+        spacingSelect.appendChild(createSelectOptions([
+            { value: 'coordinates', label: UI_TEXT.rules?.spacingCoordinates || 'Coordinates' },
+            { value: 'network', label: UI_TEXT.rules?.spacingNetwork || 'Network' },
+        ], 'coordinates'))
+        spacingRow.append(spacingLabel, spacingSelect)
+        typeSelect.addEventListener('change', () => {
+            spacingRow.style.display = typeSelect.value === 'cloud' ? '' : 'none'
+            cloudShapeRow.style.display = typeSelect.value === 'cloud' ? '' : 'none'
+        })
+
+        // Cloud shape (cloud only)
+        const cloudShapeRow = el('label', 'cp-setting-row')
+        cloudShapeRow.style.display = 'none'
+        const cloudShapeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.cloudShape || 'Cloud Shape' })
+        const cloudShapeSelect = el('select', 'cp-input-select')
+        cloudShapeSelect.appendChild(createSelectOptions([
+            { value: 'cylindrical', label: UI_TEXT.rules?.cloudCylindrical || 'Cylindrical' },
+            { value: 'spherical', label: UI_TEXT.rules?.cloudSpherical || 'Spherical' },
+            { value: 'random', label: UI_TEXT.rules?.cloudRandom || 'Random 3D' },
+        ], 'cylindrical'))
+        cloudShapeRow.append(cloudShapeLabel, cloudShapeSelect)
+
+        const actions = el('div', 'cp-button-grid')
+        const cancelBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button', text: UI_TEXT.file?.projectNameCancel || 'Cancel' })
+        cancelBtn.addEventListener('click', () => backdrop.remove())
+        const createBtn = el('button', 'cp-btn', { type: 'button', text: UI_TEXT.rules?.createEntity || 'Create' })
+        applyButtonIcon(createBtn, BUTTON_ICON_MAP.add, 'Create')
+        createBtn.addEventListener('click', () => {
+            const rawName = String(nameInput.value || '').trim()
+            const nextName = rawName || `Element ${getRuleEntities().length + 1}`
+            const nextType = typeSelect.value || 'particle'
+            const nextSpacing = spacingSelect.value || 'coordinates'
+            const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
+            const nextEntities = [...getRuleEntities(), {
+                id: `entity-${Date.now()}`,
+                name: nextName,
+                enabled: true,
+                order: getRuleEntities().length,
+                entityShapeType: nextType,
+                spacingMode: nextType === 'cloud' ? nextSpacing : 'coordinates',
+                cloudShape: nextType === 'cloud' ? nextCloudShape : 'cylindrical',
+                definitions: [],
+                rules: [],
+            }]
+            setRuleEntities(nextEntities)
+            renderEntityList()
+            backdrop.remove()
+        })
+        actions.append(cancelBtn, createBtn)
+
+        const body = el('div', 'cp-entity-creation-body')
+        body.append(nameRow, typeRow, spacingRow, cloudShapeRow, actions)
+
+        const header = el('div', 'cp-entity-creation-header')
+        header.append(title, closeBtn)
+        panel.append(header, body)
+        backdrop.appendChild(panel)
+        document.body.appendChild(backdrop)
+        nameInput.focus()
+    }
 
     function normalizeExpressionSyntax(expression) {
         let next = String(expression || '').trim()

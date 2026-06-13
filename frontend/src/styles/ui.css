@@ -1422,10 +1422,6 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 /* ── Tuner UI ── */
-.cp-tuner-section {
-    /* inherits cp-section styles */
-}
-
 .cp-tuner-grid {
     display: flex;
     flex-direction: column;
@@ -2525,6 +2521,93 @@ input[type=number]::-webkit-inner-spin-button {
     flex: 1;
     width: 100%;
     display: block;
+}
+
+/* ===== Entity creation modal ===== */
+.cp-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.cp-entity-creation-panel {
+    background: var(--color-bg-raised);
+    border-radius: var(--radius-m);
+    border: var(--border-strong);
+    width: 420px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.cp-entity-creation-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--padding-m);
+    border-bottom: var(--border-default);
+}
+
+.cp-entity-creation-title {
+    font-size: var(--fs-title);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.cp-entity-creation-body {
+    padding: var(--padding-m);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-l);
+}
+
+.cp-entity-creation-body .cp-setting-row {
+    grid-template-columns: minmax(100px, 1fr) minmax(140px, 2fr);
+}
+
+/* ===== Entity eye toggle and badge ===== */
+.cp-styles-entity-eye {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 14px;
+}
+
+.cp-styles-entity-badge {
+    font-family: var(--font-mono);
+    font-size: var(--fs-aux);
+    color: var(--color-text-dim);
+    white-space: nowrap;
+    background: var(--color-bg);
+    padding: 1px 6px;
+    border-radius: var(--radius-s);
+    border: var(--border-soft);
+}
+
+.cp-styles-entity-row.is-disabled {
+    opacity: 0.5;
+}
+
+.cp-styles-entity-row.is-disabled .cp-styles-entity-name {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.cp-styles-entity-info {
+    grid-column: 1 / -1;
+    font-family: var(--font-ui);
+    font-size: var(--fs-aux);
+    color: var(--color-text-dim);
+    padding: var(--padding-xs) 0;
 }
 
 /* ===== END canvas.css ===== */

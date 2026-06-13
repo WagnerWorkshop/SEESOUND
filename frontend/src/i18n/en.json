@@ -775,6 +775,13 @@
             "label": "Stream Id",
             "technicalName": "streamId",
             "description": "Tracking stream id for a continuous tone."
+        },
+        {
+            "id": "isFundamental",
+            "group": "overall",
+            "label": "Is Fundamental",
+            "technicalName": "isFundamental",
+            "description": "1 if this particle represents a fundamental/root node, 0 if it is a harmonic overtone."
         }
     ]
 }

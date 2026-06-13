@@ -257,6 +257,7 @@ export class ParticleSystem {
         this._shape = new Float32Array(this._N)
         this._pan = new Float32Array(this._N)
         this._binRms = new Float32Array(this._N)
+        this._isFundamental = new Float32Array(this._N)
         this._linePos = new Float32Array(this._N * 2 * 3)
         this._lineCol = new Float32Array(this._N * 2 * 3)
         this._lineThickness = new Float32Array(this._N)
@@ -347,7 +348,8 @@ export class ParticleSystem {
             alpha: this._alpha,
             shape: this._shape,
             pan: this._pan,
-            binRms: this._binRms
+            binRms: this._binRms,
+            isFundamental: this._isFundamental
         }
         const { rehydrated, mode } = this._archive.rehydrateArchivedToActive(request, buffers, this._N)
 
@@ -517,6 +519,7 @@ export class ParticleSystem {
             if (touched >= maxTouches) break
             loopInputs.pan = Number.isFinite(this._pan[i]) ? this._pan[i] : 0
             loopInputs.binRMSEnergy = Number.isFinite(this._binRms[i]) ? this._binRms[i] : 0
+            loopInputs.isFundamental = Number.isFinite(this._isFundamental[i]) ? this._isFundamental[i] : 0
             const particle = {
                 x: this._pos[i * 3],
                 y: this._pos[i * 3 + 1],
@@ -1014,6 +1017,9 @@ export class ParticleSystem {
             this._shape[slotIndex] = shapeToValue(particle.shapeType)
             this._pan[slotIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
             this._binRms[slotIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
+            // Default isFundamental to 1 for all spawned particles;
+            // cloud particles representing harmonics will override this to 0.
+            this._isFundamental[slotIndex] = 1
             markPointDirty(slotIndex)
             wroteParticles++
 

@@ -44,6 +44,7 @@ const _INPUT_RANGES = Object.freeze({
     globalTransient: [0, 10],
     entityAge: [0, Number.POSITIVE_INFINITY],
     streamId: [0, 1],
+    isFundamental: [0, 1],
     time: [0, Number.POSITIVE_INFINITY],
     deltaTime: [0, 1],
     canvasWidthPx: [0, Number.POSITIVE_INFINITY],
@@ -98,6 +99,7 @@ const _INPUT_MODES = {
     globalTransient: ['cloud'],
     entityAge: ['cloud'],
     streamId: ['cloud'],
+    isFundamental: ['particle', 'cloud'],
 }
 
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({
