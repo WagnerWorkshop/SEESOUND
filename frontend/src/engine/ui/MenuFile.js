@@ -1,5 +1,5 @@
-export function buildFileMenu(body, deps) {
-    const { el, UI_TEXT, BUTTON_ICON_MAP, applyButtonIcon, applySelectedOptionTooltip } = deps
+export function buildFileMenu(body, syncRegistry, deps) {
+    const { el, UI_TEXT, BUTTON_ICON_MAP, applyButtonIcon, applySelectedOptionTooltip, params, set, registerSync } = deps
     const panel = el('div', 'cp-menu-pane-inner')
     const TEMPLATE_MANIFEST_URL = '/templates/factory-templates.json'
     const FALLBACK_FACTORY_TEMPLATES = Object.freeze([
@@ -125,6 +125,41 @@ export function buildFileMenu(body, deps) {
     projectActions.append(btnNewProject, btnLoadProject, btnSaveProject, btnSaveAsProject)
     projectSection.appendChild(projectActions)
 
+    const projectNameModal = el('div', 'cp-project-modal')
+    const projectNamePanel = el('div', 'cp-project-modal-panel')
+    const projectNameHeader = el('div', 'cp-project-modal-header')
+    const projectNameTitle = el('div', 'cp-project-modal-title', {
+        text: UI_TEXT?.file?.projectNameTitle || UI_TEXT?.file?.projectNew || 'New Project',
+    })
+    const projectNameClose = el('button', 'cp-btn cp-btn-danger cp-project-modal-close', { type: 'button' })
+    applyButtonIcon(projectNameClose, BUTTON_ICON_MAP.close || BUTTON_ICON_MAP.clear, UI_TEXT?.file?.close || 'Close')
+    projectNameHeader.append(projectNameTitle, projectNameClose)
+
+    const projectNameBody = el('div', 'cp-project-modal-body')
+    const projectNamePromptLabel = el('label', 'cp-setting-label', {
+        text: UI_TEXT?.file?.projectNamePrompt || 'Project name',
+    })
+    const projectNameInput = el('input', 'cp-input-text', {
+        type: 'text',
+        placeholder: UI_TEXT?.file?.projectNamePlaceholder || UI_TEXT?.file?.projectNew || 'New Project',
+    })
+    projectNameBody.append(projectNamePromptLabel, projectNameInput)
+
+    const projectNameActions = el('div', 'cp-project-modal-actions')
+    const projectNameCancel = el('button', 'cp-btn cp-btn-danger', {
+        type: 'button',
+        text: UI_TEXT?.file?.projectNameCancel || UI_TEXT?.file?.recoveryDismiss || 'Cancel',
+    })
+    const projectNameConfirm = el('button', 'cp-btn', {
+        type: 'button',
+        text: UI_TEXT?.file?.projectNameConfirm || UI_TEXT?.file?.projectNew || 'Create',
+    })
+    applyButtonIcon(projectNameConfirm, BUTTON_ICON_MAP.add, projectNameConfirm.textContent)
+    projectNameActions.append(projectNameCancel, projectNameConfirm)
+
+    projectNamePanel.append(projectNameHeader, projectNameBody, projectNameActions)
+    projectNameModal.appendChild(projectNamePanel)
+
     const exportRow = el('div', 'cp-start-export-row')
     const exportSelect = el('select', 'cp-input-select')
     for (const entry of buildExportOptions()) {
@@ -139,7 +174,331 @@ export function buildFileMenu(body, deps) {
     exportRow.append(exportSelect, btnExportAs)
     projectSection.appendChild(exportRow)
 
-    btnNewProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-new-request')))
+    // ── Presets ──
+    const presetSection = el('section', 'cp-section')
+    const presetTitleRow = el('div', 'cp-section-title-row')
+    const presetTitle = el('h3', 'cp-section-title', { text: 'Presets' })
+    const presetNameLabel = el('span', 'cp-project-name', { text: UI_TEXT.file?.projectNew || 'None' })
+    presetTitleRow.append(presetTitle, presetNameLabel)
+    presetSection.appendChild(presetTitleRow)
+    const presetActions = el('div', 'cp-button-grid')
+    const addPresetBtn = el('button', 'cp-btn', { type: 'button', title: 'Save current settings as a new preset' })
+    applyButtonIcon(addPresetBtn, BUTTON_ICON_MAP.add, 'New Preset')
+    const btnExportPreset = el('button', 'cp-btn', { type: 'button', title: 'Export current preset as a file' })
+    applyButtonIcon(btnExportPreset, BUTTON_ICON_MAP.export, 'Export Preset')
+    presetActions.append(addPresetBtn, btnExportPreset)
+    presetSection.appendChild(presetActions)
+
+    const presetGrid = el('div', 'cp-template-grid')
+
+    const updatePresetNameLabel = (name) => {
+        const shown = String(name || '').trim() || UI_TEXT.file?.projectNew || 'None'
+        presetNameLabel.textContent = shown
+        presetNameLabel.title = shown
+    }
+
+    window.addEventListener('seesound:preset-load-request', (e) => {
+        const presetName = String(e?.detail?.presetName || '').trim()
+        if (presetName) updatePresetNameLabel(presetName)
+    })
+
+    window.addEventListener('seesound:project-loaded', (e) => {
+        const presetName = String(e?.detail?.presetName || '').trim()
+        if (presetName) updatePresetNameLabel(presetName)
+    })
+
+    window.addEventListener('seesound:factory-template-load-request', (e) => {
+        const title = String(e?.detail?.title || e?.detail?.presetName || '').trim()
+        if (title) updatePresetNameLabel(title)
+    })
+
+    const formatPresetThumbnail = (data) => {
+        if (!data?.thumbnail) return null
+        const thumbUrl = String(data.thumbnail).trim()
+        if (!thumbUrl) return null
+        const img = el('img', 'cp-template-thumb-image', { src: thumbUrl, alt: data.name || '', loading: 'lazy' })
+        img.addEventListener('error', () => {
+            img.replaceWith(el('div', 'cp-template-thumb is-generated', { text: String(data.name || '?').slice(0, 2).toUpperCase() }))
+        }, { once: true })
+        return img
+    }
+
+    const renderPresets = () => {
+        import('../ParamStore.js').then(({ listPresets, loadPreset, savePreset, deletePreset }) => {
+            listPresets().then(names => {
+                presetGrid.innerHTML = ''
+
+                for (const name of names) {
+                    const card = el('button', 'cp-template-card', { type: 'button', 'data-preset-name': name })
+                    const thumb = el('div', 'cp-template-thumb is-generated', { text: name.slice(0, 2).toUpperCase() })
+                    const title = el('span', 'cp-template-card-title', { text: name })
+                    card.append(thumb, title)
+
+                    // Load thumbnail if exists
+                    loadPreset(name).then(data => {
+                        if (data?.params?.presetThumbnail) {
+                            const img = formatPresetThumbnail({ thumbnail: data.params.presetThumbnail, name })
+                            if (img) { thumb.replaceWith(img) }
+                        }
+                    })
+
+                    // Right-click context menu
+                    card.addEventListener('contextmenu', (e) => {
+                        e.preventDefault()
+                        const menu = el('div', 'cp-preset-context-menu')
+                        menu.style.left = `${e.clientX}px`
+                        menu.style.top = `${e.clientY}px`
+
+                        const renameItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Rename' })
+                        const thumbnailItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Set Thumbnail' })
+                        const clearThumbItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Clear Thumbnail' })
+                        const deleteItem = el('button', 'cp-preset-context-item cp-preset-context-item--danger', { type: 'button', text: 'Delete' })
+
+                        renameItem.addEventListener('click', () => {
+                            menu.remove()
+                            const newName = prompt('Rename preset:', name)
+                            if (newName && newName.trim() && newName.trim() !== name) {
+                                loadPreset(name).then(data => {
+                                    if (data) { savePreset(newName.trim(), { ...data.params, presetThumbnail: data.params?.presetThumbnail || '' }); deletePreset(name); renderPresets() }
+                                })
+                            }
+                        })
+
+                        thumbnailItem.addEventListener('click', () => {
+                            menu.remove()
+                            const input = el('input', '', { type: 'file', accept: 'image/*', style: 'display:none' })
+                            document.body.appendChild(input)
+                            input.addEventListener('change', () => {
+                                const file = input.files?.[0]
+                                if (!file) { input.remove(); return }
+                                const reader = new FileReader()
+                                reader.onload = () => {
+                                    const base64 = String(reader.result || '')
+                                    loadPreset(name).then(data => {
+                                        if (data) {
+                                            savePreset(name, { ...data.params, presetThumbnail: base64 })
+                                            renderPresets()
+                                        }
+                                    })
+                                    input.remove()
+                                }
+                                reader.readAsDataURL(file)
+                            })
+                            input.click()
+                        })
+
+                        clearThumbItem.addEventListener('click', () => {
+                            menu.remove()
+                            loadPreset(name).then(data => {
+                                if (data) {
+                                    const { presetThumbnail, ...rest } = data.params
+                                    savePreset(name, rest)
+                                    renderPresets()
+                                }
+                            })
+                        })
+
+                        deleteItem.addEventListener('click', () => {
+                            menu.remove()
+                            if (confirm(`Delete preset "${name}"?`)) {
+                                deletePreset(name)
+                                renderPresets()
+                            }
+                        })
+
+                        menu.append(renameItem, thumbnailItem, clearThumbItem, deleteItem)
+                        document.body.appendChild(menu)
+
+                        const closeMenu = (ev) => {
+                            if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) }
+                        }
+                        setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
+                    })
+                    // Left-click: load
+                    card.addEventListener('click', () => {
+                        window.dispatchEvent(new CustomEvent('seesound:preset-load-request', { detail: { presetName: name } }))
+                    })
+                    presetGrid.appendChild(card)
+                }
+            })
+        })
+    }
+    addPresetBtn.addEventListener('click', () => {
+        const name = prompt('New preset name:', '')
+        if (name && name.trim()) {
+            import('../ParamStore.js').then(({ savePreset }) => {
+                savePreset(name.trim(), params)
+                    .then(() => { window.dispatchEvent(new CustomEvent('seesound:preset-library-changed')) })
+            })
+        }
+    })
+    btnExportPreset.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:preset-export-request'))
+    })
+    presetSection.appendChild(presetGrid)
+    renderPresets()
+    window.addEventListener('seesound:preset-library-changed', renderPresets)
+
+    // ── Preset Tuners ──
+    const tunerSection = el('section', 'cp-section cp-tuner-section')
+    const tunerTitleRow = el('div', 'cp-section-title-row')
+    const tunerTitle = el('h3', 'cp-section-title', { text: 'Tuners' })
+    tunerTitleRow.appendChild(tunerTitle)
+    tunerSection.appendChild(tunerTitleRow)
+    const tunerGrid = el('div', 'cp-tuner-grid')
+    tunerSection.appendChild(tunerGrid)
+    let tunerDisposeFns = []
+
+    const buildTunerUI = () => {
+        // Clean up previous
+        for (const fn of tunerDisposeFns) fn()
+        tunerDisposeFns = []
+        tunerGrid.innerHTML = ''
+
+        const tuners = Array.isArray(params.tuners) ? params.tuners : []
+        if (!tuners.length) {
+            tunerSection.style.display = 'none'
+            return
+        }
+        tunerSection.style.display = ''
+
+        for (const tuner of tuners) {
+            const row = el('div', 'cp-tuner-row')
+
+            const tunerName = String(tuner.label || tuner.id || 'Tuner')
+                .replace(/([A-Z])/g, ' $1')
+                .replace(/^./, (s) => s.toUpperCase())
+                .trim()
+            const label = el('span', 'cp-tuner-label', { text: tunerName })
+            label.title = `ID: ${tuner.id}`
+
+            const slider = el('input', 'cp-input-range', {
+                type: 'range',
+                min: tuner.min ?? 0,
+                max: tuner.max ?? 1,
+                step: tuner.step ?? 0.01,
+                value: String(tuner.value ?? tuner.defaultValue ?? 0),
+            })
+
+            const valueDisplay = el('input', 'cp-input-number cp-tuner-value', {
+                type: 'number',
+                step: tuner.step ?? 0.01,
+                value: String(tuner.value ?? tuner.defaultValue ?? 0),
+            })
+
+            const syncFromSlider = () => {
+                const val = parseFloat(slider.value)
+                if (Number.isFinite(val)) {
+                    valueDisplay.value = String(val)
+                    tuner.value = val
+                }
+            }
+            const syncFromNumber = () => {
+                const val = parseFloat(valueDisplay.value)
+                if (Number.isFinite(val)) {
+                    const clamped = Math.max(tuner.min ?? 0, Math.min(tuner.max ?? 1, val))
+                    slider.value = String(clamped)
+                    valueDisplay.value = String(clamped)
+                    tuner.value = clamped
+                }
+            }
+
+            slider.addEventListener('input', syncFromSlider)
+            valueDisplay.addEventListener('change', syncFromNumber)
+
+            // Right-click: show original rule slider
+            row.addEventListener('contextmenu', (e) => {
+                e.preventDefault()
+                const menu = el('div', 'cp-preset-context-menu')
+                menu.style.left = `${e.clientX}px`
+                menu.style.top = `${e.clientY}px`
+                const showOrig = el('button', 'cp-preset-context-item', { type: 'button', text: 'Show Original in Rule Builder' })
+                showOrig.addEventListener('click', () => {
+                    menu.remove()
+                    const sliderId = tuner.sliderId || tuner.id
+                    if (sliderId) {
+                        window.dispatchEvent(new CustomEvent('seesound:show-rule-slider', { detail: { sliderId } }))
+                    }
+                })
+                menu.appendChild(showOrig)
+                document.body.appendChild(menu)
+                const closeMenu = (ev) => {
+                    if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) }
+                }
+                setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
+            })
+
+            tunerDisposeFns.push(() => {
+                // Save current value back to params.tuners
+                const currentTuners = Array.isArray(params.tuners) ? [...params.tuners] : []
+                const idx = currentTuners.findIndex(t => (t.id === tuner.id || t.sliderId === tuner.sliderId))
+                if (idx >= 0) {
+                    currentTuners[idx] = { ...currentTuners[idx], value: tuner.value }
+                }
+            })
+
+            row.append(label, slider, valueDisplay)
+            tunerGrid.appendChild(row)
+        }
+    }
+
+    // Initial build
+    buildTunerUI()
+
+    // Subscribe to tuner changes
+    const tunerCleanup = () => {
+        // Save tuner values on cleanup
+        const currentTuners = Array.isArray(params.tuners) ? [...params.tuners] : []
+        tunerGrid.querySelectorAll('.cp-tuner-row').forEach((row, idx) => {
+            const valInput = row.querySelector('.cp-tuner-value')
+            if (valInput && currentTuners[idx]) {
+                currentTuners[idx].value = parseFloat(valInput.value) || currentTuners[idx].defaultValue || 0
+            }
+        })
+    }
+    window.addEventListener('seesound:before-menu-close', tunerCleanup)
+    tunerDisposeFns.push(() => window.removeEventListener('seesound:before-menu-close', tunerCleanup))
+
+    // Rebuild tuner UI when params change
+    const tunerSync = () => {
+        // Debounced rebuild - check if tuners array changed
+        const currentTuners = Array.isArray(params.tuners) ? params.tuners : []
+        const hasTuners = currentTuners.length > 0
+        tunerSection.style.display = hasTuners ? '' : 'none'
+        if (hasTuners) buildTunerUI()
+    }
+    registerSync(syncRegistry, tunerSync, ['tuners'])
+    tunerSync()
+
+    // ── End Preset Tuners ──
+
+    const setProjectNameModalOpen = (open) => {
+        const isOpen = !!open
+        projectNameModal.classList.toggle('is-open', isOpen)
+        if (isOpen) {
+            const defaultName = projectNameFromFile(projectNameLabel.textContent)
+                || projectNameFromFile(projectNameInput.placeholder)
+                || UI_TEXT?.file?.projectNew
+                || 'New Project'
+            projectNameInput.value = defaultName
+            projectNameInput.focus()
+            projectNameInput.select()
+        }
+    }
+
+    const confirmProjectName = () => {
+        const value = String(projectNameInput.value || '').trim()
+        if (!value) {
+            projectNameInput.focus()
+            return
+        }
+        setProjectNameModalOpen(false)
+        window.dispatchEvent(new CustomEvent('seesound:project-new-request', {
+            detail: { projectName: value },
+        }))
+    }
+
+    btnNewProject.addEventListener('click', () => setProjectNameModalOpen(true))
     btnLoadProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-open-request')))
     btnSaveProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-request')))
     btnSaveAsProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-as-request')))
@@ -147,6 +506,23 @@ export function buildFileMenu(body, deps) {
         window.dispatchEvent(new CustomEvent('seesound:project-export-request', {
             detail: { format: String(exportSelect.value || 'project-file') },
         }))
+    })
+
+    projectNameModal.addEventListener('click', (event) => {
+        if (event.target === projectNameModal) setProjectNameModalOpen(false)
+    })
+    projectNameClose.addEventListener('click', () => setProjectNameModalOpen(false))
+    projectNameCancel.addEventListener('click', () => setProjectNameModalOpen(false))
+    projectNameConfirm.addEventListener('click', confirmProjectName)
+    projectNameInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault()
+            confirmProjectName()
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault()
+            setProjectNameModalOpen(false)
+        }
     })
 
     window.addEventListener('seesound:project-file-state', (e) => {
@@ -184,6 +560,19 @@ export function buildFileMenu(body, deps) {
                 createTemplateThumb(template, title),
                 el('span', 'cp-template-card-title', { text: title }),
             )
+            // Add a "copy to presets" overlay
+            const copyBtn = el('button', 'cp-template-copy-btn', { type: 'button', text: '+' })
+            copyBtn.title = 'Add to My Presets'
+            copyBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                const presetName = prompt('Save as preset name:', title)
+                if (presetName && presetName.trim()) {
+                    window.dispatchEvent(new CustomEvent('seesound:factory-template-copy-request', {
+                        detail: { presetPath: template.presetPath, presetName: presetName.trim() }
+                    }))
+                }
+            })
+            button.appendChild(copyBtn)
             button.addEventListener('click', () => {
                 window.dispatchEvent(new CustomEvent('seesound:factory-template-load-request', {
                     detail: {
@@ -250,7 +639,7 @@ export function buildFileMenu(body, deps) {
         window.dispatchEvent(new CustomEvent('seesound:project-recovery-dismiss'))
     })
 
-    panel.append(projectSection, templatesSection, recoveryToast)
+    panel.append(projectSection, presetSection, tunerSection, templatesSection, recoveryToast, projectNameModal)
     body.appendChild(panel)
 
     void loadFactoryTemplates()

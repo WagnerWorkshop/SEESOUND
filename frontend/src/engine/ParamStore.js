@@ -15,7 +15,7 @@ const USER_PRESET_STORAGE_KEY = 'seesound_user_presets_v1'
 const HIDDEN_ROOT_PRESET_STORAGE_KEY = 'seesound_hidden_root_presets_v1'
 const ROOT_PRESET_MODULES = import.meta.glob('../../../presets/*.json', { eager: true, import: 'default' })
 
-export const RULE_SCHEMA_VERSION = 1
+export const RULE_SCHEMA_VERSION = 3
 export const RULE_DEBUG_FLAGS = {
     logCompilerStatus: false,
     logCompilerTiming: false,
@@ -23,9 +23,15 @@ export const RULE_DEBUG_FLAGS = {
 
 const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     ruleBlocks: [],
+    ruleEntities: [],
+    ruleGlobalBlocks: {
+        background: [],
+        camera: [],
+    },
     ruleEngineEnabled: true,
     ruleSchemaVersion: RULE_SCHEMA_VERSION,
     palettes: [],
+    tuners: [],
     ruleUiState: {
         collapsedGroups: [],
         collapsedSubgroups: [],
@@ -37,6 +43,98 @@ const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
         selectedSubgroup: '',
     },
 })
+
+function _coerceRuleEntity(raw, index) {
+    const source = (raw && typeof raw === 'object') ? raw : {}
+    const id = (typeof source.id === 'string' && source.id.trim())
+        ? source.id.trim()
+        : `entity-${index + 1}`
+    const name = (typeof source.name === 'string' && source.name.trim())
+        ? source.name.trim()
+        : `Entity ${index + 1}`
+    const enabled = source.enabled !== false
+    const order = Number.isFinite(source.order) ? Number(source.order) : index
+    const definitionsMode = source.definitionsMode === 'special' ? 'special' : 'all'
+    const entityShapeType = (source.entityShapeType === 'cloud' || source.entityShapeType === 'line')
+        ? source.entityShapeType
+        : 'particle'
+    const spacingMode = entityShapeType === 'cloud'
+        ? (source.spacingMode === 'network' ? 'network' : 'coordinates')
+        : 'coordinates'
+    const definitions = Array.isArray(source.definitions) ? source.definitions.map((def, defIndex) => {
+        if (typeof def === 'string') return { id: `def-${index + 1}-${defIndex + 1}`, name: def, expression: '' }
+        if (!def || typeof def !== 'object') return null
+        const defId = (typeof def.id === 'string' && def.id.trim()) ? def.id.trim() : `def-${index + 1}-${defIndex + 1}`
+        const defName = (typeof def.name === 'string' && def.name.trim()) ? def.name.trim() : `Definition ${defIndex + 1}`
+        const defExpr = typeof def.expression === 'string' ? def.expression : ''
+        return { ...def, id: defId, name: defName, expression: defExpr }
+    }).filter(Boolean) : []
+    const ruleSanitization = sanitizeRuleBlocks(Array.isArray(source.rules) ? source.rules : [])
+    return {
+        id,
+        name,
+        enabled,
+        order,
+        definitionsMode,
+        entityShapeType,
+        spacingMode,
+        definitions,
+        rules: ruleSanitization.ruleBlocks,
+    }
+}
+
+function _sanitizeRuleGlobals(raw) {
+    const source = (raw && typeof raw === 'object') ? raw : {}
+    return {
+        background: sanitizeRuleBlocks(Array.isArray(source.background) ? source.background : []).ruleBlocks,
+        camera: sanitizeRuleBlocks(Array.isArray(source.camera) ? source.camera : []).ruleBlocks,
+    }
+}
+
+function _splitLegacyRuleBlocks(ruleBlocks) {
+    const input = Array.isArray(ruleBlocks) ? ruleBlocks : []
+    const background = input.filter((rule) => rule?.target === 'background')
+    const camera = input.filter((rule) => rule?.target === 'camera')
+    const entityRules = input.filter((rule) => rule?.target !== 'background' && rule?.target !== 'camera')
+    const entity = _coerceRuleEntity({ id: 'entity-all', name: 'All', rules: entityRules }, 0)
+    return {
+        entities: [entity],
+        globals: _sanitizeRuleGlobals({ background, camera }),
+    }
+}
+
+function _flattenRuleEntities(entities = [], globals = { background: [], camera: [] }) {
+    const blocks = []
+    const ordered = [...entities].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    ordered.forEach((entity, entityIndex) => {
+        if (!entity || typeof entity !== 'object') return
+        const baseOrder = entityIndex * 10000
+        const rules = Array.isArray(entity.rules) ? entity.rules : []
+        rules.forEach((rule, ruleIndex) => {
+            const order = Number.isFinite(rule?.order) ? Number(rule.order) : ruleIndex
+            blocks.push({
+                ...rule,
+                entityId: entity.id,
+                entityName: entity.name,
+                sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+                order: baseOrder + order,
+            })
+        })
+    })
+
+    const globalBlocks = [
+        ...(Array.isArray(globals?.background) ? globals.background : []),
+        ...(Array.isArray(globals?.camera) ? globals.camera : []),
+    ]
+    globalBlocks.forEach((rule, index) => {
+        blocks.push({
+            ...rule,
+            order: Number.isFinite(rule?.order) ? Number(rule.order) : (900000 + index),
+        })
+    })
+
+    return blocks
+}
 
 function _sanitizeRuleUiState(raw) {
     const source = (raw && typeof raw === 'object') ? raw : {}
@@ -72,6 +170,23 @@ function _sanitizePalettes(rawPalettes) {
             }
         })
         .filter(Boolean)
+}
+
+function _sanitizeTuners(rawTuners) {
+    if (!Array.isArray(rawTuners)) return []
+    return rawTuners.map((tuner, i) => {
+        if (!tuner || typeof tuner !== 'object') return null
+        return {
+            id: (typeof tuner.id === 'string' && tuner.id.trim()) ? tuner.id.trim() : `tuner-${Date.now()}-${i}`,
+            ruleId: typeof tuner.ruleId === 'string' ? tuner.ruleId : '',
+            label: typeof tuner.label === 'string' ? tuner.label : 'Tuner',
+            min: Number.isFinite(tuner.min) ? tuner.min : 0,
+            max: Number.isFinite(tuner.max) ? tuner.max : 1,
+            step: Number.isFinite(tuner.step) ? tuner.step : 0.01,
+            defaultValue: tuner.defaultValue !== undefined ? Number(tuner.defaultValue) : undefined,
+            expression: typeof tuner.expression === 'string' ? tuner.expression : '',
+        }
+    }).filter(Boolean)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,21 +239,6 @@ const PARAMS_BASE = [
         key: 'freqNormMax', group: 'inputProcessing', label: 'Frequency Range Max',
         min: 16, max: 20000, step: 1, default: 12000, unit: 'Hz',
         desc: 'Upper bound for frequency normalization.',
-        canDisable: false,
-    },
-    {
-        key: 'fftSize', group: 'inputProcessing', label: 'Audio Resolution',
-        default: 2048, unit: '',
-        desc: 'FFT analysis size. Higher values increase frequency detail.',
-        isDropdown: true,
-        dropdownOptions: [
-            { label: '512', value: 512 },
-            { label: '1024', value: 1024 },
-            { label: '2048', value: 2048 },
-            { label: '4096', value: 4096 },
-            { label: '8192', value: 8192 },
-            { label: '16384', value: 16384 },
-        ],
         canDisable: false,
     },
     {
@@ -532,6 +632,54 @@ const PARAMS_BASE = [
         desc: 'Momentary: canvas fades each frame. Painting: marks accumulate.',
         isToggle: true, toggleLabels: ['Momentary', 'Painting'],
     },
+    {
+        key: 'objectMode', group: 'mixing', label: 'Engine Mode',
+        default: 'particle', unit: '',
+        desc: 'Operating mode. Particle = per-bin positioning. Cloud = harmonic objects with entity-level rules.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: 'Particle', value: 'particle' },
+            { label: 'Cloud', value: 'cloud' },
+        ],
+    },
+    {
+        key: 'uiMode', group: 'mixing', label: 'UI Mode',
+        default: 'advanced', unit: '',
+        desc: 'UI complexity tier. Basic shows limited controls; Advanced shows the full rule builder.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: 'Basic', value: 'basic' },
+            { label: 'Advanced', value: 'advanced' },
+        ],
+    },
+    {
+        key: 'foresight', group: 'mixing', label: 'Foresight',
+        min: 0, max: 5, step: 0.1, default: 0, unit: 's',
+        desc: 'How far ahead (in seconds) to buffer audio features for interval mode.',
+        canDisable: false,
+    },
+    {
+        key: 'delay', group: 'mixing', label: 'Delay',
+        min: 0, max: 2, step: 0.01, default: 0, unit: 's',
+        desc: 'Delay in seconds before applying audio features to visuals.',
+        canDisable: false,
+    },
+    {
+        key: 'trackingInterval', group: 'mixing', label: 'Tracking Interval',
+        min: 0.1, max: 2, step: 0.1, default: 0.5, unit: 's',
+        desc: 'Update cadence in seconds for interval mode. Lower = more responsive.',
+        canDisable: false,
+    },
+    {
+        key: 'timeMode', group: 'mixing', label: 'Time Mode',
+        default: 'immediate', unit: '',
+        desc: 'Immediate: features applied per frame. Interval: features buffered over the foresight window.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: 'Immediate', value: 'immediate' },
+            { label: 'Interval', value: 'interval' },
+        ],
+    },
 ]
 
 function getLocalizedSettingText(bucket, key, fallback = '') {
@@ -576,7 +724,34 @@ export function migrateRuleSchema(snapshot) {
     const incomingBlocks = Array.isArray(source.ruleBlocks) ? source.ruleBlocks : []
     const sanitization = sanitizeRuleBlocks(incomingBlocks)
 
-    migrated.ruleBlocks = sanitization.ruleBlocks
+    // Schema v2→v3 migration: strip luma and yellow from all rule blocks,
+    // entity rules, and global blocks.
+    const stripLuma = (blocks) => {
+        if (!Array.isArray(blocks)) return blocks
+        return blocks.map((rule) => {
+            if (!rule || typeof rule !== 'object') return rule
+            const actions = Array.isArray(rule.actions) ? rule.actions.filter((a) => {
+                return a && a.output !== 'luma' && a.output !== 'yellow'
+            }) : []
+            return { ...rule, actions }
+        }).filter(Boolean)
+    }
+
+    migrated.ruleBlocks = stripLuma(sanitization.ruleBlocks)
+    if (Array.isArray(migrated.ruleEntities)) {
+        migrated.ruleEntities = migrated.ruleEntities.map((entity) => {
+            if (!entity || typeof entity !== 'object') return entity
+            return { ...entity, rules: stripLuma(entity.rules) }
+        })
+    }
+    if (migrated.ruleGlobalBlocks && typeof migrated.ruleGlobalBlocks === 'object') {
+        if (Array.isArray(migrated.ruleGlobalBlocks.background)) {
+            migrated.ruleGlobalBlocks.background = stripLuma(migrated.ruleGlobalBlocks.background)
+        }
+        if (Array.isArray(migrated.ruleGlobalBlocks.camera)) {
+            migrated.ruleGlobalBlocks.camera = stripLuma(migrated.ruleGlobalBlocks.camera)
+        }
+    }
     migrated.ruleEngineEnabled = typeof source.ruleEngineEnabled === 'boolean'
         ? source.ruleEngineEnabled
         : DEFAULT_RULE_ENGINE_STATE.ruleEngineEnabled
@@ -584,6 +759,7 @@ export function migrateRuleSchema(snapshot) {
         ? Number(source.ruleSchemaVersion)
         : DEFAULT_RULE_ENGINE_STATE.ruleSchemaVersion
     migrated.palettes = _sanitizePalettes(source.palettes)
+    migrated.tuners = _sanitizeTuners(source.tuners)
     migrated.ruleUiState = _sanitizeRuleUiState(source.ruleUiState)
 
     if (sanitization.rejected.length > 0) {
@@ -603,6 +779,7 @@ function _buildInitial() {
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
     out.palettes = _sanitizePalettes(saved.palettes)
+    out.tuners = _sanitizeTuners(saved.tuners)
     out.ruleUiState = _sanitizeRuleUiState(saved.ruleUiState)
     return out
 }
@@ -716,6 +893,11 @@ function _notify(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function set(key, value) {
+    const ruleSchemaKeys = new Set(['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState'])
+    if (ruleSchemaKeys.has(key)) {
+        setMany({ [key]: value })
+        return
+    }
     _pushUndoSnapshot()
     params[key] = value
     _notify(key, value)
@@ -724,6 +906,12 @@ export function set(key, value) {
 export function setMany(updates) {
     _pushUndoSnapshot()
     const patch = (updates && typeof updates === 'object') ? updates : {}
+    if (Object.prototype.hasOwnProperty.call(patch, 'ruleBlocks')
+        && !Object.prototype.hasOwnProperty.call(patch, 'ruleEntities')) {
+        const legacy = _splitLegacyRuleBlocks(patch.ruleBlocks)
+        patch.ruleEntities = legacy.entities
+        patch.ruleGlobalBlocks = legacy.globals
+    }
     const merged = migrateRuleSchema({ ...params, ...patch })
 
     const changed = Object.create(null)
@@ -735,7 +923,7 @@ export function setMany(updates) {
         changed[key] = nextValue
     }
 
-    const ruleSchemaKeys = ['ruleBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
+    const ruleSchemaKeys = ['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
     const includesRuleSchemaField = ruleSchemaKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))
     if (includesRuleSchemaField) {
         for (const key of ruleSchemaKeys) {
@@ -785,14 +973,20 @@ export function resetToDefaults() {
     }
 
     params.ruleBlocks = []
+    params.ruleEntities = [_coerceRuleEntity({ id: 'entity-all', name: 'All', rules: [] }, 0)]
+    params.ruleGlobalBlocks = _sanitizeRuleGlobals(DEFAULT_RULE_ENGINE_STATE.ruleGlobalBlocks)
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
     params.palettes = []
+    params.tuners = []
     params.ruleUiState = _sanitizeRuleUiState(DEFAULT_RULE_ENGINE_STATE.ruleUiState)
     changed.ruleBlocks = params.ruleBlocks
+    changed.ruleEntities = params.ruleEntities
+    changed.ruleGlobalBlocks = params.ruleGlobalBlocks
     changed.ruleEngineEnabled = params.ruleEngineEnabled
     changed.ruleSchemaVersion = params.ruleSchemaVersion
     changed.palettes = params.palettes
+    changed.tuners = params.tuners
     changed.ruleUiState = params.ruleUiState
 
     for (const [k, v] of Object.entries(changed)) {
@@ -950,8 +1144,14 @@ function _buildCanonicalPresetParams(source) {
             canonical[paramDef.key] = _coerceParamValue(paramDef, incoming[paramDef.key])
         }
 
-        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
-            canonical.ruleBlocks = []
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEntities') && Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
+            canonical.ruleBlocks = Array.isArray(incoming.ruleBlocks) ? incoming.ruleBlocks : []
+        }
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEntities')) {
+            canonical.ruleEntities = []
+        }
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleGlobalBlocks')) {
+            canonical.ruleGlobalBlocks = DEFAULT_RULE_ENGINE_STATE.ruleGlobalBlocks
         }
         if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEngineEnabled') || typeof incoming.ruleEngineEnabled !== 'boolean') {
             canonical.ruleEngineEnabled = DEFAULT_RULE_ENGINE_STATE.ruleEngineEnabled
@@ -962,6 +1162,7 @@ function _buildCanonicalPresetParams(source) {
             canonical.ruleSchemaVersion = Number(incoming.ruleSchemaVersion)
         }
         canonical.palettes = _sanitizePalettes(incoming.palettes)
+        canonical.tuners = _sanitizeTuners(incoming.tuners)
         canonical.ruleUiState = _sanitizeRuleUiState(incoming.ruleUiState)
 
         if (Array.isArray(incoming._disabled)) {
@@ -980,10 +1181,8 @@ function _buildCanonicalPresetParams(source) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function listPresets() {
-    const hiddenRoot = _readHiddenRootPresetNames()
-    const rootNames = [..._getRootPresetMap().keys()].filter((name) => !hiddenRoot.has(name))
     const userNames = [..._readUserPresetMap().keys()]
-    return [...new Set([...rootNames, ...userNames])].sort((a, b) => a.localeCompare(b))
+    return [...userNames].sort((a, b) => a.localeCompare(b))
 }
 
 export async function savePreset(name, paramsObj) {

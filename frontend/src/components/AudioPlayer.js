@@ -386,12 +386,19 @@ export function initAudioPlayer(container) {
     // ── Play / Pause ──────────────────────────────────────────────────────
     btnPlayPause.addEventListener('click', async () => {
         // Fire custom event so main.js can init AudioContext (user gesture)
-        container.dispatchEvent(new CustomEvent('player:playpause', {
-            detail: { audioEl }, bubbles: true
-        }))
+        // main.js must either resume the context AND call play(), or respond
+        // with 'player:play-resume' once ready.
         if (isPlaying) {
             audioEl.pause()
+            container.dispatchEvent(new CustomEvent('player:pause', {
+                detail: { audioEl }, bubbles: true
+            }))
         } else {
+            const playResult = container.dispatchEvent(new CustomEvent('player:playpause', {
+                detail: { audioEl }, bubbles: true, cancelable: true
+            }))
+            // If the handler called preventDefault, it will handle play() itself
+            if (!playResult) return
             try { await audioEl.play() }
             catch (err) { console.warn('[AudioPlayer] play() failed:', err.message) }
         }

@@ -34,6 +34,16 @@ const _INPUT_RANGES = Object.freeze({
     spectralSkewness: [0, 1],
     chromagram: [0, 1],
     inharmonicity: [0, 1],
+    fundamentalHz: [0, 22050],
+    fundamentalPitch: [0, 127],
+    fundamentalNote: [0, 11],
+    entityCentroid: [0, 22050],
+    entityFlatness: [0, 1],
+    entityInharmonicity: [0, 1],
+    entityVolume: [0, 1],
+    globalTransient: [0, 10],
+    entityAge: [0, Number.POSITIVE_INFINITY],
+    streamId: [0, 1],
     time: [0, Number.POSITIVE_INFINITY],
     deltaTime: [0, 1],
     canvasWidthPx: [0, Number.POSITIVE_INFINITY],
@@ -62,6 +72,34 @@ const _legacyInputAliases = [
     },
 ]
 
+// ── Mode-gated variable definitions ───────────────────────────────────────────
+// Maps input variable IDs to the set of modes they're available in.
+// Absence = legal in all modes.
+const _INPUT_MODES = {
+    // Particle-only: per-bin variables
+    binMagnitude: ['particle'],
+    binPhase: ['particle'],
+    binFlux: ['particle'],
+    binPhaseDeviation: ['particle'],
+    binAttackTime: ['particle'],
+    binEnvelope: ['particle'],
+    binEnvelopeState: ['particle'],
+    binRMSEnergy: ['particle'],
+    notePitchClass: ['particle'],
+    octave: ['particle'],
+    // Cloud-only: entity variables
+    fundamentalHz: ['cloud'],
+    fundamentalPitch: ['cloud'],
+    fundamentalNote: ['cloud'],
+    entityCentroid: ['cloud'],
+    entityFlatness: ['cloud'],
+    entityInharmonicity: ['cloud'],
+    entityVolume: ['cloud'],
+    globalTransient: ['cloud'],
+    entityAge: ['cloud'],
+    streamId: ['cloud'],
+}
+
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({
     id: entry.id,
     type: 'number',
@@ -70,37 +108,38 @@ const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => 
     label: entry.label,
     technicalName: entry.technicalName,
     description: entry.description,
+    modes: _INPUT_MODES[entry.id] || ['particle', 'cloud'],
 }))
 
 const _outputEntries = [
-    { id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'] },
-    { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'] },
-    { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'] },
-    { id: 'zoom', type: 'number', range: [0.05, 32], targets: ['camera'] },
-    { id: 'targetX', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'] },
-    { id: 'targetY', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'] },
-    { id: 'targetZ', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'] },
-    { id: 'angleOfView', type: 'number', range: [20, 120], targets: ['camera'] },
-    { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles'] },
-    { id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'yellow', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'luma', type: 'number', range: [0, 255], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'hsv', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background'] },
-    { id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines'] },
-    { id: 'particleCount', type: 'number', range: [0, 1], targets: ['spawnedParticles'] },
-    // Legacy disabled: physical material outputs are intentionally removed from active targets.
-    { id: 'shapeType', type: 'enum', values: ['square', 'circle'], targets: ['spawnedParticles', 'allParticles'] },
-    { id: 'length', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['lines'] },
-    { id: 'direction', type: 'enum', values: ['x', 'y', 'z'], targets: ['lines'] },
-    // Legacy disabled: endpoint outputs are replaced by midpoint + length + direction.
-    { id: 'thickness', type: 'number', range: [0, 64], targets: ['lines'] },
-    { id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines'] },
+    { id: 'x', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'], modes: ['particle', 'cloud'] },
+    { id: 'y', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'], modes: ['particle', 'cloud'] },
+    { id: 'z', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles', 'lines', 'camera'], modes: ['particle', 'cloud'] },
+    { id: 'zoom', type: 'number', range: [0.05, 32], targets: ['camera'], modes: ['particle', 'cloud'] },
+    { id: 'targetX', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'], modes: ['particle', 'cloud'] },
+    { id: 'targetY', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'], modes: ['particle', 'cloud'] },
+    { id: 'targetZ', type: 'number', range: [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY], targets: ['camera'], modes: ['particle', 'cloud'] },
+    { id: 'angleOfView', type: 'number', range: [20, 120], targets: ['camera'], modes: ['particle', 'cloud'] },
+    { id: 'size', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['spawnedParticles', 'allParticles'], modes: ['particle', 'cloud'] },
+    { id: 'red', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'green', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'blue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'rgb', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'hue', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'saturation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'brightness', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'hsv', type: 'vector', size: 3, targets: ['spawnedParticles', 'allParticles', 'lines', 'background'], modes: ['particle', 'cloud'] },
+    { id: 'opacity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles', 'lines'], modes: ['particle', 'cloud'] },
+    { id: 'particleCount', type: 'number', range: [0, 1], targets: ['spawnedParticles'], modes: ['particle'] },
+    { id: 'shapeType', type: 'enum', values: ['square', 'circle'], targets: ['spawnedParticles', 'allParticles'], modes: ['particle', 'cloud'] },
+    { id: 'length', type: 'number', range: [0, Number.POSITIVE_INFINITY], targets: ['lines'], modes: ['particle', 'cloud'] },
+    { id: 'direction', type: 'enum', values: ['x', 'y', 'z'], targets: ['lines'], modes: ['particle', 'cloud'] },
+    { id: 'thickness', type: 'number', range: [0, 64], targets: ['lines'], modes: ['particle', 'cloud'] },
+    { id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines'], modes: ['particle', 'cloud'] },
+    // Cloud-mode only outputs
+    { id: 'spread', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'networkTension', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'networkRepulsion', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
 ]
 
 export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'lines', 'background', 'camera'])
@@ -208,7 +247,6 @@ function _validateExpression(expr, inMap) {
         'abs',
         'palette',
         'gradient',
-        'matchLuma',
         'rgb',
         'hsv',
         'PI',
@@ -411,12 +449,15 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
     const input = Array.isArray(ruleBlocks) ? ruleBlocks : []
     const sanitized = []
     const rejected = []
+    const inMap = new Map((dictionaries.input?.entries ?? []).map((entry) => [entry.id, entry]))
 
     input.forEach((rule, index) => {
         const coerced = {
             id: typeof rule?.id === 'string' && rule.id.trim() ? rule.id.trim() : `rule-${index}`,
             group: typeof rule?.group === 'string' ? rule.group : '',
             subgroup: typeof rule?.subgroup === 'string' ? rule.subgroup : '',
+            entityId: typeof rule?.entityId === 'string' ? rule.entityId : '',
+            entityName: typeof rule?.entityName === 'string' ? rule.entityName : '',
             enabled: rule?.enabled !== false,
             sectionDisabled: rule?.sectionDisabled === true,
             target: _normalizeTarget(rule),
@@ -426,6 +467,7 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
                 : { operator: 'always' },
             actions: Array.isArray(rule?.actions) ? rule.actions.map((action) => ({ ...action })) : [],
             order: Number.isFinite(rule?.order) ? Number(rule.order) : index,
+            definitionExpression: typeof rule?.definitionExpression === 'string' ? rule.definitionExpression : '',
         }
 
         if (!coerced.condition.operator) coerced.condition.operator = 'always'
@@ -435,6 +477,11 @@ export function sanitizeRuleBlocks(ruleBlocks, dictionaries = { input: inputDict
         if (coerced.condition?.input) coerced.condition.input = String(coerced.condition.input)
         if (coerced.condition?.valueInput) coerced.condition.valueInput = String(coerced.condition.valueInput)
         if (typeof coerced.condition?.expression === 'string') coerced.condition.expression = coerced.condition.expression
+
+        if (coerced.definitionExpression) {
+            const defExprErr = _validateExpression(coerced.definitionExpression, inMap)
+            if (defExprErr) coerced.definitionExpression = ''
+        }
 
         coerced.scope = (coerced.target === 'spawnedParticles' || coerced.target === 'lines') ? 'spawnedOnly' : 'allLivingFrame'
 

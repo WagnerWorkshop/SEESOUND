@@ -46,7 +46,7 @@ import {
 } from './engine/project/ProjectIO.js'
 import { ExportManager } from './engine/project/ExportManager.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
-import { AudioEngine, snapCqtDetailsPer10Octaves, snapFftSize } from './engine/audio/AudioEngine.js'
+import { AudioEngine, snapCqtDetailsPer10Octaves } from './engine/audio/AudioEngine.js'
 import { CameraController } from './engine/renderer/CameraController.js'
 import resetIcon from './icons/reset.svg?raw'
 import fitIcon from './icons/fit.svg?raw'
@@ -574,211 +574,24 @@ syncCameraFromParams()
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
-const _initialCompileState = ps.onRulesChanged(params.ruleBlocks ?? [])
+const _initialCompileState = ps.onRulesChanged({
+    ruleEntities: params.ruleEntities ?? [],
+    ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+})
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
 syncPostProcessingFromParams()
 
-function _collectUsedRuleInputs(requiredInputsByTarget = null) {
-    return new Set([
-        ...(Array.isArray(requiredInputsByTarget?.spawnedParticles) ? requiredInputsByTarget.spawnedParticles : []),
-        ...(Array.isArray(requiredInputsByTarget?.allParticles) ? requiredInputsByTarget.allParticles : []),
-        ...(Array.isArray(requiredInputsByTarget?.physicalParticles) ? requiredInputsByTarget.physicalParticles : []),
-        ...(Array.isArray(requiredInputsByTarget?.background) ? requiredInputsByTarget.background : []),
-        ...(Array.isArray(requiredInputsByTarget?.camera) ? requiredInputsByTarget.camera : []),
-    ])
-}
+// NOTE: _deriveAudioUsage, _collectUsedRuleInputs were removed.
+// AudioEngine's deriveAudioUsage callback is now injected from SeesoundEngine
+// (see §8), which uses the new DependencyGraph module.
 
-function _deriveAudioUsage(requiredInputsByTarget = null) {
-    const used = _collectUsedRuleInputs(requiredInputsByTarget)
-    const alwaysCalculated = new Set([
-        'amplitude',
-        'bass',
-        'mid',
-        'high',
-        'peakFreq',
-        'pan',
-        'time',
-        'deltaTime',
-        'frequencyHz',
-        'normFreq',
-        'canvasWidthPx',
-        'canvasHeightPx',
-        'canvasWidthUnits',
-        'canvasHeightUnits',
-        'audioLengthSec',
-        'binEnergy',
-    ])
+// NOTE: _normBoundsFromParams removed (was only used by _buildBackendAudioAnalysisConfig).
 
-    const needMagnitude = used.has('binMagnitude') || used.has('binEnergy') || used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState')
-    const needFlux = used.has('binFlux') || used.has('binEnvelope') || used.has('binEnvelopeState') || used.has('binAttackTime')
-    const needPhaseDeviation = used.has('binPhaseDeviation') || used.has('binPhasedeviation')
-    const needEnvelope = used.has('binEnvelope') || used.has('binEnvelopeState')
-    const needPhase = used.has('binPhase')
-    const needAttackTime = used.has('binAttackTime')
-    const needRms = used.has('globalRmsEnergy') || used.has('binRMSEnergy') || used.has('amplitude')
-    const needCentroid = used.has('spectralCentroid')
-    const needGlobalFlux = used.has('spectralFlux')
-    const needFlatness = used.has('spectralFlatness')
-    const needInharmonicity = used.has('inharmonicity')
-    const needPeakAmplitude = used.has('peakAmplitude')
-    const needZeroCrossingRate = used.has('zeroCrossingRate')
-    const needSpectralRolloff = used.has('spectralRolloff')
-    const needSpectralSpread = used.has('spectralSpread')
-    const needSpectralSkewness = used.has('spectralSkewness')
-    const needChromagram = used.has('chromagram')
+// NOTE: _normBoundsFromParams preserved for backend compatibility,
+// _normalizeByRange removed (moved to SeesoundEngine._buildProbeInputs).
 
-    const calculatedInputs = new Set(alwaysCalculated)
-    if (needRms) calculatedInputs.add('globalRmsEnergy')
-    if (needCentroid) calculatedInputs.add('spectralCentroid')
-    if (needGlobalFlux) calculatedInputs.add('spectralFlux')
-    if (needFlatness) calculatedInputs.add('spectralFlatness')
-    if (needInharmonicity) calculatedInputs.add('inharmonicity')
-    if (needPeakAmplitude) calculatedInputs.add('peakAmplitude')
-    if (needZeroCrossingRate) calculatedInputs.add('zeroCrossingRate')
-    if (needSpectralRolloff) calculatedInputs.add('spectralRolloff')
-    if (needSpectralSpread) calculatedInputs.add('spectralSpread')
-    if (needSpectralSkewness) calculatedInputs.add('spectralSkewness')
-    if (needChromagram) calculatedInputs.add('chromagram')
-    if (needMagnitude) calculatedInputs.add('binMagnitude')
-    if (needFlux) calculatedInputs.add('binFlux')
-    if (needPhaseDeviation) calculatedInputs.add('binPhaseDeviation')
-    if (needPhase) calculatedInputs.add('binPhase')
-    if (needEnvelope) calculatedInputs.add('binEnvelope')
-    if (needEnvelope) calculatedInputs.add('binEnvelopeState')
-    if (needAttackTime) calculatedInputs.add('binAttackTime')
-    if (needRms) calculatedInputs.add('binRMSEnergy')
-    if (used.has('binFreq')) calculatedInputs.add('binFreq')
-
-    return {
-        used,
-        calculatedInputs,
-        worklet: {
-            enabled: needMagnitude || needFlux || needPhaseDeviation || needEnvelope || needAttackTime || needPhase,
-            needMagnitude,
-            needFlux,
-            needPhaseDeviation,
-            needPhase,
-            needEnvelope,
-            needAttackTime,
-        },
-        engine: {
-            needRms,
-            needSpectralCentroid: needCentroid,
-            needGlobalSpectralFlux: needGlobalFlux,
-            needSpectralFlatness: needFlatness,
-            needInharmonicity,
-            needPeakAmplitude,
-            needZeroCrossingRate,
-            needSpectralRolloff,
-            needSpectralSpread,
-            needSpectralSkewness,
-            needChromagram,
-        },
-        backend: {
-            calc_fft: true,
-            calc_magnitude: needMagnitude || needFlux || needCentroid || needFlatness || needGlobalFlux,
-            calc_magnitude_dbfs: needMagnitude || needRms,
-            calc_phase: needPhaseDeviation || needPhase,
-            calc_phase_deviation: needPhaseDeviation,
-            calc_local_spectral_flux: needFlux || needEnvelope,
-            calc_envelope_state: needEnvelope,
-            calc_rms_energy: needRms,
-            calc_peak_amplitude: needPeakAmplitude,
-            calc_zero_crossing_rate: needZeroCrossingRate,
-            calc_spectral_centroid: needCentroid,
-            calc_global_spectral_flux: needGlobalFlux,
-            calc_spectral_flatness: needFlatness,
-            calc_spectral_rolloff: needSpectralRolloff,
-            calc_spectral_spread: needSpectralSpread,
-            calc_spectral_skewness: needSpectralSkewness,
-            calc_spectral_kurtosis: used.has('spectralKurtosis'),
-            calc_mfcc: used.has('mfcc'),
-            calc_chromagram: needChromagram,
-        },
-    }
-}
-
-function _normBoundsFromParams(snapshot = {}) {
-    const dbToAmp = (db) => Math.pow(10, Number(db) / 20)
-    return {
-        scalar: {
-            center_frequency_hz: {
-                min_value: Number(snapshot.freqNormMin ?? 40),
-                max_value: Number(snapshot.freqNormMax ?? 12000),
-            },
-            magnitude_dbfs: {
-                min_value: Number(snapshot.binMagnitudeNormMin ?? -70),
-                max_value: Number(snapshot.binMagnitudeNormMax ?? 0),
-            },
-            magnitude_linear: {
-                min_value: dbToAmp(Number(snapshot.binMagnitudeNormMin ?? -70)),
-                max_value: dbToAmp(Number(snapshot.binMagnitudeNormMax ?? 0)),
-            },
-            phase_deviation: {
-                min_value: Number(snapshot.binPhaseDeviationNormMin ?? 0),
-                max_value: Number(snapshot.binPhaseDeviationNormMax ?? Math.PI),
-            },
-            spectral_flux: {
-                min_value: Number(snapshot.binFluxNormMin ?? 0),
-                max_value: Number(snapshot.binFluxNormMax ?? 0.5),
-            },
-            rms_energy: {
-                min_value: dbToAmp(Number(snapshot.globalRmsNormMin ?? -60)),
-                max_value: dbToAmp(Number(snapshot.globalRmsNormMax ?? 0)),
-            },
-            spectral_centroid_hz: {
-                min_value: Number(snapshot.spectralCentroidNormMin ?? 150),
-                max_value: Number(snapshot.spectralCentroidNormMax ?? 8000),
-            },
-            global_spectral_flux: {
-                min_value: Number(snapshot.globalSpectralFluxNormMin ?? 0),
-                max_value: Number(snapshot.globalSpectralFluxNormMax ?? 100),
-            },
-            spectral_flatness: {
-                min_value: Number(snapshot.spectralFlatnessNormMin ?? 0),
-                max_value: Number(snapshot.spectralFlatnessNormMax ?? 1),
-            },
-        },
-        vector: {},
-    }
-}
-
-function _normalizeByRange(value, minValue, maxValue) {
-    const lo = Number(minValue)
-    const hi = Number(maxValue)
-    const v = Number(value)
-    if (!Number.isFinite(v) || !Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return 0
-    return Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
-}
-
-function _buildBackendAudioAnalysisConfig(snapshot = {}, requiredInputsByTarget = null) {
-    const usage = _deriveAudioUsage(requiredInputsByTarget)
-    const fftSize = snapFftSize(snapshot.fftSize)
-    const cqtDetails = snapCqtDetailsPer10Octaves(snapshot.cqtDetailsPer10Octaves)
-    return {
-        sample_rate: 44100,
-        fft_size: fftSize,
-        hop_size: Math.max(64, Math.floor(fftSize / 4)),
-        analysis_mode: 'cqt-multirate-goertzel',
-        cqt_details_per_10_octaves: cqtDetails,
-        rolloff_percent: 0.85,
-        n_mfcc: 13,
-        ...usage.backend,
-        normalize_features: true,
-        normalization_bounds: _normBoundsFromParams(snapshot),
-    }
-}
-
-function _emitCalculatedRuleInputs(requiredInputsByTarget = null) {
-    const usage = _deriveAudioUsage(requiredInputsByTarget)
-    window.dispatchEvent(new CustomEvent('seesound:calculated-rule-inputs', {
-        detail: {
-            calculatedInputs: [...usage.calculatedInputs],
-        },
-    }))
-}
-
-_emitCalculatedRuleInputs(_initialCompileState?.requiredInputsByTarget)
+// NOTE: _buildBackendAudioAnalysisConfig and _emitCalculatedRuleInputs removed.
+// SeesoundEngine handles rule compilation events via DependencyGraph (see §8).
 
 window.addEventListener('seesound:particle-size-apply-all', (e) => {
     const oldDefaultSize = Number(e?.detail?.oldDefaultSize)
@@ -790,13 +603,10 @@ window.addEventListener('seesound:particle-size-apply-all', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // § 3  AUDIO ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
+// deriveAudioUsage is injected from SeesoundEngine in §8.
 const ae = new AudioEngine({
-    initialFftSize: params.fftSize,
     initialCqtDetailsPer10Octaves: params.cqtDetailsPer10Octaves,
-    snapFftSizeFn: snapFftSize,
-    deriveAudioUsage: _deriveAudioUsage,
 })
-ae.setRuleInputUsage(_initialCompileState?.requiredInputsByTarget)
 ae.setFluxWindowFrames(params.fluxWindowFrames)
 ae.setCqtDetailsPer10Octaves(params.cqtDetailsPer10Octaves)
 
@@ -979,6 +789,7 @@ function _defaultProjectName() {
 }
 
 
+
 function getDefaultProjectDefinition() {
     return {
         fileName: 'New Project.ssp',
@@ -1080,84 +891,10 @@ function animate() {
         }
         ps.update(ae, updateParams, w, h)
         applyRuleCameraOutput(ps.getCameraOutput())
-        const binMagnitudeArr = ae.getBinMagnitude?.() || null
-        const binFluxArr = ae.getBinFlux?.() || null
-        const binPhaseDeviationArr = ae.getBinPhaseDeviation?.() || null
-        const binPhaseArr = ae.getBinPhase?.() || null
-        const binAttackTimeArr = ae.getBinAttackTime?.() || null
-        const binEnvelopeArr = ae.getBinEnvelope?.() || null
-        const peakFreqHz = ae.peakFreq ?? 0
-        const nyquist = ae.ctx?.sampleRate ? ae.ctx.sampleRate * 0.5 : 22050
-        const normGlobalRms = _normalizeByRange(ae.rmsDbfs, params.globalRmsNormMin ?? -60, params.globalRmsNormMax ?? 0)
-        const normSpectralCentroid = _normalizeByRange(ae.spectralCentroidHz, params.spectralCentroidNormMin ?? 150, params.spectralCentroidNormMax ?? 8000)
-        const normSpectralFlux = _normalizeByRange(ae.spectralFluxAU, params.globalSpectralFluxNormMin ?? 0, params.globalSpectralFluxNormMax ?? 100)
-        const normSpectralFlatness = _normalizeByRange(ae.spectralFlatnessRatio, params.spectralFlatnessNormMin ?? 0, params.spectralFlatnessNormMax ?? 1)
-        const _averageNormalized = (arr, mapFn) => {
-            if (!arr || !arr.length) return 0
-            let sum = 0
-            for (let i = 0; i < arr.length; i++) sum += mapFn(arr[i])
-            return sum / arr.length
-        }
-        const normBinMagnitude = _averageNormalized(
-            binMagnitudeArr,
-            (v) => _normalizeByRange(v, params.binMagnitudeNormMin ?? -70, params.binMagnitudeNormMax ?? 0)
-        )
-        const normBinFlux = _averageNormalized(
-            binFluxArr,
-            (v) => _normalizeByRange(v, params.binFluxNormMin ?? 0, params.binFluxNormMax ?? 0.5)
-        )
-        const normBinPhaseDeviation = _averageNormalized(
-            binPhaseDeviationArr,
-            (v) => _normalizeByRange(v, params.binPhaseDeviationNormMin ?? 0, params.binPhaseDeviationNormMax ?? Math.PI)
-        )
-        const normBinPhase = _averageNormalized(binPhaseArr, (v) => _normalizeByRange(v, -Math.PI, Math.PI))
-        const normBinAttackTime = _averageNormalized(
-            binAttackTimeArr,
-            (v) => _normalizeByRange(v, params.binAttackTimeNormMin ?? 5, params.binAttackTimeNormMax ?? 500)
-        )
-        const normBinEnvelope = _averageNormalized(binEnvelopeArr, (v) => _normalizeByRange(v, 0, 3))
-        window.dispatchEvent(new CustomEvent('seesound:rule-probe', {
-            detail: {
-                inputs: {
-                    amplitude: normGlobalRms,
-                    globalRmsEnergy: normGlobalRms,
-                    binEnergy: normBinMagnitude,
-                    frequencyHz: peakFreqHz,
-                    normFreq: Math.max(0, Math.min(1, peakFreqHz / Math.max(1e-6, nyquist))),
-                    bass: ae.bass ?? 0,
-                    mid: ae.mid ?? 0,
-                    high: ae.high ?? 0,
-                    peakFreq: peakFreqHz,
-                    pan: ae.pan ?? 0,
-                    spectralCentroid: normSpectralCentroid,
-                    spectralFlux: normSpectralFlux,
-                    spectralFlatness: normSpectralFlatness,
-                    inharmonicity: ae.inharmonicity ?? 0,
-                    peakAmplitude: ae.peakAmplitude ?? 0,
-                    zeroCrossingRate: ae.zeroCrossingRate ?? 0,
-                    spectralRolloff: ae.spectralRolloff ?? 0,
-                    spectralSpread: ae.spectralSpread ?? 0,
-                    spectralSkewness: ae.spectralSkewness ?? 0,
-                    chromagram: ae.chromagram ?? 0,
-                    binMagnitude: normBinMagnitude,
-                    binFreq: peakFreqHz,
-                    binPhase: normBinPhase,
-                    binFlux: normBinFlux,
-                    binPhaseDeviation: normBinPhaseDeviation,
-                    binAttackTime: normBinAttackTime,
-                    binEnvelope: normBinEnvelope,
-                    binEnvelopeState: normBinEnvelope,
-                    binRMSEnergy: normGlobalRms,
-                    time: ae.audioEl?.currentTime ?? 0,
-                    deltaTime: 1 / 60,
-                    canvasWidthPx: w,
-                    canvasHeightPx: h,
-                    canvasWidthUnits: cameraUnits.w,
-                    canvasHeightUnits: cameraUnits.h,
-                    audioLengthSec: ae.audioEl?.duration ?? 0,
-                },
-            },
-        }))
+
+        // Emit probe inputs for UI — SeesoundEngine handles normalization
+        const cameraUnitData = { w: cameraUnits.w, h: cameraUnits.h }
+        window.__seesoundEngine?.tick({ ae, ps, canvasW: w, canvasH: h, cameraUnitData })
     }
 
     const bg = ps.getBackgroundColor()
@@ -1218,10 +955,16 @@ animate()
     audioEl.addEventListener('pause', () => { isPlaying = false })
     audioEl.addEventListener('ended', () => { isPlaying = false })
 
-    playerEl.addEventListener('player:playpause', async () => {
+    playerEl.addEventListener('player:playpause', async (e) => {
         ae.init(audioEl)
         ae.setMonitorMuted(monitorMuted)
-        if (ae.ctx?.state === 'suspended') await ae.ctx.resume()
+        if (ae.ctx?.state === 'suspended') {
+            await ae.ctx.resume()
+        }
+        // Take over play() so AudioContext is guaranteed resumed first
+        e.preventDefault()
+        try { await audioEl.play() }
+        catch (err) { console.warn('[AudioEngine] play() failed:', err.message) }
     })
     playerEl.addEventListener('player:play', () => { isPlaying = true })
     playerEl.addEventListener('player:pause', () => { isPlaying = false })
@@ -1356,16 +1099,15 @@ animate()
     }
 
     const _ensureAtLeastOnePreset = async () => {
+        // No-op: presets are only created by the user
+        return
+    }
+
+    const _clearUserPresets = async () => {
         const names = await listPresets()
-        const normal = names.filter((name) => !String(name || '').startsWith('rule__'))
-        if (normal.length > 0) return
-        const defaults = getDefaultProjectDefinition()
-        if (defaults.presetLibrary.length > 0) {
-            await _restorePresetLibrary(defaults.presetLibrary)
-            return
+        for (const name of names) {
+            await deletePreset(name)
         }
-        await savePreset('default', getSnapshot())
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
     }
 
     const _restorePresetLibrary = async (presetLibrary) => {
@@ -1380,7 +1122,8 @@ animate()
     }
 
     const _replacePresetLibrary = async (presetLibrary) => {
-        // Keep factory presets visible; import project presets additively.
+        // Replace: clear all user presets, then restore from project payload
+        await _clearUserPresets()
         await _restorePresetLibrary(presetLibrary)
     }
 
@@ -1584,7 +1327,7 @@ animate()
         return new Promise((resolve) => {
             const input = document.createElement('input')
             input.type = 'file'
-            input.accept = `${PROJECT_FILE_EXTENSION},.json,application/json`
+            input.accept = `${PROJECT_FILE_EXTENSION},.json`
             input.style.display = 'none'
             document.body.appendChild(input)
 
@@ -1696,7 +1439,6 @@ animate()
             if (Array.isArray(payload.presetLibrary)) {
                 await _replacePresetLibrary(payload.presetLibrary)
             }
-            await _ensureAtLeastOnePreset()
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
                 detail: {
                     fileName: projectFileName,
@@ -1711,6 +1453,27 @@ animate()
         }
     }
 
+    const _importPresetFile = async (file) => {
+        try {
+            const text = await file.text()
+            const parsed = JSON.parse(text)
+            if (!parsed || typeof parsed !== 'object') return false
+            // Only treat as preset if it has no schemaVersion (not a project file)
+            if (parsed.schemaVersion !== undefined) return false
+            const presetParams = (parsed?.params && typeof parsed.params === 'object')
+                ? parsed.params
+                : null
+            if (!presetParams || typeof presetParams !== 'object') return false
+            const name = String(parsed?.presetName || _nameWithoutExt(file.name) || 'Imported Preset').trim()
+            await savePreset(name, presetParams)
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+            return true
+        } catch (err) {
+            console.warn('[Preset] import failed:', err)
+            return false
+        }
+    }
+
     const openProjectWithPicker = async () => {
         try {
             let handle = null
@@ -1720,7 +1483,7 @@ animate()
                     multiple: false,
                     excludeAcceptAllOption: false,
                     types: [{
-                        description: 'SEESOUND Project',
+                        description: 'SEESOUND Project / Preset',
                         accept: {
                             'application/json': [PROJECT_FILE_EXTENSION, '.json'],
                         },
@@ -1734,6 +1497,16 @@ animate()
                 if (!(file instanceof File)) return false
             }
 
+            // Try importing as a preset first (detect by absence of schemaVersion)
+            const presetImported = await _importPresetFile(file)
+            if (presetImported) {
+                projectFileHandle = handle
+                projectFileName = String(file.name || '').trim()
+                emitProjectFileState()
+                return true
+            }
+
+            // Otherwise treat as a full project file
             const parsed = await parseProjectFile(file)
             projectFileHandle = handle
             projectFileName = String(file.name || '').trim()
@@ -1867,6 +1640,9 @@ animate()
         const format = String(e?.detail?.format || 'project-file')
         await exportProjectAs(format)
     })
+    window.addEventListener('seesound:preset-export-request', async () => {
+        await exportSettingsJson()
+    })
     window.addEventListener('seesound:project-load-request', async (e) => {
         const detail = e?.detail || {}
         const incomingName = String(detail.fileName || '').trim()
@@ -1885,16 +1661,21 @@ animate()
     window.addEventListener('seesound:project-open-request', async () => {
         await openProjectWithPicker()
     })
-    window.addEventListener('seesound:project-new-request', async () => {
+    window.addEventListener('seesound:project-new-request', async (e) => {
+        const incomingName = String(e?.detail?.projectName || '').trim()
+        const fallbackName = _nameWithoutExt(getDefaultProjectDefinition().fileName || 'New Project')
+        const nextProjectName = _sanitizeFilePart(incomingName || fallbackName, fallbackName)
+        if (!nextProjectName) return
         projectLoadInProgress = true
         try {
             resetToDefaults()
-            await _ensureAtLeastOnePreset()
+            await _clearUserPresets()
             projectFileHandle = null
-            projectFileName = String(getDefaultProjectDefinition().fileName || `New Project${PROJECT_FILE_EXTENSION}`).trim()
+            projectFileName = `${nextProjectName}${PROJECT_FILE_EXTENSION}`
             pendingRecoveryDraft = null
             try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
             emitProjectFileState()
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
                 detail: {
                     fileName: projectFileName,
@@ -1919,9 +1700,61 @@ animate()
         try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
         window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
     })
+
+    window.addEventListener('seesound:factory-template-copy-request', async (e) => {
+        const detail = e?.detail || {}
+        const presetPath = String(detail.presetPath || '').trim()
+        const presetName = String(detail.presetName || '').trim()
+        if (!presetPath || !presetName) return
+        try {
+            const response = await fetch(presetPath, { cache: 'no-store' })
+            if (!response.ok) return
+            const parsed = await response.json()
+            const presetParams = (parsed?.params && typeof parsed.params === 'object')
+                ? parsed.params
+                : ((parsed && typeof parsed === 'object') ? parsed : null)
+            if (!presetParams) return
+            await savePreset(presetName, presetParams)
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+        } catch (err) {
+            console.warn('[Template] copy to presets failed:', err)
+        }
+    })
     window.addEventListener('seesound:preset-library-changed', () => {
         scheduleProjectAutosave()
         _scheduleLocalProjectDraftSave()
+    })
+
+    window.addEventListener('seesound:preset-save-request', async () => {
+        const name = prompt('Save preset as:', '')
+        if (!name || !name.trim()) return
+        await savePreset(name.trim(), getSnapshot())
+        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+    })
+
+    window.addEventListener('seesound:preset-load-request', async (e) => {
+        const presetName = String(e?.detail?.presetName || '').trim()
+        if (!presetName) return
+        const preset = await loadPreset(presetName)
+        if (!preset?.params || typeof preset.params !== 'object') return
+        set('ruleBlocks', [])
+        setMany(preset.params)
+        _scheduleLocalProjectDraftSave()
+    })
+
+    window.addEventListener('seesound:show-rule-slider', (e) => {
+        const sliderId = String(e?.detail?.sliderId || '').trim()
+        if (!sliderId) return
+        // Switch to rules menu and highlight the card with this slider
+        const rulesBtn = document.querySelector('[data-menu-id="rules"]')
+        if (rulesBtn && typeof rulesBtn.click === 'function') rulesBtn.click()
+        // Flash/highlight the slider on the page
+        const slider = document.querySelector(`[data-slider-id="${CSS.escape(sliderId)}"]`)
+        if (slider) {
+            slider.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            slider.classList.add('is-highlighted')
+            setTimeout(() => slider.classList.remove('is-highlighted'), 2000)
+        }
     })
 
     subscribe((_, key) => {
@@ -2079,14 +1912,6 @@ subscribe((_, key) => {
         if (params.maxParticles !== nextCap) params.maxParticles = nextCap
         ps.setMaxParticles(nextCap)
     }
-    if (key === 'fftSize') {
-        const snapped = snapFftSize(params.fftSize)
-        if (params.fftSize !== snapped) {
-            set('fftSize', snapped)
-            return
-        }
-        ae.setFftSize(snapped)
-    }
     if (key === 'fluxWindowFrames') {
         const next = Math.max(1, Math.min(64, Math.floor(Number(params.fluxWindowFrames) || 10)))
         if (params.fluxWindowFrames !== next) {
@@ -2103,11 +1928,20 @@ subscribe((_, key) => {
         }
         ae.setCqtDetailsPer10Octaves(next)
     }
-    if (key === 'ruleBlocks') {
-        const state = ps.onRulesChanged(params.ruleBlocks ?? [])
-        ae.setRuleInputUsage(state?.requiredInputsByTarget)
-        _emitCalculatedRuleInputs(state?.requiredInputsByTarget)
-        window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
+    if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
+        // Rule compilation is handled by SeesoundEngine._syncParticleRules
+        // via its own param subscription (see §8). This main.js subscribe
+        // only passes through the compile state for the UI.
+        if (window.__seesoundEngine?.particleSystem) {
+            const state = window.__seesoundEngine.particleSystem.getRuleCompileState()
+            if (state) window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
+        } else {
+            const state = ps.onRulesChanged({
+                ruleEntities: params.ruleEntities ?? [],
+                ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+            })
+            window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
+        }
         if (RULE_DEBUG_FLAGS.logCompilerStatus) {
             console.info('[RuleEngine] recompilation', {
                 status: state.compileStatus,
@@ -2126,7 +1960,6 @@ window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
 
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))
-_emitCalculatedRuleInputs(ps.getRuleCompileState?.()?.requiredInputsByTarget)
 
 const startupRuleCount = Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0
 const startupCompile = ps.getRuleCompileState()
@@ -2145,4 +1978,33 @@ console.info(
 
 console.log('%c SEESOUND v1.0 ready ', 'background:#111;color:#4ade80;padding:4px 8px;border-radius:4px;font-weight:bold')
 
+// ─────────────────────────────────────────────────────────────────────────────
+// § 8  HEADLESS ENGINE INTEGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+import { SeesoundEngine } from './engine/SeesoundEngine.js'
 
+const searchParams = new URLSearchParams(window.location.search)
+const headlessMode = searchParams.has('headless')
+
+if (headlessMode) {
+    console.info('[SeesoundEngine] Starting in headless mode')
+    const engine = new SeesoundEngine({ mode: searchParams.get('mode') || 'particle' })
+    window.__seesoundEngine = engine
+    engine.start(document.getElementById('app') || document.body)
+} else {
+    // Standard mode: passive wrapper around main.js globals.
+    // Engine does NOT start its own rAF — main.js's animate() drives everything.
+    const engine = new SeesoundEngine({ mode: 'particle' })
+
+    // Inject engine's deriveAudioUsage (uses DependencyGraph) into the existing AudioEngine.
+    ae._deriveAudioUsage = (byTarget) => engine._deriveAudioUsage(byTarget)
+
+    // Adopt existing context — just the modules, no THREE.js objects.
+    engine.adoptExistingContext({ ae, ps, exportManager, cameraController: window.__cameraController })
+
+    window.__seesoundEngine = engine
+    console.info('[SeesoundEngine] Passive API available on window.__seesoundEngine')
+
+    // Kick off initial rule sync so the engine populates audio usage
+    engine._syncParticleRules()
+}

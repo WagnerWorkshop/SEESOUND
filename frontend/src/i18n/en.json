@@ -5,13 +5,19 @@
             "file": "File",
             "view": "View",
             "settings": "Settings",
-            "rules": "Rules",
+            "rules": "Behaviors",
+            "styles": "Design",
             "collapse": "Collapse"
         },
         "file": {
             "myProject": "My Project",
             "project": "Project",
             "projectNew": "New",
+            "projectNamePrompt": "Project name",
+            "projectNameTitle": "New Project",
+            "projectNamePlaceholder": "New Project",
+            "projectNameConfirm": "Create",
+            "projectNameCancel": "Cancel",
             "projectOpen": "Open",
             "projectLoad": "Load",
             "projectSave": "Save",
@@ -292,7 +298,29 @@
             }
         },
         "rules": {
-            "title": "Rules",
+            "title": "Behaviors",
+            "background": "Background",
+            "camera": "Camera",
+            "entities": "Elements",
+            "addEntity": "Add Element",
+            "editEntity": "Edit",
+            "removeEntity": "Remove",
+            "newEntityPrompt": "Element name",
+            "entityName": "Name",
+            "shapeType": "Type",
+            "shapeParticle": "Particle",
+            "shapeCloud": "Cloud",
+            "shapeLine": "Line",
+            "definitions": "Listen For",
+            "definitionsAll": "All",
+            "definitionsSpecial": "Special",
+            "filterIf": "if",
+            "filterPlaceholder": "amplitude > 0.2",
+            "addDefinition": "Add Filter",
+            "removeDefinition": "Remove",
+            "newDefinitionPrompt": "Definition name",
+            "renameDefinitionPrompt": "Rename definition",
+            "close": "Close",
             "condition": "Condition",
             "addCondition": "Add Condition",
             "when": "When",
@@ -310,6 +338,8 @@
             "insertVariable": "Audio data",
             "detailVariables": "Detail Variables",
             "overallVariables": "Overall Variables",
+            "entityVariable": "Entity Variable",
+            "entityVariables": "Entity Variables",
             "mathPlaceholder": "Type math or number and add",
             "addMath": "Add Math",
             "clearTokens": "Clear",
@@ -675,6 +705,76 @@
             "label": "Audio Length",
             "technicalName": "audioLengthSec",
             "description": "Audio file length measured in seconds."
+        },
+        {
+            "id": "globalTransient",
+            "group": "overall",
+            "label": "Transient",
+            "technicalName": "globalTransient",
+            "description": "Rhythm transient intensity for the current frame."
+        },
+        {
+            "id": "fundamentalHz",
+            "group": "entity",
+            "label": "Fundamental Hz",
+            "technicalName": "fundamentalHz",
+            "description": "Detected fundamental frequency in Hz."
+        },
+        {
+            "id": "fundamentalPitch",
+            "group": "entity",
+            "label": "Fundamental Pitch",
+            "technicalName": "fundamentalPitch",
+            "description": "Detected fundamental pitch in MIDI note values."
+        },
+        {
+            "id": "fundamentalNote",
+            "group": "entity",
+            "label": "Fundamental Note",
+            "technicalName": "fundamentalNote",
+            "description": "Pitch class (0-11) of the detected fundamental."
+        },
+        {
+            "id": "entityCentroid",
+            "group": "entity",
+            "label": "Entity Centroid",
+            "technicalName": "entityCentroid",
+            "description": "Spectral centroid of the entity window in Hz."
+        },
+        {
+            "id": "entityFlatness",
+            "group": "entity",
+            "label": "Entity Flatness",
+            "technicalName": "entityFlatness",
+            "description": "Spectral flatness of the entity window."
+        },
+        {
+            "id": "entityInharmonicity",
+            "group": "entity",
+            "label": "Entity Inharmonicity",
+            "technicalName": "entityInharmonicity",
+            "description": "Inharmonicity of the entity window."
+        },
+        {
+            "id": "entityVolume",
+            "group": "entity",
+            "label": "Entity Volume",
+            "technicalName": "entityVolume",
+            "description": "RMS volume of the entity window."
+        },
+        {
+            "id": "entityAge",
+            "group": "entity",
+            "label": "Entity Age",
+            "technicalName": "entityAge",
+            "description": "Seconds since the entity began."
+        },
+        {
+            "id": "streamId",
+            "group": "entity",
+            "label": "Stream Id",
+            "technicalName": "streamId",
+            "description": "Tracking stream id for a continuous tone."
         }
     ]
 }

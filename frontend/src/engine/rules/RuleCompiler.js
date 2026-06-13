@@ -6,10 +6,21 @@ import {
     getInputDictionary,
     sanitizeRuleBlocks,
 } from './RuleDictionary.js'
-import { matchLuminanceRgb255 } from '../color/ColorMath.js'
 
 const _NOOP_SPAWN = () => { }
 const _NOOP_LIVING = () => { }
+
+/**
+ * Public export of the rule-input collection logic.
+ * Scans rule blocks and returns all referenced input variable IDs.
+ * Used by DependencyGraph to determine which audio computations are needed.
+ * @param {import('../types').RuleBlock[]} rules
+ * @param {Set<string>} inputSet - Valid input variable IDs.
+ * @returns {string[]} - Referenced input IDs.
+ */
+export function collectRuleInputs(rules, inputSet) {
+    return _collectRuleInputs(rules, inputSet)
+}
 
 function _clamp01(value) {
     const n = Number(value)
@@ -192,10 +203,6 @@ const _helpers = Object.freeze({
     hsv: (h, s, v) => [_toByte01(h), _toByte01(s), _toByte01(v)],
     palette: (ctx, id, index) => _paletteLookup(ctx, id, index),
     gradient: (ctx, id, normalizedValue) => _gradientLookup(ctx, id, normalizedValue),
-    matchLuma: (r, g, b, targetLuma) => {
-        const [rr, gg, bb] = matchLuminanceRgb255(r, g, b, targetLuma)
-        return [rr / 255, gg / 255, bb / 255]
-    },
     hsvToRgbColor: (h, s, v) => _hsvToRgb01(h, s, v),
     rgbToHsvColor: (r, g, b) => _rgbToHsv01(r, g, b),
     toColorVector: (value) => _toColorVector(value),
@@ -235,6 +242,59 @@ function _usesOutput(rules, outputId) {
         }
     }
     return false
+}
+
+function _normalizeRuleSource(ruleSource) {
+    if (Array.isArray(ruleSource)) return { ruleBlocks: ruleSource }
+    if (ruleSource && typeof ruleSource === 'object') {
+        if (Array.isArray(ruleSource.ruleBlocks)) return { ruleBlocks: ruleSource.ruleBlocks }
+        const entities = Array.isArray(ruleSource.ruleEntities) ? ruleSource.ruleEntities : []
+        const globals = ruleSource.ruleGlobalBlocks && typeof ruleSource.ruleGlobalBlocks === 'object'
+            ? ruleSource.ruleGlobalBlocks
+            : { background: [], camera: [] }
+        const flattened = []
+        const ordered = [...entities].sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
+        ordered.forEach((entity, entityIndex) => {
+            if (!entity || typeof entity !== 'object') return
+            const baseOrder = entityIndex * 10000
+            const definitionFilters = Array.isArray(entity.definitions)
+                ? entity.definitions.map((def) => String(def?.expression || '').trim()).filter(Boolean)
+                : []
+            const definitionExpression = definitionFilters.length > 0
+                ? definitionFilters.map((expr) => `(${expr})`).join(' && ')
+                : ''
+            const rules = Array.isArray(entity.rules) ? entity.rules : []
+            rules.forEach((rule, ruleIndex) => {
+                const order = Number.isFinite(rule?.order) ? Number(rule.order) : ruleIndex
+                flattened.push({
+                    ...rule,
+                    entityId: entity.id,
+                    entityName: entity.name,
+                    sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+                    order: baseOrder + order,
+                    definitionExpression,
+                })
+            })
+        })
+        if (Array.isArray(globals.background)) {
+            globals.background.forEach((rule, index) => {
+                flattened.push({
+                    ...rule,
+                    order: Number.isFinite(rule?.order) ? Number(rule.order) : (900000 + index),
+                })
+            })
+        }
+        if (Array.isArray(globals.camera)) {
+            globals.camera.forEach((rule, index) => {
+                flattened.push({
+                    ...rule,
+                    order: Number.isFinite(rule?.order) ? Number(rule.order) : (950000 + index),
+                })
+            })
+        }
+        return { ruleBlocks: flattened }
+    }
+    return { ruleBlocks: [] }
 }
 
 const _allowedConditionOps = new Set(['>', '>=', '<', '<=', '==', '!='])
@@ -283,6 +343,7 @@ function _collectRuleInputs(rules, inputSet) {
         if (typeof cond.input === 'string' && inputSet.has(cond.input)) ids.add(cond.input)
         if (typeof cond.valueInput === 'string' && inputSet.has(cond.valueInput)) ids.add(cond.valueInput)
         for (const id of _extractInputIdsFromExpression(cond.expression, inputSet)) ids.add(id)
+        for (const id of _extractInputIdsFromExpression(rule.definitionExpression, inputSet)) ids.add(id)
 
         const actions = Array.isArray(rule.actions) ? rule.actions : []
         for (const action of actions) {
@@ -384,111 +445,14 @@ function _compileVectorAction(action, channels) {
     }
 }
 
-function _compileLumaAction(action) {
-    const rhs = _toRhs(action)
-
-    const resolveBaseRgb = [
-        'const __r = Number.isFinite(target.red) ? target.red : target.r;',
-        'const __g = Number.isFinite(target.green) ? target.green : target.g;',
-        'const __b = Number.isFinite(target.blue) ? target.blue : target.b;',
-        'const __hasRgb = Number.isFinite(__r) || Number.isFinite(__g) || Number.isFinite(__b);',
-        'const __hIn = Number.isFinite(target.hue) ? target.hue : target.h;',
-        'const __sIn = Number.isFinite(target.saturation) ? target.saturation : target.s;',
-        'const __vIn = Number.isFinite(target.brightness) ? target.brightness : target.v;',
-        'const __yIn = Number.isFinite(target.yellow) ? target.yellow : 0;',
-        'let __baseRgb = null;',
-        'if (__hasRgb) {',
-        '__baseRgb = [Number.isFinite(__r) ? __r : 0, Number.isFinite(__g) ? __g : 0, Number.isFinite(__b) ? __b : 0];',
-        '} else if (Number.isFinite(__hIn) || Number.isFinite(__sIn) || Number.isFinite(__vIn)) {',
-        'const __h = Number.isFinite(__hIn) ? __hIn : 0;',
-        'const __s = Number.isFinite(__sIn) ? __sIn : 1;',
-        'const __v = Number.isFinite(__vIn) ? __vIn : 1;',
-        '__baseRgb = hsvToRgbColor(__h, __s, __v);',
-        '}',
-        'if (!__baseRgb) __baseRgb = [1, 1, 1];',
-        'if (Number.isFinite(__yIn)) {',
-        '__baseRgb = [clamp((__baseRgb[0] ?? 0) + __yIn, 0, 1), clamp((__baseRgb[1] ?? 0) + __yIn, 0, 1), clamp(__baseRgb[2] ?? 0, 0, 1)];',
-        '}',
-        'const __baseR255 = __baseRgb[0] * 255;',
-        'const __baseG255 = __baseRgb[1] * 255;',
-        'const __baseB255 = __baseRgb[2] * 255;',
-        'const __baseLuma = (0.299 * __baseR255) + (0.587 * __baseG255) + (0.114 * __baseB255);',
-    ].join(' ')
-
-    const applyMatchedColor = [
-        'const __matched = matchLuma(__baseR255, __baseG255, __baseB255, __nextLuma);',
-        'if (__matched) {',
-        'target.red = __matched[0]; target.green = __matched[1]; target.blue = __matched[2];',
-        'target.r = __matched[0]; target.g = __matched[1]; target.b = __matched[2];',
-        'const __hsv = rgbToHsvColor(__matched[0], __matched[1], __matched[2]);',
-        'if (__hsv) {',
-        'target.hue = __hsv[0]; target.saturation = __hsv[1]; target.brightness = __hsv[2];',
-        'target.h = __hsv[0]; target.s = __hsv[1]; target.v = __hsv[2];',
-        '}',
-        '}',
-    ].join(' ')
-
-    switch (action.operator) {
-        case 'set':
-            return [
-                resolveBaseRgb,
-                `const __raw = Number(${rhs}); const __nextLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : NaN;`,
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        case 'add':
-            return [
-                resolveBaseRgb,
-                `const __raw = Number(${rhs}); const __rhsLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0; const __nextLuma = __baseLuma + __rhsLuma;`,
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        case 'subtract':
-            return [
-                resolveBaseRgb,
-                `const __raw = Number(${rhs}); const __rhsLuma = Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0; const __nextLuma = __baseLuma - __rhsLuma;`,
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        case 'multiply':
-            return [
-                resolveBaseRgb,
-                `const __nextLuma = __baseLuma * Number(${rhs});`,
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        case 'divide':
-            return [
-                resolveBaseRgb,
-                `const __divisor = Number(${rhs});`,
-                'const __nextLuma = Math.abs(__divisor) > 1e-6 ? (__baseLuma / __divisor) : __baseLuma;',
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        case 'clamp':
-            return [
-                resolveBaseRgb,
-                `const __raw = Number(${rhs}); const __bound = Math.abs(Number.isFinite(__raw) ? ((Math.abs(__raw) > 0 && Math.abs(__raw) < 1) ? (__raw * 255) : __raw) : 0);`,
-                'const __nextLuma = clamp(__baseLuma, -__bound, __bound);',
-                'if (Number.isFinite(__nextLuma)) {',
-                applyMatchedColor,
-                '}',
-            ].join(' ')
-        default:
-            return ''
-    }
-}
-
-function _compileCondition(condition) {
-    if (!condition || condition.operator === 'always') return 'true'
+function _compileCondition(condition, definitionExpression = '') {
+    const filter = _normalizeExpressionSyntax(definitionExpression)
+    if (!condition || condition.operator === 'always') return filter ? `(${filter})` : 'true'
     const normalized = _normalizeExpressionSyntax(condition.expression)
     if (normalized) {
-        return `(${normalized})`
+        const base = `(${normalized})`
+        if (filter) return `(${filter}) && (${base})`
+        return base
     }
     if (!_allowedConditionOps.has(condition.operator)) return 'false'
 
@@ -497,7 +461,9 @@ function _compileCondition(condition) {
         ? condition.valueInput
         : _literal(condition.value ?? 0)
 
-    return `((${lhs}) ${condition.operator} (${rhs}))`
+    const base = `((${lhs}) ${condition.operator} (${rhs}))`
+    if (filter) return `(${filter}) && (${base})`
+    return base
 }
 
 function _compileAction(action) {
@@ -507,9 +473,6 @@ function _compileAction(action) {
     }
     if (output === 'hsv') {
         return _compileVectorAction(action, ['hue', 'saturation', 'brightness'])
-    }
-    if (output === 'luma') {
-        return _compileLumaAction(action)
     }
     const rhs = _toRhs(action)
     switch (action.operator) {
@@ -541,7 +504,6 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
     lines.push('  const i = (ctx && (ctx.inputs || ctx)) || {};')
     lines.push('  const palette = (id, index) => helpers.palette(ctx, id, index);')
     lines.push('  const gradient = (id, value) => helpers.gradient(ctx, id, value);')
-    lines.push('  const matchLuma = (r, g, b, targetLuma) => helpers.matchLuma(r, g, b, targetLuma);')
     lines.push('  const rgb = (r, g, b) => helpers.rgb(r, g, b);')
     lines.push('  const hsv = (h, s, v) => helpers.hsv(h, s, v);')
     lines.push('  const hsvToRgbColor = (h, s, v) => helpers.hsvToRgbColor(h, s, v);')
@@ -556,7 +518,7 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
 
     rules.forEach((rule) => {
         if (!rule.enabled || rule.sectionDisabled === true) return
-        const cond = _compileCondition(rule.condition)
+        const cond = _compileCondition(rule.condition, rule.definitionExpression)
         const actions = Array.isArray(rule.actions) ? rule.actions : []
         const emittedActions = []
         for (const action of actions) {
@@ -590,7 +552,8 @@ export function buildLivingFunction(blocks, inputIds) {
 }
 
 export function hashRules(ruleBlocks) {
-    const text = JSON.stringify(ruleBlocks ?? [])
+    const normalized = _normalizeRuleSource(ruleBlocks)
+    const text = JSON.stringify(normalized.ruleBlocks ?? [])
     let hash = 2166136261
     for (let i = 0; i < text.length; i++) {
         hash ^= text.charCodeAt(i)
@@ -601,7 +564,8 @@ export function hashRules(ruleBlocks) {
 
 export function compileRules(ruleBlocks, dictionaries) {
     const t0 = performance.now()
-    const sanitized = sanitizeRuleBlocks(ruleBlocks, dictionaries)
+    const normalized = _normalizeRuleSource(ruleBlocks)
+    const sanitized = sanitizeRuleBlocks(normalized.ruleBlocks, dictionaries)
     const normalizedRules = sanitized.ruleBlocks
     const sortedRules = [...normalizedRules].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     const spawnedRules = sortedRules.filter((rule) => rule.target === 'spawnedParticles')

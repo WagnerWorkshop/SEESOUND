@@ -7,13 +7,48 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         parseExpressionToTokens, findRuleVariableSuggestions, captureEditorSelectionRange, restoreEditorSelectionRange,
         insertVariablePillAtCursor, insertFunctionTemplateAtCursor, removeTrailingQueryAtCursor, getAutocompleteQueryAtCursor,
         createRuleTokenValueSelect, createRuleFunctionSelect,
-        createRuleExpressionPill, normalizeToken,
+        createRuleExpressionPill, createRuleInlineSlider, normalizeToken,
         readExpressionToCursor, getRuleFunctionParamSlots,
-        getRuleFunctionName, getRuleFunctionSlotLabel
+        getRuleFunctionName, getRuleFunctionSlotLabel,
+        getOutputDictionary,
     } = deps
     const panel = el('div', 'cp-menu-pane-inner')
     const wrapper = el('div', 'cp-rules-wrapper')
-    panel.appendChild(wrapper)
+
+    const stylesSection = el('section', 'cp-section cp-styles-section')
+    stylesSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.menu?.styles || UI_TEXT.menu?.rules || 'Styles' }))
+
+    const stylesActions = el('div', 'cp-button-grid cp-styles-actions')
+    const backgroundBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.background || 'Background' })
+    const cameraBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.camera || 'Camera' })
+    applyButtonIcon(backgroundBtn, BUTTON_ICON_MAP.duplicate || BUTTON_ICON_MAP.add, backgroundBtn.textContent)
+    applyButtonIcon(cameraBtn, BUTTON_ICON_MAP.fit || BUTTON_ICON_MAP.add, cameraBtn.textContent)
+    stylesActions.append(backgroundBtn, cameraBtn)
+    stylesSection.appendChild(stylesActions)
+
+    const entitySection = el('section', 'cp-section cp-styles-entities')
+    entitySection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.rules?.entities || 'Entities' }))
+    const entityList = el('div', 'cp-styles-entity-list')
+    const entityActions = el('div', 'cp-button-grid')
+    const addEntityBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.addEntity || 'Add Element' })
+    applyButtonIcon(addEntityBtn, BUTTON_ICON_MAP.add, addEntityBtn.textContent)
+    entityActions.append(addEntityBtn)
+    entitySection.append(entityList, entityActions)
+
+    const popup = el('div', 'cp-rules-popup')
+    const popupPanel = el('div', 'cp-rules-popup-panel')
+    const popupHeader = el('div', 'cp-rules-popup-header')
+    const popupTitle = el('div', 'cp-rules-popup-title', { text: UI_TEXT.menu?.rules || 'Styles' })
+    const popupClose = el('button', 'cp-btn cp-btn-danger cp-rules-popup-close', { type: 'button' })
+    applyIconOnlyButton(popupClose, BUTTON_ICON_MAP.close || BUTTON_ICON_MAP.clear, UI_TEXT.rules?.close || 'Close')
+    popupHeader.append(popupTitle, popupClose)
+    const popupBody = el('div', 'cp-rules-popup-body')
+    const popupMeta = el('div', 'cp-rules-popup-meta')
+    popupBody.append(popupMeta, wrapper)
+    popupPanel.append(popupHeader, popupBody)
+    popup.appendChild(popupPanel)
+
+    panel.append(stylesSection, entitySection, popup)
 
     const baseRowsByKey = new Map()
     const orderedRows = []
@@ -24,8 +59,76 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     let duplicateSequence = 0
     let latestProbeInputs = null
 
+    let activeOwner = { type: 'entity', id: null }
+    let popupOpen = false
+    let draggingEntityId = null
+    let draggingDefinitionId = null
+
     const RULE_INPUT_IDS = [...RULE_VARIABLE_ID_SET]
+    const RULE_INPUT_ENTRIES = RULE_INPUT_IDS
+        .map((id) => getRuleVariableById(id))
+        .filter(Boolean)
     const expressionEvalCache = new Map()
+    function getRuleVariablesByGroupLocal(group) {
+        return RULE_INPUT_ENTRIES.filter((entry) => entry.group === group)
+    }
+
+    function getActiveEntityShapeType() {
+        if (activeOwner.type !== 'entity') return null
+        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
+        return entity?.entityShapeType || 'particle'
+    }
+
+    function getAllowedTargetsForOwner() {
+        if (activeOwner.type === 'background') return new Set(['background'])
+        if (activeOwner.type === 'camera') return new Set(['camera'])
+        if (activeOwner.type !== 'entity') return new Set()
+        const shape = getActiveEntityShapeType()
+        if (shape === 'line') return new Set(['lines'])
+        if (shape === 'cloud') return new Set(['spawnedParticles', 'allParticles'])
+        return new Set(['spawnedParticles'])
+    }
+
+    function isDefinitionAllowed(definition) {
+        const allowedTargets = getAllowedTargetsForOwner()
+        if (!allowedTargets.has(definition?.target)) return false
+        if (activeOwner.type !== 'entity') return true
+        const shape = getActiveEntityShapeType()
+        if (Array.isArray(definition?.entityShapes) && !definition.entityShapes.includes(shape)) return false
+        if (Array.isArray(definition?.entityExclude) && definition.entityExclude.includes(shape)) return false
+        return true
+    }
+
+    function getAllowedRuleVariableGroups() {
+        if (activeOwner.type === 'background' || activeOwner.type === 'camera') return ['overall']
+        const groups = ['detail', 'overall']
+        if (getActiveEntityShapeType() === 'cloud') groups.push('entity')
+        return groups
+    }
+
+    function getAllowedRuleVariableIds() {
+        const groups = getAllowedRuleVariableGroups()
+        const ids = new Set()
+        for (const group of groups) {
+            for (const entry of getRuleVariablesByGroupLocal(group)) {
+                if (entry?.id) ids.add(entry.id)
+            }
+        }
+        // Mode-gate by current engine mode (params.objectMode).
+        // Per-bin variables are particle-only; entity variables are cloud-only.
+        const mode = String(params.objectMode || 'particle')
+        const particleOnly = new Set(['binMagnitude', 'binPhase', 'binFlux', 'binPhaseDeviation',
+            'binEnvelope', 'binEnvelopeState', 'binAttackTime', 'binRMSEnergy', 'notePitchClass', 'octave'])
+        const cloudOnly = new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote',
+            'entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume',
+            'globalTransient', 'entityAge', 'streamId'])
+        if (mode === 'particle') {
+            for (const id of ids) if (cloudOnly.has(id)) ids.delete(id)
+        } else if (mode === 'cloud') {
+            for (const id of ids) if (particleOnly.has(id)) ids.delete(id)
+        }
+        return ids
+    }
     const EVAL_HELPERS = Object.freeze({
         clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
         lerp: (a, b, t) => a + (b - a) * t,
@@ -59,6 +162,330 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     })
     const EVAL_HELPER_NAMES = Object.keys(EVAL_HELPERS)
     const EVAL_HELPER_VALUES = EVAL_HELPER_NAMES.map((name) => EVAL_HELPERS[name])
+
+    function getRuleEntities() {
+        return Array.isArray(params.ruleEntities) ? params.ruleEntities : []
+    }
+
+    function setRuleEntities(next) {
+        set('ruleEntities', Array.isArray(next) ? next : [])
+    }
+
+    function getRuleGlobals() {
+        const globals = (params.ruleGlobalBlocks && typeof params.ruleGlobalBlocks === 'object') ? params.ruleGlobalBlocks : {}
+        return {
+            background: Array.isArray(globals.background) ? globals.background : [],
+            camera: Array.isArray(globals.camera) ? globals.camera : [],
+        }
+    }
+
+    function setRuleGlobals(next) {
+        const source = (next && typeof next === 'object') ? next : {}
+        set('ruleGlobalBlocks', {
+            background: Array.isArray(source.background) ? source.background : [],
+            camera: Array.isArray(source.camera) ? source.camera : [],
+        })
+    }
+
+    function ensureActiveOwner() {
+        const entities = getRuleEntities()
+        if (!entities.length) {
+            setRuleEntities([{ id: 'entity-all', name: 'All', enabled: true, order: 0, entityShapeType: 'particle', definitions: [], rules: [] }])
+            activeOwner = { type: 'entity', id: 'entity-all' }
+            return
+        }
+        if (activeOwner.type === 'entity') {
+            const match = entities.find((entity) => entity.id === activeOwner.id)
+            if (!match) activeOwner = { type: 'entity', id: entities[0].id }
+        }
+    }
+
+    function getActiveRules() {
+        ensureActiveOwner()
+        if (activeOwner.type === 'background') return getRuleGlobals().background
+        if (activeOwner.type === 'camera') return getRuleGlobals().camera
+        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
+        return Array.isArray(entity?.rules) ? entity.rules : []
+    }
+
+    function setActiveRules(nextRules) {
+        ensureActiveOwner()
+        const safeRules = Array.isArray(nextRules) ? nextRules : []
+        if (activeOwner.type === 'background') {
+            const globals = getRuleGlobals()
+            globals.background = safeRules
+            setRuleGlobals(globals)
+            return
+        }
+        if (activeOwner.type === 'camera') {
+            const globals = getRuleGlobals()
+            globals.camera = safeRules
+            setRuleGlobals(globals)
+            return
+        }
+        const entities = getRuleEntities()
+        const nextEntities = entities.map((entity) => {
+            if (entity.id !== activeOwner.id) return entity
+            return { ...entity, rules: safeRules }
+        })
+        setRuleEntities(nextEntities)
+    }
+
+    function openPopupForOwner(owner) {
+        activeOwner = owner
+        popupOpen = true
+        popup.classList.add('is-open')
+        renderPopupMeta()
+        updateOwnerSectionVisibility()
+        applyRowsFromRuleBlocks(getActiveRules())
+    }
+
+    function closePopup() {
+        popupOpen = false
+        popup.classList.remove('is-open')
+    }
+
+    function renderEntityList() {
+        const entities = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        entityList.innerHTML = ''
+        entities.forEach((entity, index) => {
+            const row = el('div', 'cp-styles-entity-row')
+            row.draggable = true
+            row.dataset.entityId = entity.id
+            const nameBtn = el('button', 'cp-btn cp-styles-entity-name', { text: entity.name || `Entity ${index + 1}` })
+            const editBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.editEntity || 'Edit' })
+            const removeBtn = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.rules?.removeEntity || 'Remove' })
+            nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+            editBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+            removeBtn.addEventListener('click', () => {
+                const next = getRuleEntities().filter((entry) => entry.id !== entity.id)
+                setRuleEntities(next)
+                if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+                    activeOwner = { type: 'entity', id: next[0]?.id || null }
+                    if (popupOpen) renderPopupMeta()
+                }
+            })
+
+            row.addEventListener('dragstart', () => {
+                draggingEntityId = entity.id
+                row.classList.add('is-dragging')
+            })
+            row.addEventListener('dragend', () => {
+                draggingEntityId = null
+                row.classList.remove('is-dragging')
+            })
+            row.addEventListener('dragover', (event) => {
+                event.preventDefault()
+            })
+            row.addEventListener('drop', (event) => {
+                event.preventDefault()
+                if (!draggingEntityId || draggingEntityId === entity.id) return
+                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === draggingEntityId)
+                const toIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                if (fromIndex < 0 || toIndex < 0) return
+                const moved = ordered.splice(fromIndex, 1)[0]
+                ordered.splice(toIndex, 0, moved)
+                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
+                setRuleEntities(normalized)
+            })
+
+            row.append(nameBtn, editBtn, removeBtn)
+            entityList.appendChild(row)
+        })
+    }
+
+    function renderPopupMeta() {
+        popupMeta.innerHTML = ''
+        if (!popupOpen) return
+
+        if (activeOwner.type === 'background' || activeOwner.type === 'camera') {
+            const label = activeOwner.type === 'background'
+                ? (UI_TEXT.rules?.background || 'Background')
+                : (UI_TEXT.rules?.camera || 'Camera')
+            popupTitle.textContent = label
+            popupMeta.appendChild(el('div', 'cp-styles-popup-note', { text: label }))
+            return
+        }
+
+        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
+        if (!entity) return
+        popupTitle.textContent = entity.name || 'Entity'
+
+        const header = el('div', 'cp-styles-popup-header')
+        const nameInput = el('input', 'cp-input-text', { value: entity.name || '' })
+        nameInput.addEventListener('change', () => {
+            const nextName = String(nameInput.value || '').trim() || entity.name
+            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, name: nextName } : entry))
+            setRuleEntities(nextEntities)
+            popupTitle.textContent = nextName
+            renderEntityList()
+        })
+        const shapeSelect = el('select', 'cp-input-select')
+        shapeSelect.appendChild(createSelectOptions([
+            { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
+            { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
+            { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
+        ], entity.entityShapeType || 'particle'))
+        shapeSelect.addEventListener('change', () => {
+            const nextShape = String(shapeSelect.value || 'particle')
+            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? {
+                ...entry,
+                entityShapeType: nextShape,
+                spacingMode: nextShape === 'cloud' ? (entry.spacingMode || 'coordinates') : 'coordinates',
+            } : entry))
+            setRuleEntities(nextEntities)
+        })
+
+        // Spacing mode selector (only for cloud entities)
+        const spacingSelect = el('select', 'cp-input-select cp-spacing-select')
+        spacingSelect.appendChild(createSelectOptions([
+            { value: 'coordinates', label: UI_TEXT.rules?.spacingCoordinates || 'Coordinates' },
+            { value: 'network', label: UI_TEXT.rules?.spacingNetwork || 'Network' },
+        ], entity.spacingMode || 'coordinates'))
+        spacingSelect.style.display = entity.entityShapeType === 'cloud' ? '' : 'none'
+        shapeSelect.addEventListener('change', () => {
+            spacingSelect.style.display = shapeSelect.value === 'cloud' ? '' : 'none'
+        })
+        spacingSelect.addEventListener('change', () => {
+            const nextMode = String(spacingSelect.value || 'coordinates')
+            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, spacingMode: nextMode } : entry))
+            setRuleEntities(nextEntities)
+        })
+        header.append(
+            el('label', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Entity Name' }),
+            nameInput,
+            el('label', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' }),
+            shapeSelect,
+            el('label', 'cp-setting-label cp-spacing-label', { text: UI_TEXT.rules?.spacingMode || 'Spacing' }),
+            spacingSelect,
+        )
+        popupMeta.appendChild(header)
+
+        const definitionsSection = el('div', 'cp-styles-definitions')
+        const definitionsHeader = el('div', 'cp-styles-definitions-header')
+        definitionsHeader.appendChild(el('h4', 'cp-section-title', { text: UI_TEXT.rules?.definitions || 'Definitions' }))
+
+        const definitionsList = el('div', 'cp-styles-definition-list')
+        const definitions = Array.isArray(entity.definitions) ? entity.definitions : []
+        definitions.forEach((def) => {
+            const defRow = el('div', 'cp-styles-definition-row')
+            defRow.draggable = true
+            defRow.dataset.definitionId = def.id
+            const defName = el('input', 'cp-input-text cp-styles-definition-name', { value: def.name || 'Filter' })
+            const filterWrap = el('div', 'cp-styles-definition-filter')
+            const filterPrefix = el('span', 'cp-styles-definition-filter-prefix', { text: `${UI_TEXT.rules?.filterIf || 'if'} (` })
+            const filterInput = el('input', 'cp-input-text cp-styles-definition-filter-input', {
+                value: String(def.expression || ''),
+                placeholder: UI_TEXT.rules?.filterPlaceholder || 'amplitude > 0.2',
+            })
+            const filterSuffix = el('span', 'cp-styles-definition-filter-suffix', { text: ')' })
+            filterWrap.append(filterPrefix, filterInput, filterSuffix)
+            const defRemove = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.rules?.removeDefinition || 'Remove' })
+            defName.addEventListener('change', () => {
+                const nextName = String(defName.value || '').trim() || def.name || 'Filter'
+                const nextDefs = definitions.map((entry) => (entry.id === def.id ? { ...entry, name: nextName } : entry))
+                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
+                setRuleEntities(nextEntities)
+            })
+            filterInput.addEventListener('change', () => {
+                const nextExpr = String(filterInput.value || '').trim()
+                const nextDefs = definitions.map((entry) => (entry.id === def.id ? { ...entry, expression: nextExpr } : entry))
+                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
+                setRuleEntities(nextEntities)
+            })
+            defRemove.addEventListener('click', () => {
+                const nextDefs = definitions.filter((entry) => entry.id !== def.id)
+                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
+                setRuleEntities(nextEntities)
+                renderPopupMeta()
+            })
+
+            defRow.addEventListener('dragstart', () => {
+                draggingDefinitionId = def.id
+                defRow.classList.add('is-dragging')
+            })
+            defRow.addEventListener('dragend', () => {
+                draggingDefinitionId = null
+                defRow.classList.remove('is-dragging')
+            })
+            defRow.addEventListener('dragover', (event) => {
+                event.preventDefault()
+            })
+            defRow.addEventListener('drop', (event) => {
+                event.preventDefault()
+                if (!draggingDefinitionId || draggingDefinitionId === def.id) return
+                const ordered = [...definitions]
+                const fromIndex = ordered.findIndex((entry) => entry.id === draggingDefinitionId)
+                const toIndex = ordered.findIndex((entry) => entry.id === def.id)
+                if (fromIndex < 0 || toIndex < 0) return
+                const moved = ordered.splice(fromIndex, 1)[0]
+                ordered.splice(toIndex, 0, moved)
+                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: ordered } : entry))
+                setRuleEntities(nextEntities)
+            })
+
+            defRow.append(defName, filterWrap, defRemove)
+            definitionsList.appendChild(defRow)
+        })
+
+        const addDefinitionBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.addDefinition || 'Add Filter' })
+        applyButtonIcon(addDefinitionBtn, BUTTON_ICON_MAP.add, addDefinitionBtn.textContent)
+        addDefinitionBtn.addEventListener('click', () => {
+            const baseName = UI_TEXT.rules?.newDefinitionPrompt || 'Filter'
+            const existingNames = new Set(definitions.map((entry) => String(entry?.name || '').trim()).filter(Boolean))
+            let index = 1
+            let nextName = `${baseName} ${index}`
+            while (existingNames.has(nextName)) {
+                index += 1
+                nextName = `${baseName} ${index}`
+            }
+            const nextDefs = [...definitions, { id: `def-${Date.now()}`, name: nextName, expression: '' }]
+            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
+            setRuleEntities(nextEntities)
+            renderPopupMeta()
+        })
+
+        definitionsSection.append(definitionsHeader, definitionsList, addDefinitionBtn)
+        popupMeta.appendChild(definitionsSection)
+    }
+
+    function updateOwnerSectionVisibility() {
+        wrapper.classList.toggle('is-entity-owner', activeOwner.type === 'entity')
+        const targetSet = getAllowedTargetsForOwner()
+        for (const rowState of orderedRows) {
+            if (!rowState?.card) continue
+            rowState.card.style.display = isDefinitionAllowed(rowState.definition) ? '' : 'none'
+        }
+        for (const [sectionName, sectionEl] of sectionByName.entries()) {
+            const rows = sectionRows.get(sectionName) || []
+            const hasTarget = rows.some((row) => isDefinitionAllowed(row.definition))
+            sectionEl.style.display = hasTarget ? '' : 'none'
+        }
+    }
+
+    backgroundBtn.addEventListener('click', () => openPopupForOwner({ type: 'background' }))
+    cameraBtn.addEventListener('click', () => openPopupForOwner({ type: 'camera' }))
+    popupClose.addEventListener('click', () => closePopup())
+    popup.addEventListener('click', (event) => {
+        if (event.target === popup) closePopup()
+    })
+    addEntityBtn.addEventListener('click', () => {
+        const nextName = window.prompt(UI_TEXT.rules?.newEntityPrompt || 'Entity name', '')
+        if (!nextName) return
+        const nextEntities = [...getRuleEntities(), {
+            id: `entity-${Date.now()}`,
+            name: String(nextName).trim(),
+            enabled: true,
+            order: getRuleEntities().length,
+            entityShapeType: 'particle',
+            spacingMode: 'coordinates',
+            definitions: [],
+            rules: [],
+        }]
+        setRuleEntities(nextEntities)
+        renderEntityList()
+    })
 
     function normalizeExpressionSyntax(expression) {
         let next = String(expression || '').trim()
@@ -158,12 +585,12 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         return String(value)
     }
 
-    function rowKey(target, output) {
-        return `${target}:${output}`
+    function rowKey(target, output, section = '') {
+        return `${target}:${output}:${section || ''}`
     }
 
     function createInstanceId(definition, isDuplicate = false) {
-        const base = `${definition.target}-${definition.output}`
+        const base = `${definition.target}-${definition.output}-${definition.section || 'section'}`
         if (!isDuplicate) return `${base}-base`
         duplicateSequence += 1
         return `${base}-dup-${duplicateSequence}`
@@ -331,26 +758,51 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     function getOutputDescription(outputId) {
+        if (!outputId) return ''
+        // Use outputDictionary for canonical range data
+        const dict = getOutputDictionary?.() || null
+        if (dict) {
+            const entry = dict.entries.find((e) => e.id === outputId)
+            if (entry) {
+                const [lo, hi] = entry.range || []
+                const loStr = Number.isFinite(lo) ? (lo === Number.NEGATIVE_INFINITY ? '−∞' : String(lo)) : ''
+                const hiStr = Number.isFinite(hi) ? (hi === Number.POSITIVE_INFINITY ? '∞' : String(hi)) : ''
+                if (loStr && hiStr && loStr !== hiStr) return `${loStr}–${hiStr}`
+                if (entry.type === 'enum') return entry.values?.join(' | ') || ''
+                if (entry.type === 'vector') return `${entry.size || 3}-component vector`
+                return ''
+            }
+        }
+        // Fallback descriptions for known IDs
         switch (String(outputId || '')) {
             case 'red':
             case 'green':
             case 'blue':
-            case 'luma':
-                return '0-255'
+                return '0–1'
             case 'hue':
-                return '0-360'
+                return '0–1'
             case 'saturation':
             case 'brightness':
-                return '0-1'
-            case 'x':
-                return 'horizontal position'
-            case 'y':
-                return 'vertical position'
-            case 'size':
-            case 'radius':
-                return 'pixels'
             case 'opacity':
-                return '0-1'
+                return '0–1'
+            case 'x':
+                return 'horizontal'
+            case 'y':
+                return 'vertical'
+            case 'z':
+                return 'depth'
+            case 'size':
+                return 'px'
+            case 'zoom':
+                return '0.05–32'
+            case 'angleOfView':
+                return '20°–120°'
+            case 'spread':
+                return 'scatter radius'
+            case 'networkTension':
+                return 'attraction'
+            case 'networkRepulsion':
+                return 'repulsion'
             default:
                 return ''
         }
@@ -396,7 +848,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     function renumberRuleInstancesForKey(key) {
-        const familyRows = orderedRows.filter((rowState) => rowKey(rowState.definition.target, rowState.definition.output) === key)
+        const familyRows = orderedRows.filter((rowState) => rowKey(rowState.definition.target, rowState.definition.output, rowState.definition.section) === key)
         for (let index = 0; index < familyRows.length; index += 1) {
             const rowState = familyRows[index]
             rowState.instanceNumber = index + 1
@@ -410,7 +862,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function renumberAllRuleInstances() {
         const visited = new Set()
         for (const rowState of orderedRows) {
-            const key = rowKey(rowState.definition.target, rowState.definition.output)
+            const key = rowKey(rowState.definition.target, rowState.definition.output, rowState.definition.section)
             if (visited.has(key)) continue
             visited.add(key)
             renumberRuleInstancesForKey(key)
@@ -535,7 +987,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         // Local edits already updated rowState in-place; ignore the immediate
         // echo notification only when it matches exactly what we just wrote.
         pendingLocalRuleBlocksSignature = serializeRuleBlocksSignature(nextBlocks)
-        set('ruleBlocks', nextBlocks)
+        setActiveRules(nextBlocks)
         refreshAllRowOutputs()
     }
 
@@ -574,13 +1026,32 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
                     const action = actions[actionIndex]
                     const output = String(action?.output || '')
-                    const key = rowKey(target, output)
-                    const baseRow = baseRowsByKey.get(key)
+                    const group = String(rule?.group || '')
+                    const sectionFromGroup = group.split('/')[0] || ''
+                    const key = rowKey(target, output, sectionFromGroup)
+                    let baseRow = baseRowsByKey.get(key)
+                    if (!baseRow) {
+                        baseRow = orderedRows.find((row) => (
+                            row.definition.target === target
+                            && row.definition.output === output
+                            && row.definition.section === sectionFromGroup
+                            && !row.isDuplicate
+                        ))
+                    }
+                    if (!baseRow) {
+                        baseRow = orderedRows.find((row) => (
+                            row.definition.target === target
+                            && row.definition.output === output
+                            && !row.isDuplicate
+                        ))
+                    }
                     if (!baseRow) continue
 
-                    const seenCount = seenKeyCount.get(key) || 0
+                    const sectionKey = baseRow.definition.section || sectionFromGroup
+                    const scopedKey = rowKey(target, output, sectionKey)
+                    const seenCount = seenKeyCount.get(scopedKey) || 0
                     let rowState = baseRow
-                    let insertAfterCard = lastRowByKey.get(key)?.card || baseRow.card
+                    let insertAfterCard = lastRowByKey.get(scopedKey)?.card || baseRow.card
                     if (seenCount > 0) {
                         rowState = createRowState(baseRow.definition, true)
                         const incomingId = String(rule?.id || '').trim()
@@ -593,11 +1064,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                             rowState.instanceId = candidateId
                             usedInstanceIds.add(candidateId)
                         }
-                        insertAfterCard = lastRowByKey.get(key)?.card || baseRow.card
+                        insertAfterCard = lastRowByKey.get(scopedKey)?.card || baseRow.card
                         attachRowCard(rowState, insertAfterCard)
                     }
-                    lastRowByKey.set(key, rowState)
-                    seenKeyCount.set(key, seenCount + 1)
+                    lastRowByKey.set(scopedKey, rowState)
+                    seenKeyCount.set(scopedKey, seenCount + 1)
 
                     if (rule?.sectionDisabled === true) {
                         sectionEnabledState.set(rowState.definition.section, false)
@@ -615,7 +1086,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                     if (inputMeta?.group === 'detail') {
                         rowState.conditionDetail = condInput
                         rowState.conditionOverall = NONE_VAR
-                    } else if (inputMeta?.group === 'overall') {
+                    } else if (inputMeta?.group === 'overall' || inputMeta?.group === 'entity') {
                         rowState.conditionOverall = condInput
                         rowState.conditionDetail = NONE_VAR
                     }
@@ -728,14 +1199,15 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const conditionRow = el('div', 'cp-rule-card-condition-builder')
         const conditionSentence = el('div', 'cp-rule-condition-sentence')
         const whenLabel = el('span', 'cp-rule-condition-when', { text: UI_TEXT.rules.when })
-        const conditionInputSelect = createRuleConditionInputSelect(NONE_VAR)
+        const allowedVariableIds = getAllowedRuleVariableIds()
+        const conditionInputSelect = createRuleConditionInputSelect(NONE_VAR, allowedVariableIds)
         const conditionOperatorSelect = el('select', 'cp-input-select cp-rule-condition-operator')
         conditionOperatorSelect.appendChild(createSelectOptions(
             RULE_OPERATORS.filter((value) => value !== 'always').map((value) => ({ value, label: value })),
             '>',
         ))
         const conditionValueInput = el('input', 'cp-input-number', { type: 'number', step: 0.001, value: '0' })
-        const conditionValueInputSelect = createRuleConditionInputSelect(NONE_VAR)
+        const conditionValueInputSelect = createRuleConditionInputSelect(NONE_VAR, allowedVariableIds)
         conditionValueInputSelect.classList.add('cp-rule-condition-value-input')
         const removeConditionButton = el('button', 'cp-btn cp-btn-danger cp-rule-condition-remove', { type: 'button', text: UI_TEXT.rules.removeCondition })
         applyButtonIcon(removeConditionButton, BUTTON_ICON_MAP.clear, UI_TEXT.rules.removeCondition)
@@ -758,7 +1230,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             clearTokensBtn.style.display = 'none'
         } else {
             const tokenRow = el('div', 'cp-rule-token-row')
-            valueActionSelect = createRuleTokenValueSelect('')
+            valueActionSelect = createRuleTokenValueSelect('', allowedVariableIds)
             const functionSelect = createRuleFunctionSelect('')
             const autocompleteHint = el('div', 'cp-rule-autocomplete-hint')
             autocompleteHint.hidden = true
@@ -784,7 +1256,27 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             })
             tokenEditor = expressionInput
 
-            tokenRow.append(valueActionSelect, functionSelect)
+            const addSliderBtn = el('button', 'cp-btn cp-rule-add-slider-btn', {
+                type: 'button',
+                title: 'Insert slider into expression',
+                text: '◍',
+            })
+            addSliderBtn.addEventListener('click', () => {
+                const sliderId = `slider-${Date.now()}`
+                const vdef = getRuleVariableById('binMagnitude')
+                const mn = (vdef && Array.isArray(vdef.range)) ? vdef.range[0] : 0
+                const mx = (vdef && Array.isArray(vdef.range)) ? vdef.range[1] : 1
+                const mid = mn + (mx - mn) * 0.5
+                const labelHint = `${rowState.definition?.output || 'Value'} Slider`
+                const slider = createRuleInlineSlider(sliderId, mn, mx, mid, labelHint)
+                if (expressionInput && expressionInput.parentNode) {
+                    expressionInput.appendChild(slider)
+                    const spacer = document.createTextNode(' ')
+                    slider.after(spacer)
+                    rowState.onExpressionChanged?.()
+                }
+            })
+            tokenRow.append(valueActionSelect, functionSelect, addSliderBtn)
             expressionRow.append(tokenRow, expressionInput, parameterHint, autocompleteHint)
 
             const captureCaretOffset = () => {
@@ -978,7 +1470,9 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
             const updateAutocompleteHint = () => {
                 const query = getAutocompleteQueryAtCursor(expressionInput)
+                const allowedIds = getAllowedRuleVariableIds()
                 const suggestions = findRuleVariableSuggestions(query, 4)
+                    .filter((entry) => allowedIds.has(entry.id))
                 rowState.autocomplete = {
                     query,
                     suggestions,
@@ -1134,7 +1628,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             : orderedRows.length
         orderedRows.splice(orderedInsertIdx, 0, rowState)
         sectionRows.get(definition.section)?.push(rowState)
-        renumberRuleInstancesForKey(rowKey(definition.target, definition.output))
+        renumberRuleInstancesForKey(rowKey(definition.target, definition.output, definition.section))
 
         duplicateBtn.addEventListener('click', () => {
             const duplicateState = createRowState(definition, true)
@@ -1158,7 +1652,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
         removeBtn.addEventListener('click', () => {
             if (!rowState.isDuplicate) return
-            const key = rowKey(rowState.definition.target, rowState.definition.output)
+            const key = rowKey(rowState.definition.target, rowState.definition.output, rowState.definition.section)
             const idx = orderedRows.indexOf(rowState)
             if (idx >= 0) orderedRows.splice(idx, 1)
             const rows = sectionRows.get(definition.section) || []
@@ -1213,7 +1707,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             if (selected !== NONE_VAR) {
                 const meta = getRuleVariableById(selected)
                 if (meta?.group === 'detail') rowState.conditionDetail = selected
-                else if (meta?.group === 'overall') rowState.conditionOverall = selected
+                else if (meta?.group === 'overall' || meta?.group === 'entity') rowState.conditionOverall = selected
             }
             commitRowIfReady(rowState)
         })
@@ -1263,7 +1757,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         if (definition.section !== currentSection) {
             currentSection = definition.section
             const sectionName = currentSection
-            const sectionLabel = getRuleSectionLabel(definition)
+            const sectionLabel = definition.sectionLabel || getRuleSectionLabel(definition)
             currentSubgroup = ''
             const section = el('section', 'cp-rule-section')
             const sectionHeader = el('div', 'cp-rule-section-header')
@@ -1306,12 +1800,15 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             currentSectionBody = sectionBody
         }
         const rowState = createRowState(definition, false)
-        baseRowsByKey.set(rowKey(definition.target, definition.output), rowState)
+        baseRowsByKey.set(rowKey(definition.target, definition.output, definition.section), rowState)
         attachRowCard(rowState)
     }
 
     const applyRowsFromParams = () => {
-        const nextBlocks = Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []
+        renderEntityList()
+        ensureActiveOwner()
+        updateOwnerSectionVisibility()
+        const nextBlocks = getActiveRules()
         const incomingSignature = serializeRuleBlocksSignature(nextBlocks)
         if (pendingLocalRuleBlocksSignature !== null && incomingSignature === pendingLocalRuleBlocksSignature) {
             pendingLocalRuleBlocksSignature = null
@@ -1319,9 +1816,10 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         }
         pendingLocalRuleBlocksSignature = null
         applyRowsFromRuleBlocks(nextBlocks)
+        if (popupOpen) renderPopupMeta()
     }
 
-    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks'])
+    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks'])
     applyRowsFromParams()
 
     window.addEventListener('seesound:rule-probe', (event) => {

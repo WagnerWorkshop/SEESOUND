@@ -12,8 +12,6 @@ import {
     normalizeCentroidHzToUnit,
 } from './AudioFeatures.js'
 
-const ALLOWED_FFT_SIZES = Object.freeze([1024, 2048, 4096, 8192, 16384])
-
 function defaultUsage() {
     return {
         worklet: {
@@ -24,6 +22,11 @@ function defaultUsage() {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
+            needPitchBrain: false,
+            needTextureBrain: false,
+            needRhythmBrain: false,
+            needTrackerBrain: false,
+            objectMode: 'particle',
         },
         engine: {
             needRms: true,
@@ -41,26 +44,9 @@ function defaultUsage() {
     }
 }
 
-export function snapFftSize(value) {
-    const n = Number(value)
-    if (!Number.isFinite(n)) return 2048
-    let best = ALLOWED_FFT_SIZES[0]
-    let bestDist = Math.abs(n - best)
-    for (let i = 1; i < ALLOWED_FFT_SIZES.length; i++) {
-        const candidate = ALLOWED_FFT_SIZES[i]
-        const dist = Math.abs(n - candidate)
-        if (dist < bestDist) {
-            best = candidate
-            bestDist = dist
-        }
-    }
-    return best
-}
-
 export function snapCqtDetailsPer10Octaves(value) {
     const n = Math.round(Number(value))
     if (!Number.isFinite(n)) return 1000
-    // Snap to discrete steps of 100 between 100 and 1000 (inclusive)
     const clamped = Math.max(100, Math.min(1000, n))
     const snapped = Math.round(clamped / 100) * 100
     return Math.max(100, Math.min(1000, snapped))
@@ -68,12 +54,9 @@ export function snapCqtDetailsPer10Octaves(value) {
 
 export class AudioEngine {
     constructor({
-        initialFftSize = 2048,
         initialCqtDetailsPer10Octaves = 1000,
-        snapFftSizeFn = snapFftSize,
         deriveAudioUsage,
     } = {}) {
-        this._snapFftSize = typeof snapFftSizeFn === 'function' ? snapFftSizeFn : snapFftSize
         this._deriveAudioUsage = typeof deriveAudioUsage === 'function' ? deriveAudioUsage : defaultUsage
         this._snapCqtDetailsPer10Octaves = snapCqtDetailsPer10Octaves
 
@@ -94,6 +77,11 @@ export class AudioEngine {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
+            needPitchBrain: false,
+            needTextureBrain: false,
+            needRhythmBrain: false,
+            needTrackerBrain: false,
+            objectMode: 'particle',
             fluxWindowFrames: 10,
             attackThreshold: 0.0005,
             sustainFluxEps: 0.004,
@@ -102,6 +90,8 @@ export class AudioEngine {
             cqtDetailsPer10Octaves: this._snapCqtDetailsPer10Octaves(initialCqtDetailsPer10Octaves),
             cqtMinHz: 16,
             cqtMaxHz: 20000,
+            pitchMinHz: 40,
+            pitchMaxHz: 4000,
         }
         this._cqtUpdateTimeout = null
         this._calcUsage = {
@@ -118,7 +108,7 @@ export class AudioEngine {
             needChromagram: false,
         }
 
-        this.FFT_SIZE = this._snapFftSize(initialFftSize)
+        this.FFT_SIZE = 2048
         this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this.timeDomainData = new Uint8Array(this.FFT_SIZE)
         this._freqL = new Uint8Array(128)
@@ -130,6 +120,7 @@ export class AudioEngine {
         this._binPhase = null
         this._binEnvelope = null
         this._binAttackTime = null
+        this._harmonicObjects = null
         this.featureSmoothingAlpha = 0.2
 
         this.bass = 0; this.mid = 0; this.high = 0
@@ -148,6 +139,16 @@ export class AudioEngine {
         this.spectralSpread = 0
         this.spectralSkewness = 0
         this.chromagram = 0
+        this.fundamentalHz = 0
+        this.fundamentalPitch = 0
+        this.fundamentalNote = 0
+        this.entityCentroid = 0
+        this.entityFlatness = 0
+        this.entityInharmonicity = 0
+        this.entityVolume = 0
+        this.globalTransient = 0
+        this.entityAge = 0
+        this.streamId = 0
         this.ctxState = 'none'
         this.monitorMuted = false
     }
@@ -158,23 +159,41 @@ export class AudioEngine {
             numberOfInputs: 1,
             numberOfOutputs: 0,
             processorOptions: {
-                fftSize: this.FFT_SIZE,
-                hopSize: Math.floor(this.FFT_SIZE / 4),
                 fluxWindowFrames: this._workletConfig.fluxWindowFrames,
                 cqtDetailsPer10Octaves: this._workletConfig.cqtDetailsPer10Octaves,
                 cqtMinHz: this._workletConfig.cqtMinHz,
                 cqtMaxHz: this._workletConfig.cqtMaxHz,
+                pitchMinHz: this._workletConfig.pitchMinHz,
+                pitchMaxHz: this._workletConfig.pitchMaxHz,
+                objectMode: this._workletConfig.objectMode || 'particle',
             },
         })
         node.port.onmessage = (event) => {
             const msg = event.data || {}
-            if (msg.type !== 'binMetrics') return
-            if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
-            if (msg.flux) this._binFlux = new Float32Array(msg.flux)
-            if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
-            if (msg.phase) this._binPhase = new Float32Array(msg.phase)
-            if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
-            if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+            if (msg.type === 'binMetrics') {
+                if (msg.magnitude) this._binMagnitude = new Float32Array(msg.magnitude)
+                if (msg.flux) this._binFlux = new Float32Array(msg.flux)
+                if (msg.phaseDeviation) this._binPhaseDeviation = new Float32Array(msg.phaseDeviation)
+                if (msg.phase) this._binPhase = new Float32Array(msg.phase)
+                if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
+                if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+                return
+            }
+            if (msg.type === 'entityMetrics') {
+                this.fundamentalHz = Number(msg.fundamentalHz) || 0
+                this.fundamentalPitch = Number(msg.fundamentalPitch) || 0
+                this.fundamentalNote = Number.isFinite(msg.fundamentalNote) ? Number(msg.fundamentalNote) : 0
+                this.entityCentroid = Number(msg.entityCentroid) || 0
+                this.entityFlatness = Number(msg.entityFlatness) || 0
+                this.entityInharmonicity = Number(msg.entityInharmonicity) || 0
+                this.entityVolume = Number(msg.entityVolume) || 0
+                this.globalTransient = Number(msg.globalTransient) || 0
+                this.entityAge = Number(msg.entityAge) || 0
+                this.streamId = Number(msg.streamId) || 0
+            }
+            if (msg.type === 'harmonicObjects') {
+                this._harmonicObjects = msg.objects || null
+            }
         }
         return node
     }
@@ -227,6 +246,11 @@ export class AudioEngine {
         this._workletConfig.needPhase = usage.worklet.needPhase
         this._workletConfig.needEnvelope = usage.worklet.needEnvelope
         this._workletConfig.needAttackTime = usage.worklet.needAttackTime
+        this._workletConfig.needPitchBrain = usage.worklet.needPitchBrain
+        this._workletConfig.needTextureBrain = usage.worklet.needTextureBrain
+        this._workletConfig.needRhythmBrain = usage.worklet.needRhythmBrain
+        this._workletConfig.needTrackerBrain = usage.worklet.needTrackerBrain
+        this._workletConfig.objectMode = usage.worklet.objectMode || 'particle'
         this._calcUsage = usage.engine
         this._postWorkletConfig()
     }
@@ -262,47 +286,6 @@ export class AudioEngine {
         this._postWorkletConfig()
     }
 
-    setFftSize(nextValue) {
-        const nextSize = this._snapFftSize(nextValue)
-        if (nextSize === this.FFT_SIZE) return
-        this.FFT_SIZE = nextSize
-        this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
-        this.timeDomainData = new Uint8Array(this.FFT_SIZE)
-        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
-        this._binMagnitude = null
-        this._binFlux = null
-        this._binPhaseDeviation = null
-        this._binPhase = null
-        this._binEnvelope = null
-        this._binAttackTime = null
-
-        if (this.analyser) {
-            this.analyser.fftSize = this.FFT_SIZE
-            this.analyser.smoothingTimeConstant = 0
-            this.analyser.minDecibels = -140
-        }
-
-        if (this.binAnalysisNode) {
-            try {
-                this.source?.disconnect(this.binAnalysisNode)
-            } catch { }
-            try {
-                this.streamSource?.disconnect(this.binAnalysisNode)
-            } catch { }
-            try {
-                this.binAnalysisNode.disconnect()
-            } catch { }
-            this.binAnalysisNode = null
-            this._workletConnected = false
-        }
-
-        if (this.ctx && this._workletReady) {
-            this.binAnalysisNode = this._createBinAnalysisNode()
-            this._connectSourceToWorklet()
-            this._postWorkletConfig()
-        }
-    }
-
     init(el) {
         if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -315,6 +298,10 @@ export class AudioEngine {
             this.analyser.connect(this.outputGain)
             this.outputGain.connect(this.ctx.destination)
             this._ensureWorkletLoaded()
+        }
+        // If already connected to this audio element, skip reconnection
+        if (el === this.audioEl && (this.source || this.streamSource)) {
+            return
         }
         if (this.audioEl !== el || (!this.source && !this.streamSource)) {
             this.source?.disconnect()
@@ -521,5 +508,10 @@ export class AudioEngine {
 
     getBinAttackTime() {
         return this._binAttackTime
+    }
+
+    /** @returns {import('../types').HarmonicObject[]|null} */
+    getHarmonicObjects() {
+        return this._harmonicObjects
     }
 }

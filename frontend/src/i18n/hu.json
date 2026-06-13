@@ -5,7 +5,8 @@
             "file": "Fájl",
             "view": "Nézet",
             "settings": "Beállítások",
-            "rules": "Szabályok",
+            "rules": "Szabalyok",
+            "styles": "Styles",
             "collapse": "Összecsukás"
         },
         "file": {

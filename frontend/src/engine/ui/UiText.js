@@ -43,7 +43,28 @@ function resolvePreferredLanguage() {
 export const ACTIVE_LANGUAGE = resolvePreferredLanguage()
 const locale = LOCALE_MAP[ACTIVE_LANGUAGE] || en
 
-export const RULE_VARIABLES = Object.freeze(locale.ruleVariables || [])
+const baseRuleVariables = Array.isArray(en.ruleVariables) ? en.ruleVariables : []
+const localeRuleVariables = Array.isArray(locale.ruleVariables) ? locale.ruleVariables : []
+const localeRuleVariableMap = new Map(localeRuleVariables.map((entry) => [entry?.id, entry]))
+const mergedRuleVariables = []
+const mergedRuleVariableIds = new Set()
+
+for (const entry of baseRuleVariables) {
+    const id = entry?.id
+    if (!id || mergedRuleVariableIds.has(id)) continue
+    const override = localeRuleVariableMap.get(id)
+    mergedRuleVariables.push(override ? { ...entry, ...override } : entry)
+    mergedRuleVariableIds.add(id)
+}
+
+for (const entry of localeRuleVariables) {
+    const id = entry?.id
+    if (!id || mergedRuleVariableIds.has(id)) continue
+    mergedRuleVariables.push(entry)
+    mergedRuleVariableIds.add(id)
+}
+
+export const RULE_VARIABLES = Object.freeze(mergedRuleVariables)
 export const UI_TEXT = Object.freeze(locale.uiText || {})
 
 export function getText(path, fallback = '') {

@@ -3,31 +3,14 @@ import { createRangePairControl } from '../../components/RangePairControl.js'
 
 export function buildSettingsMenu(body, syncRegistry, deps) {
     const {
-        el, UI_TEXT, FFT_OPTIONS, params, set, resetToDefaults,
+        el, UI_TEXT, params, set, resetToDefaults,
         SETTINGS_SLIDERS, SETTINGS_RANGES, BUTTON_ICON_MAP, applyButtonIcon,
-        createSelectOptions, registerSync
+        registerSync, createSelectOptions
     } = deps
     const panel = el('div', 'cp-menu-pane-inner')
 
     const sliderSection = el('section', 'cp-section')
     sliderSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.processing || 'Processing' }))
-
-    const resolutionRow = el('div', 'cp-setting-row')
-    const resolutionLabelWrap = el('div', 'cp-setting-label-wrap')
-    resolutionLabelWrap.appendChild(el('label', 'cp-setting-label', {
-        text: UI_TEXT.settings.audioResolution,
-        title: 'FFT Size. Frequency-domain analysis resolution.',
-    }))
-    const resolutionSelect = el('select', 'cp-input-select')
-    resolutionSelect.appendChild(createSelectOptions(
-        FFT_OPTIONS.map((value) => ({ value, label: String(value) })),
-        params.fftSize,
-    ))
-    resolutionSelect.addEventListener('change', () => {
-        set('fftSize', Number(resolutionSelect.value))
-    })
-    resolutionRow.append(resolutionLabelWrap, resolutionSelect)
-    sliderSection.appendChild(resolutionRow)
 
     const hearingToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
     const hearingLabel = UI_TEXT.settings.adjustForHumanHearing
@@ -63,17 +46,38 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
         rangeSection.appendChild(createRangePairControl(definition, syncRegistry, deps))
     }
 
-    const syncResolution = () => {
-        resolutionSelect.value = String(params.fftSize || 2048)
-    }
     const syncHearingToggle = () => {
         hearingToggle.checked = Number(params.adjustForHumanHearing ?? 0) >= 0.5
     }
-    registerSync(syncRegistry, syncResolution, ['fftSize'])
     registerSync(syncRegistry, syncHearingToggle, ['adjustForHumanHearing'])
-    syncResolution()
     syncHearingToggle()
 
-    panel.append(sliderSection, rangeSection)
+    // ── Time dropdown only (engine mode is derived from entity settings) ──
+    const modeSection = el('section', 'cp-section')
+    modeSection.appendChild(el('h3', 'cp-section-title', { text: 'Engine Mode' }))
+    const modeInfo = el('div', 'cp-setting-hint cp-mode-info', {
+        text: 'Engine mode is derived automatically from entity type settings in Styles.',
+    })
+    modeSection.appendChild(modeInfo)
+
+    const timeModeRow = el('div', 'cp-setting-row')
+    const timeModeLabel = el('label', 'cp-setting-label', { text: 'Time Mode' })
+    const timeModeSelect = el('select', 'cp-input-select')
+    timeModeSelect.appendChild(createSelectOptions([
+        { value: 'immediate', label: 'Immediate' },
+        { value: 'interval', label: 'Interval' },
+    ], params.timeMode || 'immediate'))
+    timeModeRow.append(timeModeLabel, timeModeSelect)
+    modeSection.appendChild(timeModeRow)
+
+    timeModeSelect.addEventListener('change', () => set('timeMode', timeModeSelect.value))
+
+    const syncTimeDropdown = () => {
+        timeModeSelect.value = params.timeMode || 'immediate'
+    }
+    registerSync(syncRegistry, syncTimeDropdown, ['timeMode'])
+    syncTimeDropdown()
+
+    panel.append(sliderSection, modeSection, rangeSection)
     body.appendChild(panel)
 }

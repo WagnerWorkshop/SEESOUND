@@ -4,6 +4,14 @@ const DEFAULT_LEVEL_COUNT = 7
 const DEFAULT_CQT_MIN_HZ = 16
 const DEFAULT_CQT_MAX_HZ = 20000
 const DEFAULT_CQT_DETAILS_PER_10_OCTAVES = 1000
+const PITCH_WINDOW_SAMPLES = 16384
+const TEXTURE_WINDOW_SAMPLES = 4096
+const RHYTHM_WINDOW_SAMPLES = 1024
+const PITCH_HOP_SAMPLES = 2048
+const TEXTURE_HOP_SAMPLES = 1024
+const RHYTHM_HOP_SAMPLES = 512
+const DEFAULT_PITCH_MIN_HZ = 40
+const DEFAULT_PITCH_MAX_HZ = 4000
 const MIN_WINDOW_SAMPLES = 32
 const MAX_WINDOW_SAMPLES = 8192
 
@@ -20,6 +28,11 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
+            needPitchBrain: false,
+            needTextureBrain: false,
+            needRhythmBrain: false,
+            needTrackerBrain: false,
+            objectMode: 'particle',
             fluxWindowFrames: this._sanitizeFluxWindowFrames(opts.fluxWindowFrames),
             attackThreshold: 0.0005,
             attackRatio: 3.0,
@@ -29,6 +42,8 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             cqtDetailsPer10Octaves: this._sanitizeCqtDetails(opts.cqtDetailsPer10Octaves),
             cqtMinHz: this._sanitizeHz(opts.cqtMinHz, DEFAULT_CQT_MIN_HZ),
             cqtMaxHz: this._sanitizeHz(opts.cqtMaxHz, DEFAULT_CQT_MAX_HZ),
+            pitchMinHz: this._sanitizeHz(opts.pitchMinHz, DEFAULT_PITCH_MIN_HZ),
+            pitchMaxHz: this._sanitizeHz(opts.pitchMaxHz, DEFAULT_PITCH_MAX_HZ),
         }
         if (this._cfg.cqtMaxHz <= this._cfg.cqtMinHz) this._cfg.cqtMaxHz = this._cfg.cqtMinHz * 1.05
 
@@ -66,6 +81,22 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._outEnvelope = new Float32Array(0)
         this._outAttackTime = new Float32Array(0)
 
+        this._brainRing = new Float32Array(PITCH_WINDOW_SAMPLES)
+        this._brainWritePos = 0
+        this._brainFill = 0
+        this._pitchHopCounter = 0
+        this._textureHopCounter = 0
+        this._rhythmHopCounter = 0
+        this._pitchWindow = new Float32Array(PITCH_WINDOW_SAMPLES)
+        this._textureWindow = new Float32Array(TEXTURE_WINDOW_SAMPLES)
+        this._rhythmWindow = new Float32Array(RHYTHM_WINDOW_SAMPLES)
+        this._pitchFftCache = this._createFftCache(PITCH_WINDOW_SAMPLES)
+        this._textureFftCache = this._createFftCache(TEXTURE_WINDOW_SAMPLES)
+        this._rhythmEnergyAvg = 0
+        this._lastFundamentalHz = 0
+        this._lastTransientFrame = 0
+        this._entityAgeMs = 0
+
         this._fluxHistory = new Float32Array(0)
         this._fluxHistorySums = new Float32Array(0)
         this._fluxHistoryWritePos = new Uint16Array(0)
@@ -82,6 +113,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._internalResolution = DEFAULT_CQT_DETAILS_PER_10_OCTAVES
         this._visualResolution = this._cfg.cqtDetailsPer10Octaves
 
+        // Boot muzzle timer: block sending unstable initial data to the UI
+        // for ~150 worklet blocks (~400ms at 44.1kHz).
+        this.bootTimer = 150
+
         this._rebuildCqtPlan()
 
         this.port.onmessage = (event) => {
@@ -96,6 +131,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._cfg.needPhase = !!cfg.needPhase
             this._cfg.needEnvelope = !!cfg.needEnvelope
             this._cfg.needAttackTime = !!cfg.needAttackTime
+            this._cfg.needPitchBrain = !!cfg.needPitchBrain
+            this._cfg.needTextureBrain = !!cfg.needTextureBrain
+            this._cfg.needRhythmBrain = !!cfg.needRhythmBrain
+            this._cfg.needTrackerBrain = !!cfg.needTrackerBrain
+            this._cfg.objectMode = (cfg.objectMode === 'cloud' || cfg.objectMode === 'tracing' || cfg.objectMode === 'lines')
+                ? cfg.objectMode
+                : 'particle'
 
             let requiresPlanRebuild = false
 
@@ -121,6 +163,12 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                 this._cfg.cqtMaxHz = nextMax
                 requiresPlanRebuild = true
             }
+
+            const nextPitchMin = this._sanitizeHz(cfg.pitchMinHz, this._cfg.pitchMinHz)
+            if (nextPitchMin !== this._cfg.pitchMinHz) this._cfg.pitchMinHz = nextPitchMin
+
+            const nextPitchMax = this._sanitizeHz(cfg.pitchMaxHz, this._cfg.pitchMaxHz)
+            if (nextPitchMax !== this._cfg.pitchMaxHz) this._cfg.pitchMaxHz = nextPitchMax
 
             if (this._cfg.cqtMaxHz <= this._cfg.cqtMinHz) {
                 this._cfg.cqtMaxHz = this._cfg.cqtMinHz * 1.05
@@ -160,6 +208,483 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const n = Number(value)
         if (!Number.isFinite(n)) return fallback
         return Math.max(8, Math.min(22050, n))
+    }
+
+    _createFftCache(size) {
+        const n = Math.max(2, Math.floor(size))
+        const rev = new Uint32Array(n)
+        const bits = Math.round(Math.log2(n))
+        for (let i = 0; i < n; i++) {
+            let x = i
+            let r = 0
+            for (let b = 0; b < bits; b++) {
+                r = (r << 1) | (x & 1)
+                x >>= 1
+            }
+            rev[i] = r
+        }
+        return {
+            size: n,
+            rev,
+            re: new Float32Array(n),
+            im: new Float32Array(n),
+            mag: new Float32Array(n / 2),
+        }
+    }
+
+    _copyBrainWindow(target) {
+        const size = target.length
+        const ring = this._brainRing
+        const ringSize = ring.length
+        let start = this._brainWritePos - size
+        if (start < 0) start += ringSize
+        for (let i = 0; i < size; i++) {
+            target[i] = ring[start]
+            start += 1
+            if (start >= ringSize) start = 0
+        }
+    }
+
+    _fftMagnitudes(cache, samples) {
+        const n = cache.size
+        const re = cache.re
+        const im = cache.im
+        const rev = cache.rev
+        const mag = cache.mag
+
+        for (let i = 0; i < n; i++) {
+            re[i] = samples[i]
+            im[i] = 0
+        }
+        for (let i = 0; i < n; i++) {
+            const j = rev[i]
+            if (j > i) {
+                const tr = re[i]
+                re[i] = re[j]
+                re[j] = tr
+                const ti = im[i]
+                im[i] = im[j]
+                im[j] = ti
+            }
+        }
+
+        for (let size = 2; size <= n; size <<= 1) {
+            const half = size >> 1
+            const step = (-2 * Math.PI) / size
+            for (let i = 0; i < n; i += size) {
+                for (let j = 0; j < half; j++) {
+                    const angle = step * j
+                    const wr = Math.cos(angle)
+                    const wi = Math.sin(angle)
+                    const k = i + j
+                    const l = k + half
+                    const tr = (wr * re[l]) - (wi * im[l])
+                    const ti = (wr * im[l]) + (wi * re[l])
+                    re[l] = re[k] - tr
+                    im[l] = im[k] - ti
+                    re[k] += tr
+                    im[k] += ti
+                }
+            }
+        }
+
+        const scale = 1 / Math.max(1, n)
+        for (let i = 0; i < mag.length; i++) {
+            const v = Math.sqrt((re[i] * re[i]) + (im[i] * im[i])) * scale
+            mag[i] = v
+        }
+        return mag
+    }
+
+    _findFundamental(mags, sampleRate, minHz, maxHz) {
+        const n = mags.length * 2
+        const minIndex = Math.max(1, Math.floor((minHz / sampleRate) * n))
+        const maxIndex = Math.min(mags.length - 2, Math.floor((maxHz / sampleRate) * n))
+        if (maxIndex <= minIndex) return 0
+
+        let peakIndex = minIndex
+        let peakValue = 0
+        for (let i = minIndex; i <= maxIndex; i++) {
+            const v = mags[i]
+            if (v > peakValue) {
+                peakValue = v
+                peakIndex = i
+            }
+        }
+        if (peakValue <= 0) return 0
+
+        const m1 = mags[peakIndex - 1] || 0
+        const m2 = mags[peakIndex]
+        const m3 = mags[peakIndex + 1] || 0
+        const denom = (m1 - (2 * m2) + m3)
+        const delta = Math.abs(denom) > 1e-9 ? (0.5 * (m1 - m3) / denom) : 0
+        const refinedIndex = peakIndex + Math.max(-0.5, Math.min(0.5, delta))
+        return (refinedIndex * sampleRate) / n
+    }
+
+    /**
+     * Find all harmonic objects in the pitch-FFT magnitudes.
+     * Scans for local maxima (peak-picking), applies parabolic interpolation,
+     * then groups overtones (k·f0) under each fundamental via comb filtering.
+     * @param {Float32Array} mags - FFT magnitudes from the Pitch brain.
+     * @param {number} sampleRate - Sample rate in Hz.
+     * @param {number} minHz - Minimum fundamental frequency.
+     * @param {number} maxHz - Maximum fundamental frequency.
+     * @param {Object} [opts]
+     * @param {number} [opts.noiseThreshold=0.01] - Minimum peak magnitude to qualify.
+     * @param {number} [opts.maxObjects=12] - Max harmonic objects to emit.
+     * @param {number} [opts.maxHarmonics=8] - Max overtones per object.
+     * @returns {Array<Object>} harmonic objects array.
+     */
+    _findHarmonicObjects(mags, sampleRate, minHz, maxHz, opts = {}) {
+        const n = mags.length * 2
+        const minIndex = Math.max(1, Math.floor((minHz / sampleRate) * n))
+        const maxIndex = Math.min(mags.length - 2, Math.floor((maxHz / sampleRate) * n))
+        const noiseThreshold = opts.noiseThreshold ?? 0.01
+        const maxObjects = opts.maxObjects ?? 12
+        const maxHarmonics = opts.maxHarmonics ?? 8
+
+        if (maxIndex <= minIndex) return []
+
+        // ── Step 1: Peak picking ───────────────────────────────────────────
+        const peaks = []
+        for (let i = minIndex; i <= maxIndex; i++) {
+            const v = mags[i]
+            if (v <= noiseThreshold) continue
+            if (v >= (mags[i - 1] || 0) && v > (mags[i + 1] || 0)) {
+                const m1 = mags[i - 1] || 0
+                const m2 = mags[i]
+                const m3 = mags[i + 1] || 0
+                const denom = (m1 - (2 * m2) + m3)
+                let subBinDelta = 0
+                if (Math.abs(denom) > 1e-12) {
+                    subBinDelta = 0.5 * (m1 - m3) / denom
+                    subBinDelta = Math.max(-0.49, Math.min(0.49, subBinDelta))
+                }
+                const refinedIndex = i + subBinDelta
+                const freqHz = (refinedIndex * sampleRate) / n
+                peaks.push({ index: refinedIndex, freqHz, magnitude: v })
+            }
+        }
+        if (peaks.length === 0) return []
+
+        // Sort by magnitude descending and take top candidates
+        peaks.sort((a, b) => b.magnitude - a.magnitude)
+        const candidates = peaks.slice(0, maxObjects * 2)
+
+        // ── Step 2: Harmonic Association (Comb Filter) ────────────────────
+        const objects = []
+        const assigned = new Set()
+
+        for (const peak of candidates) {
+            if (objects.length >= maxObjects) break
+
+            const f0 = peak.freqHz
+            // Skip if this peak is an integer multiple of an already-chosen fundamental
+            let isHarmonic = false
+            for (const obj of objects) {
+                const ratio = f0 / obj.fundamentalHz
+                if (ratio > 1.9 && ratio < 2.1) { isHarmonic = true; break }
+                if (ratio > 2.9 && ratio < 3.1) { isHarmonic = true; break }
+                if (Math.abs(Math.round(ratio) - ratio) < 0.04) { isHarmonic = true; break }
+            }
+            if (isHarmonic) continue
+
+            // ── Accumulate harmonic energy ─────────────────────────────────
+            let harmonicEnergy = peak.magnitude * peak.magnitude
+            const harmonics = []
+            const harmonicIndices = []
+
+            for (let k = 2; k <= maxHarmonics + 1; k++) {
+                const harmonicHz = f0 * k
+                if (harmonicHz > sampleRate * 0.49) break
+                const harmonicIndex = (harmonicHz / sampleRate) * n
+                const hi = Math.round(harmonicIndex)
+                if (hi < 1 || hi >= mags.length) break
+
+                const hMag = mags[hi] || 0
+                harmonicEnergy += hMag * hMag
+                harmonics.push({
+                    multiple: k,
+                    magnitude: hMag,
+                    phase: 0, // phase not computed from magnitude-only FFT
+                })
+                harmonicIndices.push(hi)
+            }
+
+            // ── Localized texture metrics ──────────────────────────────────
+            // Recompute centroid, flatness, inharmonicity over harmonic bins only
+            let centroid = 0
+            let sumMag = 0
+            let sumLog = 0
+            let flatnessCount = 0
+            let inharmSum = 0
+            let inharmWeight = 0
+
+            for (const hi of harmonicIndices) {
+                const hz = (hi * sampleRate) / n
+                const hMag = mags[hi] || 0
+                if (hMag > 0) {
+                    sumMag += hMag
+                    centroid += hz * hMag
+                    const v = Math.max(1e-12, hMag)
+                    sumLog += Math.log(v)
+                    flatnessCount++
+                    const nearestHarmonic = Math.round(hz / f0) * f0
+                    const dev = Math.abs(hz - nearestHarmonic) / Math.max(1e-6, nearestHarmonic)
+                    inharmSum += dev * hMag
+                    inharmWeight += hMag
+                }
+            }
+
+            // Add the fundamental bin itself to centroid/flatness
+            const f0Mag = Math.max(1e-12, peak.magnitude)
+            sumMag += peak.magnitude
+            centroid += f0 * peak.magnitude
+            sumLog += Math.log(f0Mag)
+            flatnessCount++
+            const nearestF0Harmonic = Math.round(f0 / f0) * f0
+            const devF0 = Math.abs(f0 - nearestF0Harmonic) / Math.max(1e-6, nearestF0Harmonic)
+            inharmSum += devF0 * peak.magnitude
+            inharmWeight += peak.magnitude
+
+            const localCentroid = sumMag > 0 ? centroid / sumMag : 0
+            const geoMean = flatnessCount > 0 ? Math.exp(sumLog / flatnessCount) : 0
+            const arithMean = sumMag / Math.max(1, flatnessCount)
+            const localFlatness = arithMean > 0 ? Math.max(0, Math.min(1, geoMean / arithMean)) : 0
+            const localInharmonicity = inharmWeight > 0 ? Math.min(1, inharmSum / inharmWeight) : 0
+            const objVolume = Math.min(1, Math.sqrt(harmonicEnergy) / Math.max(1, 1 + harmonics.length))
+
+            // MIDI note
+            const midi = 69 + 12 * Math.log2(f0 / 440)
+            const pitchMidi = Number.isFinite(midi) ? midi : 0
+            const pitchClass = ((Math.round(pitchMidi) % 12) + 12) % 12
+
+            objects.push({
+                fundamentalHz: f0,
+                pitchClass,
+                pitchMidi,
+                volume: objVolume,
+                harmonicEnergy,
+                harmonics,
+                centroid: localCentroid,
+                flatness: localFlatness,
+                inharmonicity: localInharmonicity,
+                temporalGroupId: 0, // assigned by rhythm brain
+                streamId: 0,        // assigned by tracker brain
+                entityAge: 0,
+            })
+        }
+
+        return objects
+    }
+
+    _computeCentroid(mags, sampleRate) {
+        const n = mags.length * 2
+        let sumMag = 0
+        let sumWeighted = 0
+        for (let i = 1; i < mags.length; i++) {
+            const mag = mags[i]
+            sumMag += mag
+            sumWeighted += mag * ((i * sampleRate) / n)
+        }
+        if (sumMag <= 0) return 0
+        return sumWeighted / sumMag
+    }
+
+    _computeFlatness(mags) {
+        let sum = 0
+        let sumLog = 0
+        let count = 0
+        for (let i = 1; i < mags.length; i++) {
+            const v = Math.max(1e-12, mags[i])
+            sum += v
+            sumLog += Math.log(v)
+            count += 1
+        }
+        if (count === 0) return 0
+        const mean = sum / count
+        const geo = Math.exp(sumLog / count)
+        return mean > 0 ? Math.max(0, Math.min(1, geo / mean)) : 0
+    }
+
+    _computeInharmonicity(mags, sampleRate, fundamentalHz) {
+        if (!(fundamentalHz > 0)) return 0
+        const n = mags.length * 2
+        let sum = 0
+        let sumWeight = 0
+        for (let i = 1; i < mags.length; i++) {
+            const mag = mags[i]
+            if (!(mag > 0)) continue
+            const freq = (i * sampleRate) / n
+            const harmonic = Math.max(1, Math.round(freq / fundamentalHz)) * fundamentalHz
+            const deviation = Math.abs(freq - harmonic) / Math.max(1e-6, harmonic)
+            sum += deviation * mag
+            sumWeight += mag
+        }
+        if (sumWeight <= 0) return 0
+        return Math.max(0, Math.min(1, sum / sumWeight))
+    }
+
+    _computeRms(samples) {
+        let sum = 0
+        for (let i = 0; i < samples.length; i++) {
+            const v = samples[i]
+            sum += v * v
+        }
+        return Math.sqrt(sum / Math.max(1, samples.length))
+    }
+
+    _analyzeBrains(sampleCount = 0) {
+        const cfg = this._cfg
+        const objectMode = cfg.objectMode || 'particle'
+
+        // Particle mode: skip the entire Quad-Brain pipeline.
+        // The CQT analysis (bin metrics) is already handled by _analyzeAndPost.
+        if (objectMode === 'particle') return null
+
+        // Cloud/Tracing/Lines mode: run brains
+        const needPitch = cfg.needPitchBrain || cfg.needTrackerBrain
+        const needTexture = cfg.needTextureBrain || cfg.needTrackerBrain
+        const needRhythm = cfg.needRhythmBrain
+        if (!needPitch && !needTexture && !needRhythm) return null
+        if (this._brainFill < RHYTHM_WINDOW_SAMPLES) return null
+
+        const sr = sampleRate
+        let fundamentalHz = 0
+        let fundamentalPitch = 0
+        let fundamentalNote = 0
+        let entityCentroid = 0
+        let entityFlatness = 0
+        let entityInharmonicity = 0
+        let entityVolume = 0
+        let globalTransient = 0
+        let entityAgeSec = 0
+        let streamId = 0
+        /** @type {Array} */
+        let harmonicObjects = null
+
+        if (needPitch) {
+            this._pitchHopCounter += sampleCount
+            if (this._pitchHopCounter >= PITCH_HOP_SAMPLES) {
+                this._pitchHopCounter = 0
+                if (this._brainFill >= PITCH_WINDOW_SAMPLES) {
+                    this._copyBrainWindow(this._pitchWindow)
+                    const mags = this._fftMagnitudes(this._pitchFftCache, this._pitchWindow)
+                    const minHz = Math.min(cfg.pitchMinHz, cfg.pitchMaxHz)
+                    const maxHz = Math.max(cfg.pitchMinHz, cfg.pitchMaxHz)
+
+                    // Primary fundamental (kept for backward compat with entityMetrics)
+                    fundamentalHz = this._findFundamental(mags, sr, minHz, maxHz)
+                    this._lastFundamentalHz = fundamentalHz
+
+                    // Harmonic Association: find all objects (Cloud mode)
+                    harmonicObjects = this._findHarmonicObjects(mags, sr, minHz, maxHz, {
+                        maxObjects: 12,
+                        maxHarmonics: 8,
+                    })
+                }
+            } else {
+                fundamentalHz = this._lastFundamentalHz
+            }
+        }
+
+        if (needTexture) {
+            this._textureHopCounter += sampleCount
+            if (this._textureHopCounter >= TEXTURE_HOP_SAMPLES) {
+                this._textureHopCounter = 0
+                if (this._brainFill >= TEXTURE_WINDOW_SAMPLES) {
+                    this._copyBrainWindow(this._textureWindow)
+                    const mags = this._fftMagnitudes(this._textureFftCache, this._textureWindow)
+                    entityCentroid = this._computeCentroid(mags, sr)
+                    entityFlatness = this._computeFlatness(mags)
+                    const fundamentalRef = fundamentalHz > 0 ? fundamentalHz : this._lastFundamentalHz
+                    entityInharmonicity = this._computeInharmonicity(mags, sr, fundamentalRef)
+                }
+            }
+        }
+
+        // Rhythm Brain: transient detection + temporal grouping
+        if (needRhythm) {
+            this._rhythmHopCounter += sampleCount
+            if (this._rhythmHopCounter >= RHYTHM_HOP_SAMPLES) {
+                this._rhythmHopCounter = 0
+                this._copyBrainWindow(this._rhythmWindow)
+                const energy = this._computeRms(this._rhythmWindow)
+                this._rhythmEnergyAvg = (this._rhythmEnergyAvg * 0.9) + (energy * 0.1)
+                const baseline = Math.max(1e-6, this._rhythmEnergyAvg)
+                globalTransient = Math.max(0, (energy - baseline) / baseline)
+
+                // Temporal grouping: if transient detected, assign a time-based group ID
+                if (globalTransient > 2.0) {
+                    this._lastTransientFrame = this._brainWritePos
+                }
+            }
+        }
+
+        // Tracker Brain: frame-to-frame tracking of harmonic objects
+        if (cfg.needTrackerBrain && harmonicObjects) {
+            // Simple persistence: match objects by closest fundamental
+            for (const obj of harmonicObjects) {
+                if (obj.fundamentalHz > 0) {
+                    this._entityAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
+                    obj.streamId = 1
+                    obj.entityAge = this._entityAgeMs / 1000
+                } else {
+                    obj.streamId = 0
+                    obj.entityAge = 0
+                }
+
+                // Temporal group assignment
+                if (this._lastTransientFrame > 0) {
+                    const framesSinceTransient = (this._brainWritePos - this._lastTransientFrame + this._brainRing.length) % this._brainRing.length
+                    if (framesSinceTransient < PITCH_HOP_SAMPLES * 2) {
+                        obj.temporalGroupId = this._lastTransientFrame
+                    }
+                }
+            }
+            if (fundamentalHz > 0) {
+                this._entityAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
+                streamId = 1
+            } else {
+                this._entityAgeMs = 0
+                streamId = 0
+            }
+            entityAgeSec = this._entityAgeMs / 1000
+        }
+
+        if (fundamentalHz > 0) {
+            const midi = 69 + 12 * Math.log2(fundamentalHz / 440)
+            fundamentalPitch = Number.isFinite(midi) ? midi : 0
+            fundamentalNote = ((Math.round(fundamentalPitch) % 12) + 12) % 12
+        }
+
+        if (needPitch || needTexture) {
+            if (this._brainFill >= TEXTURE_WINDOW_SAMPLES) {
+                this._copyBrainWindow(this._textureWindow)
+                entityVolume = this._computeRms(this._textureWindow)
+            }
+        }
+
+        // Send legacy entityMetrics for backward compat
+        const payload = { type: 'entityMetrics' }
+        payload.fundamentalHz = fundamentalHz
+        payload.fundamentalPitch = fundamentalPitch
+        payload.fundamentalNote = fundamentalNote
+        payload.entityCentroid = entityCentroid
+        payload.entityFlatness = entityFlatness
+        payload.entityInharmonicity = entityInharmonicity
+        payload.entityVolume = entityVolume
+        payload.globalTransient = globalTransient
+        payload.entityAge = entityAgeSec
+        payload.streamId = streamId
+
+        // In Cloud mode, also send the full harmonic objects array
+        if (objectMode === 'cloud' && harmonicObjects && harmonicObjects.length > 0) {
+            this.port.postMessage({ type: 'harmonicObjects', objects: harmonicObjects })
+        }
+
+        return payload
     }
 
     _chooseLevelForFrequency(freqHz) {
@@ -217,34 +742,9 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._decimator.reset()
     }
 
-    _flushDspState() {
-        // Clear all ring buffer audio data to prevent DSP discontinuity artifacts
-        // when CQT parameters change. This eliminates the pink noise spike that occurs
-        // when reading stale history with new transform parameters.
-        for (let level = 0; level < this._levelCount; level++) {
-            this._levelRings[level].fill(0)
-        }
-
-        // Clear all derived metric state to ensure clean phase/magnitude/flux tracking
-        this._prevMag.fill(0)
-        this._prevPhase.fill(0)
-        this._prevPhaseDelta.fill(0)
-        this._attackElapsedMs.fill(0)
-        this._attackLastMs.fill(0)
-        this._attackActive.fill(0)
-
-        // Clear all flux history to restart activity detection
-        this._fluxHistory.fill(0)
-        this._fluxHistorySums.fill(0)
-        this._fluxHistoryWritePos.fill(0)
-        this._fluxHistoryFill.fill(0)
-
-        // Skip analysis for 2 frames while buffers refill with fresh data.
-        // This prevents discontinuity artifacts when the parameter change causes
-        // a temporary mismatch between window size and buffer fill level.
-        this._framesUntilNextAnalysis = 2
-        this.rampGain = 0.0
-    }
+    // Note: explicit buffer zeroing is removed. Arrays are allocated once and
+    // are naturally zero-initialized. We use a boot muzzle to hide initial
+    // transient artifacts instead of clearing arrays mid-run.
 
     _rebuildCqtPlan() {
         const minHz = Math.max(8, this._cfg.cqtMinHz)
@@ -315,7 +815,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         this._resizeMetricBuffers(this.binCount)
         this._configureLevelRings(maxWindowByLevel, minWindowByLevel)
-        this._flushDspState()
     }
 
     _pushLevelSample(level, sample) {
@@ -337,6 +836,15 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         processInputBlockToDecimator(input, this._decimator, (level, sample) => {
             this._pushLevelSample(level, sample)
         })
+    }
+
+    _pushBrainSample(sample) {
+        const ring = this._brainRing
+        const len = ring.length
+        ring[this._brainWritePos] = sample
+        this._brainWritePos += 1
+        if (this._brainWritePos >= len) this._brainWritePos = 0
+        this._brainFill = Math.min(len, this._brainFill + 1)
     }
 
     _phaseDelta(curr, prev) {
@@ -613,6 +1121,8 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
     process(inputs, outputs) {
         const input = inputs[0]
         if (input && input.length) {
+            const channelCount = input.length
+            const sampleCount = input[0]?.length || 0
             for (let channel = 0; channel < input.length; channel++) {
                 const channelData = input[channel]
                 if (!channelData) continue
@@ -624,8 +1134,19 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                     channelData[i] *= this.rampGain
                 }
             }
+            if (sampleCount > 0) {
+                for (let i = 0; i < sampleCount; i++) {
+                    let sum = 0
+                    for (let channel = 0; channel < channelCount; channel++) {
+                        sum += input[channel][i] || 0
+                    }
+                    this._pushBrainSample(sum / Math.max(1, channelCount))
+                }
+            }
             this._pushSamples(input)
             this._analyzeAndPost()
+            const brainPayload = this._analyzeBrains(sampleCount)
+            if (brainPayload) this.port.postMessage(brainPayload)
         }
         return true
     }

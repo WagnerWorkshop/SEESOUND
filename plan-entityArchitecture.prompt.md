@@ -49,7 +49,7 @@ Rewrite the audio pipeline to use a Quad-Brain architecture (Pitch, Rhythm, Text
 1. Output `console.log()` representing extracted `entityRootPitch` in the console during music playback to verify Parabolic Interpolation.
 2. Verify visual UI: "New project" prompts for name.
 3. Verify visual UI: Styles menu contains a drag/drop capable Entities list.
-4. Verify visual UI: Definitions/Rules popup limits available rules based on the selected Shape Type.
+4. Verify visual UI: Definitions/Rules popup limits available rules based on the selected Type.
 5. Test Audio Engine logic to ensure FFT/Features skip derivations entirely if no Entity/Rule uses them.
 
 **Decisions**

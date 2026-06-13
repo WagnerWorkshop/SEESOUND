@@ -19,12 +19,13 @@ import {
     getRuleVariablesByGroup,
     getRuleVariableById,
 } from './ui/UiText.js'
+import { getOutputDictionary } from './rules/RuleDictionary.js'
 import noUiSlider from 'nouislider'
 import 'nouislider/dist/nouislider.css'
 import menuFileIcon from '../icons/menu-file.svg?raw'
 import menuViewIcon from '../icons/menu-view.svg?raw'
 import menuSettingsIcon from '../icons/menu-settings.svg?raw'
-import menuRulesIcon from '../icons/menu-rules.svg?raw'
+import menuStylesIcon from '../icons/menu-styles.svg?raw'
 import closeIcon from '../icons/close.svg?raw'
 import loadIcon from '../icons/load.svg?raw'
 import saveIcon from '../icons/save.svg?raw'
@@ -55,10 +56,9 @@ const MENU_ITEMS = Object.freeze([
     { id: 'start', label: UI_TEXT.menu.start || UI_TEXT.menu.file },
     { id: 'view', label: UI_TEXT.menu.view },
     { id: 'settings', label: UI_TEXT.menu.settings },
-    { id: 'rules', label: UI_TEXT.menu.rules },
+    { id: 'rules', label: UI_TEXT.menu.styles || UI_TEXT.menu.rules },
 ])
 
-const FFT_OPTIONS = Object.freeze([512, 1024, 2048, 4096, 8192, 16384])
 
 function getSettingsTooltip(key, fallback = '') {
     const value = UI_TEXT?.settings?.tooltips?.[key]
@@ -114,6 +114,30 @@ const SETTINGS_SLIDERS = Object.freeze([
         max: 64,
         step: 1,
         tooltip: getSettingsTooltip('fluxWindowFrames', 'Flux Window Frames. Rolling frame window for activity averaging.'),
+    },
+    {
+        key: 'foresight',
+        label: 'Foresight',
+        min: 0,
+        max: 5,
+        step: 0.1,
+        tooltip: 'Audio feature lookahead window in seconds. Only used in Interval time mode.',
+    },
+    {
+        key: 'delay',
+        label: 'Delay',
+        min: 0,
+        max: 2,
+        step: 0.01,
+        tooltip: 'Delay in seconds before audio features are applied to visuals.',
+    },
+    {
+        key: 'trackingInterval',
+        label: 'Tracking Interval',
+        min: 0.1,
+        max: 2,
+        step: 0.1,
+        tooltip: 'Update cadence in seconds for Interval time mode.',
     },
 ])
 
@@ -227,10 +251,18 @@ const SETTINGS_RANGES = Object.freeze([
 ])
 
 const FIXED_RULE_ROWS = Object.freeze([
+    // Cloud Positions
+    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
+    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
+    { target: 'spawnedParticles', section: 'Cloud Fundamental', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], sectionLabel: 'Fundamental position' },
+    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
+    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
+    { target: 'allParticles', section: 'Cloud Harmonic', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], sectionLabel: 'Harmonics position' },
+
     // Light Particles
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X' },
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'y', label: 'Y' },
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'z', label: 'Z' },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['particle'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['particle'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['particle'] },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'shapeType', label: 'Shape', type: 'enum', options: ['circle', 'square'] },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
@@ -289,7 +321,7 @@ const MENU_ICON_MAP = Object.freeze({
     start: menuFileIcon,
     view: menuViewIcon,
     settings: menuSettingsIcon,
-    rules: menuRulesIcon,
+    rules: menuStylesIcon,
 })
 
 const BUTTON_ICON_MAP = Object.freeze({
@@ -581,6 +613,16 @@ function appendExpressionPartsFromNode(node, parts) {
     if (element.classList?.contains('cp-rule-inline-slot')) {
         const slotLabel = String(element.getAttribute('data-slot-label') || 'value').trim() || 'value'
         parts.push(`${RULE_SLOT_MARKER}${slotLabel}`)
+        return
+    }
+    if (element.classList?.contains('cp-rule-inline-slider')) {
+        const sliderId = String(element.getAttribute('data-slider-id') || '')
+        if (sliderId) {
+            // Serialize slider as its current numeric value for the expression
+            const numEl = element.querySelector('.cp-inline-slider-value')
+            const val = numEl ? parseFloat(numEl.value) : 0
+            if (Number.isFinite(val)) parts.push(String(val))
+        }
         return
     }
     if (element.tagName === 'BR') {
@@ -970,27 +1012,42 @@ function createTokenInsertSelect(selected = '') {
     return select
 }
 
-function createRuleTokenValueSelect(selected = '') {
+function createRuleTokenValueSelect(selected = '', allowedVariableIds = null) {
+    const allowedSet = Array.isArray(allowedVariableIds) ? new Set(allowedVariableIds)
+        : (allowedVariableIds instanceof Set ? allowedVariableIds : null)
+    const filterAllowed = (entries) => (allowedSet ? entries.filter((entry) => allowedSet.has(entry.id)) : entries)
     const select = el('select', 'cp-input-select cp-rule-token-action-select cp-rule-token-value-select')
     select.appendChild(el('option', '', { value: '', text: getRuleText('ruleAudioData', 'Audio data') }))
 
     const detailGroup = document.createElement('optgroup')
-    detailGroup.label = UI_TEXT.rules.detailVariables
-    for (const entry of getRuleVariablesByGroup('detail')) {
+    detailGroup.label = getRuleText('detailVariables', 'Detail Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('detail'))) {
         const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
         option.title = getRuleVariableTooltip(entry)
         detailGroup.appendChild(option)
     }
 
     const overallGroup = document.createElement('optgroup')
-    overallGroup.label = UI_TEXT.rules.overallVariables
-    for (const entry of getRuleVariablesByGroup('overall')) {
+    overallGroup.label = getRuleText('overallVariables', 'Overall Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('overall'))) {
         const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
         option.title = getRuleVariableTooltip(entry)
         overallGroup.appendChild(option)
     }
 
-    select.append(detailGroup, overallGroup)
+    const entityGroup = document.createElement('optgroup')
+    entityGroup.label = getRuleText('entityVariables', 'Entity Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+        const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
+        option.title = getRuleVariableTooltip(entry)
+        entityGroup.appendChild(option)
+    }
+
+    const groups = []
+    if (detailGroup.childNodes.length > 0) groups.push(detailGroup)
+    if (overallGroup.childNodes.length > 0) groups.push(overallGroup)
+    if (entityGroup.childNodes.length > 0) groups.push(entityGroup)
+    select.append(...groups)
     if (selected) select.value = selected
     applySelectedOptionTooltip(select)
     return select
@@ -1049,6 +1106,107 @@ function createRuleExpressionPill(variableId) {
     })
     pill.textContent = variable?.label || id
     return pill
+}
+
+function createRuleInlineSlider(sliderId, minVal, maxVal, currentVal, labelHint) {
+    const wrapper = el('span', 'cp-rule-inline-slider', {
+        'data-slider-id': sliderId,
+        contenteditable: 'false',
+    })
+    // Min endpoint (editable)
+    const minInput = el('input', 'cp-inline-slider-endpoint', {
+        type: 'number', step: 'any',
+        value: String(minVal),
+    })
+    // Max endpoint (editable)
+    const maxInput = el('input', 'cp-inline-slider-endpoint', {
+        type: 'number', step: 'any',
+        value: String(maxVal),
+    })
+    // Range slider
+    const range = el('input', 'cp-input-range cp-inline-slider-range', {
+        type: 'range',
+        min: minVal, max: maxVal, step: 'any',
+        value: String(currentVal),
+    })
+    // Value number
+    const num = el('input', 'cp-input-number cp-inline-slider-value', {
+        type: 'number', step: '0.1',
+        value: String(currentVal),
+    })
+
+    const syncRange = () => {
+        const mn = parseFloat(minInput.value)
+        const mx = parseFloat(maxInput.value)
+        if (Number.isFinite(mn) && Number.isFinite(mx) && mx > mn) {
+            range.min = mn; range.max = mx
+        }
+        range.value = String(parseFloat(num.value) || parseFloat(mn + (mx - mn) * 0.5) || 0)
+    }
+    const syncVal = () => {
+        const rv = parseFloat(range.value)
+        if (Number.isFinite(rv)) { num.value = String(rv) }
+    }
+    minInput.addEventListener('change', () => { syncRange(); syncVal() })
+    maxInput.addEventListener('change', () => { syncRange(); syncVal() })
+    range.addEventListener('input', syncVal)
+
+    // Right-click context menu for tuner management
+    wrapper.addEventListener('contextmenu', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+
+        const existingMenu = wrapper.querySelector('.cp-slider-context-menu')
+        if (existingMenu) existingMenu.remove()
+
+        const tuners = Array.isArray(params.tuners) ? params.tuners : []
+        const isTuner = tuners.some(t => t.id === sliderId)
+        wrapper.classList.toggle('is-tuner', isTuner)
+
+        const menu = el('div', 'cp-slider-context-menu')
+        menu.style.position = 'fixed'
+        menu.style.left = `${e.clientX}px`
+        menu.style.top = `${e.clientY}px`
+
+        const tunerItem = el('button', 'cp-slider-context-item', {
+            type: 'button',
+            text: isTuner ? 'Remove Tuner' : 'Assign as Tuner',
+        })
+        tunerItem.addEventListener('click', () => {
+            menu.remove()
+            const currentTuners = Array.isArray(params.tuners) ? [...params.tuners] : []
+            if (isTuner) {
+                set('tuners', currentTuners.filter(t => t.id !== sliderId))
+                wrapper.classList.remove('is-tuner')
+            } else {
+                const mn = parseFloat(minInput.value) || 0
+                const mx = parseFloat(maxInput.value) || 1
+                currentTuners.push({
+                    id: sliderId,
+                    sliderId: sliderId,
+                    label: labelHint || `Slider ${sliderId.slice(-4)}`,
+                    min: mn,
+                    max: mx,
+                    step: 0.01,
+                    defaultValue: parseFloat(num.value) || mn + (mx - mn) * 0.5,
+                    value: parseFloat(num.value) || mn + (mx - mn) * 0.5,
+                })
+                set('tuners', currentTuners)
+                wrapper.classList.add('is-tuner')
+            }
+        })
+
+        menu.append(tunerItem, showOriginalItem)
+        document.body.appendChild(menu)
+
+        const closeMenu = (ev) => {
+            if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) }
+        }
+        setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
+    })
+
+    wrapper.append(minInput, range, num, maxInput)
+    return wrapper
 }
 
 function appendExpressionTextTokens(editor, text) {
@@ -1478,7 +1636,40 @@ function renderTokenEditor(rowState) {
             text: getRuleText('pillMenuDelete', 'Delete'),
         })
 
-        menu.append(changeBtn, duplicateBtn, deleteBtn)
+        const sliderBtn = el('button', 'cp-rule-pill-context-item', {
+            type: 'button', role: 'menuitem',
+            text: 'Replace with Slider',
+        })
+        sliderBtn.addEventListener('click', () => {
+            const targetPill = getTargetPill()
+            if (!targetPill) { hidePillContextMenu(); return }
+            const id = String(targetPill.getAttribute('data-rule-var-id') || '').trim()
+            if (!id) { hidePillContextMenu(); return }
+            // Determine default range from the variable definition
+            const vdef = getRuleVariableById(id)
+            const mn = (vdef && Array.isArray(vdef.range)) ? vdef.range[0] : 0
+            const mx = (vdef && Array.isArray(vdef.range)) ? vdef.range[1] : 1
+            const mid = mn + (mx - mn) * 0.5
+            const sliderId = `slider-${Date.now()}`
+            const labelHint = (vdef?.label || vdef?.id || id).replace(/([A-Z])/g, ' $1').trim()
+            const slider = createRuleInlineSlider(sliderId, mn, mx, mid, labelHint)
+            targetPill.replaceWith(slider)
+            hidePillContextMenu()
+            // Save tuner metadata
+            const tuners = Array.isArray(params.tuners) ? [...params.tuners] : []
+            tuners.push({
+                id: sliderId,
+                ruleId: rowState.definition?.id || '',
+                label: id,
+                min: mn, max: mx, step: 0.01,
+                defaultValue: mid,
+                expression: id,
+            })
+            set('tuners', tuners)
+            rowState.onExpressionChanged?.()
+        })
+
+        menu.append(changeBtn, duplicateBtn, sliderBtn, deleteBtn)
         document.body.appendChild(menu)
 
         const getTargetPill = () => {
@@ -1731,27 +1922,42 @@ function createRuleVariableSelect(group, selected = NONE_VAR) {
     return select
 }
 
-function createRuleConditionInputSelect(selected = NONE_VAR) {
+function createRuleConditionInputSelect(selected = NONE_VAR, allowedVariableIds = null) {
+    const allowedSet = Array.isArray(allowedVariableIds) ? new Set(allowedVariableIds)
+        : (allowedVariableIds instanceof Set ? allowedVariableIds : null)
+    const filterAllowed = (entries) => (allowedSet ? entries.filter((entry) => allowedSet.has(entry.id)) : entries)
     const select = el('select', 'cp-input-select')
     select.appendChild(el('option', '', { value: NONE_VAR, text: UI_TEXT.rules.selectValue }))
 
     const detailGroup = document.createElement('optgroup')
-    detailGroup.label = UI_TEXT.rules.detailVariables
-    for (const entry of getRuleVariablesByGroup('detail')) {
+    detailGroup.label = getRuleText('detailVariables', 'Detail Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('detail'))) {
         const option = el('option', '', { value: entry.id, text: entry.label })
         option.title = getRuleVariableTooltip(entry)
         detailGroup.appendChild(option)
     }
 
     const overallGroup = document.createElement('optgroup')
-    overallGroup.label = UI_TEXT.rules.overallVariables
-    for (const entry of getRuleVariablesByGroup('overall')) {
+    overallGroup.label = getRuleText('overallVariables', 'Overall Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('overall'))) {
         const option = el('option', '', { value: entry.id, text: entry.label })
         option.title = getRuleVariableTooltip(entry)
         overallGroup.appendChild(option)
     }
 
-    select.append(detailGroup, overallGroup)
+    const entityGroup = document.createElement('optgroup')
+    entityGroup.label = getRuleText('entityVariables', 'Entity Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+        const option = el('option', '', { value: entry.id, text: entry.label })
+        option.title = getRuleVariableTooltip(entry)
+        entityGroup.appendChild(option)
+    }
+
+    const groups = []
+    if (detailGroup.childNodes.length > 0) groups.push(detailGroup)
+    if (overallGroup.childNodes.length > 0) groups.push(overallGroup)
+    if (entityGroup.childNodes.length > 0) groups.push(entityGroup)
+    select.append(...groups)
     if (selected && selected !== NONE_VAR) select.value = selected
     applySelectedOptionTooltip(select)
     return select
@@ -1916,7 +2122,7 @@ export function initControlPanel(container) {
         el, UI_TEXT, BUTTON_ICON_MAP, params, set, setMany, resetToDefaults, clamp,
         applyButtonIcon, applyIconOnlyButton, applySelectedOptionTooltip,
         hslToRgb, rgbToHex, hexToHsl, createSelectOptions, registerSync,
-        FFT_OPTIONS, SETTINGS_SLIDERS, SETTINGS_RANGES,
+        SETTINGS_SLIDERS, SETTINGS_RANGES,
         NONE_VAR, RULE_OPERATORS, FIXED_RULE_ROWS, RULE_VARIABLE_ID_SET,
         RULE_SLOT_MARKER_REGEX, getRuleText, getRuleSectionLabel,
         getRuleSubgroupLabel, getRuleRowLabel, getRuleVariableById,
@@ -1928,12 +2134,13 @@ export function initControlPanel(container) {
         insertFunctionTemplateAtCursor, removeTrailingQueryAtCursor,
         getAutocompleteQueryAtCursor, replaceActiveSlotWithText,
         createRuleTokenValueSelect, createRuleFunctionSelect,
-        createRuleExpressionPill, normalizeToken,
+        createRuleExpressionPill, createRuleInlineSlider, normalizeToken,
         readExpressionToCursor, getRuleFunctionParamSlots,
-        getRuleFunctionName, getRuleFunctionSlotLabel
+        getRuleFunctionName, getRuleFunctionSlotLabel,
+        getOutputDictionary,
     };
 
-    buildFileMenu(menuPanes.get('start').body, deps);
+    buildFileMenu(menuPanes.get('start').body, syncRegistry, deps);
     buildViewMenu(menuPanes.get("view").body, syncRegistry, deps);
     buildSettingsMenu(menuPanes.get("settings").body, syncRegistry, deps);
     buildRulesMenu(menuPanes.get("rules").body, syncRegistry, deps);
