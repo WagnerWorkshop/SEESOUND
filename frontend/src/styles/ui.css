@@ -697,6 +697,7 @@ input[type=number]::-webkit-inner-spin-button {
     gap: var(--gap-m);
     position: relative;
     min-height: 0;
+    height: 100%;
     flex: 1;
 }
 
@@ -1025,6 +1026,16 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 .cp-spacing-select {
+    display: block;
+    margin-top: var(--gap-xs);
+}
+
+.cp-cloud-shape-label {
+    display: block;
+    margin-top: var(--gap-xs);
+}
+
+.cp-cloud-shape-select {
     display: block;
     margin-top: var(--gap-xs);
 }
@@ -2284,6 +2295,7 @@ input[type=number]::-webkit-inner-spin-button {
 .cp-rules-popup {
     position: absolute;
     inset: 0;
+    height: 100%;
     background: transparent;
     display: none;
     align-items: stretch;

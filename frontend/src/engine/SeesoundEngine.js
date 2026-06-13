@@ -296,28 +296,18 @@ export class SeesoundEngine {
             if (harmonicObjects) {
                 this._graphSolver.sync(harmonicObjects)
                 // Read modifier outputs from the particle system's compiled rule state
-                let cGrav = 1, lowGrav = 0, highGrav = 0
-                let leftGrav = 0, rightGrav = 0
-                let pullMul = 1, pushMul = 1
+                let repMul = 1, cgMul = 1, tenMul = 1
                 if (sys.cloudNetworkModifiers) {
                     const m = sys.cloudNetworkModifiers
-                    if (Number.isFinite(m.centralGravity)) cGrav = Math.max(0, Math.min(1, m.centralGravity))
-                    if (Number.isFinite(m.lowGravity)) lowGrav = Math.max(0, Math.min(1, m.lowGravity))
-                    if (Number.isFinite(m.highGravity)) highGrav = Math.max(0, Math.min(1, m.highGravity))
-                    if (Number.isFinite(m.leftGravity)) leftGrav = Math.max(0, Math.min(1, m.leftGravity))
-                    if (Number.isFinite(m.rightGravity)) rightGrav = Math.max(0, Math.min(1, m.rightGravity))
-                    if (Number.isFinite(m.pullForce)) pullMul = Math.max(0, Math.min(1, m.pullForce))
-                    if (Number.isFinite(m.pushForce)) pushMul = Math.max(0, Math.min(1, m.pushForce))
+                    if (Number.isFinite(m.repulsion)) repMul = Math.max(0, Math.min(1, m.repulsion))
+                    if (Number.isFinite(m.centerGravity)) cgMul = Math.max(0, Math.min(1, m.centerGravity))
+                    if (Number.isFinite(m.tension)) tenMul = Math.max(0, Math.min(1, m.tension))
                 }
                 this._graphSolver.step({
                     deltaTime: 1 / 60,
-                    centralGravity: cGrav,
-                    lowGravity: lowGrav,
-                    highGravity: highGrav,
-                    leftGravity: leftGrav,
-                    rightGravity: rightGrav,
-                    pullForce: pullMul,
-                    pushForce: pushMul,
+                    repulsion: repMul,
+                    centerGravity: cgMul,
+                    tension: tenMul,
                 })
                 this._graphPositions = this._graphSolver.getAllPositions()
                 // Emit positions for main.js / particle system to consume

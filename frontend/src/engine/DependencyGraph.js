@@ -71,19 +71,15 @@ const MODE_GATED_VARS = new Map([
     ['streamId', new Set(['cloud'])],
     ['globalTransient', new Set(['cloud'])],
     // Output variables gated by mode
-    // Cloud coordinates (aura) mode outputs
-    ['auraAngle', new Set(['cloud'])],
+    // Cloud aura mode outputs
     ['auraDistance', new Set(['cloud'])],
-    ['auraHeight', new Set(['cloud'])],
-    ['auraSpread', new Set(['cloud'])],
+    ['auraAngle', new Set(['cloud'])],
+    ['auraElevation', new Set(['cloud'])],
+    ['auraLatitude', new Set(['cloud'])],
     // Cloud network mode outputs
-    ['centralGravity', new Set(['cloud'])],
-    ['lowGravity', new Set(['cloud'])],
-    ['highGravity', new Set(['cloud'])],
-    ['leftGravity', new Set(['cloud'])],
-    ['rightGravity', new Set(['cloud'])],
-    ['pullForce', new Set(['cloud'])],
-    ['pushForce', new Set(['cloud'])],
+    ['repulsion', new Set(['cloud'])],
+    ['centerGravity', new Set(['cloud'])],
+    ['tension', new Set(['cloud'])],
     ['particleCount', new Set(['particle'])],
 ])
 
@@ -367,17 +363,13 @@ export function getOutputsForMode(mode, cloudNetwork = false) {
     ])
 
     if (mode === 'cloud') {
-        outputs.add('auraAngle')
         outputs.add('auraDistance')
-        outputs.add('auraHeight')
-        outputs.add('auraSpread')
-        outputs.add('centralGravity')
-        outputs.add('lowGravity')
-        outputs.add('highGravity')
-        outputs.add('leftGravity')
-        outputs.add('rightGravity')
-        outputs.add('pullForce')
-        outputs.add('pushForce')
+        outputs.add('auraAngle')
+        outputs.add('auraElevation')
+        outputs.add('auraLatitude')
+        outputs.add('repulsion')
+        outputs.add('centerGravity')
+        outputs.add('tension')
     }
 
     return outputs

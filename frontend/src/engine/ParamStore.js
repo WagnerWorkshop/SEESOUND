@@ -61,6 +61,9 @@ function _coerceRuleEntity(raw, index) {
     const spacingMode = entityShapeType === 'cloud'
         ? (source.spacingMode === 'network' ? 'network' : 'coordinates')
         : 'coordinates'
+    const cloudShape = entityShapeType === 'cloud'
+        ? (source.cloudShape === 'spherical' || source.cloudShape === 'random' ? source.cloudShape : 'cylindrical')
+        : 'cylindrical'
     const definitions = Array.isArray(source.definitions) ? source.definitions.map((def, defIndex) => {
         if (typeof def === 'string') return { id: `def-${index + 1}-${defIndex + 1}`, name: def, expression: '' }
         if (!def || typeof def !== 'object') return null
@@ -78,6 +81,7 @@ function _coerceRuleEntity(raw, index) {
         definitionsMode,
         entityShapeType,
         spacingMode,
+        cloudShape,
         definitions,
         rules: ruleSanitization.ruleBlocks,
     }

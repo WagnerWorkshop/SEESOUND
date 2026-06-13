@@ -86,6 +86,13 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         return entity?.spacingMode || 'coordinates'
     }
 
+    function getActiveEntityCloudShape() {
+        if (activeOwner.type !== 'entity') return 'cylindrical'
+        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
+        if (entity?.entityShapeType !== 'cloud') return 'cylindrical'
+        return entity?.cloudShape || 'cylindrical'
+    }
+
     function getAllowedTargetsForOwner() {
         if (activeOwner.type === 'background') return new Set(['background'])
         if (activeOwner.type === 'camera') return new Set(['camera'])
@@ -107,6 +114,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         if (shape === 'cloud' && Array.isArray(definition?.spacingModes)) {
             const spacing = getActiveEntitySpacingMode()
             if (!definition.spacingModes.includes(spacing)) return false
+        }
+        // Cloud shape gating (only for cloud aura rules)
+        if (shape === 'cloud' && Array.isArray(definition?.cloudShapes)) {
+            const cloudShape = getActiveEntityCloudShape()
+            if (!definition.cloudShapes.includes(cloudShape)) return false
         }
         return true
     }
@@ -364,6 +376,26 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, spacingMode: nextMode } : entry))
             setRuleEntities(nextEntities)
         })
+
+        // Cloud shape selector (only for cloud entities)
+        const cloudShapeSelect = el('select', 'cp-input-select cp-cloud-shape-select')
+        cloudShapeSelect.appendChild(createSelectOptions([
+            { value: 'cylindrical', label: UI_TEXT.rules?.cloudCylindrical || 'Cylindrical' },
+            { value: 'spherical', label: UI_TEXT.rules?.cloudSpherical || 'Spherical' },
+            { value: 'random', label: UI_TEXT.rules?.cloudRandom || 'Random 3D' },
+        ], entity.cloudShape || 'cylindrical'))
+        cloudShapeSelect.style.display = entity.entityShapeType === 'cloud' ? '' : 'none'
+        shapeSelect.addEventListener('change', () => {
+            const isCloud = shapeSelect.value === 'cloud'
+            spacingSelect.style.display = isCloud ? '' : 'none'
+            cloudShapeSelect.style.display = isCloud ? '' : 'none'
+        })
+        cloudShapeSelect.addEventListener('change', () => {
+            const nextShape = String(cloudShapeSelect.value || 'cylindrical')
+            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, cloudShape: nextShape } : entry))
+            setRuleEntities(nextEntities)
+        })
+
         header.append(
             el('label', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Entity Name' }),
             nameInput,
@@ -371,6 +403,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             shapeSelect,
             el('label', 'cp-setting-label cp-spacing-label', { text: UI_TEXT.rules?.spacingMode || 'Spacing' }),
             spacingSelect,
+            el('label', 'cp-setting-label cp-cloud-shape-label', { text: UI_TEXT.rules?.cloudShape || 'Cloud Shape' }),
+            cloudShapeSelect,
         )
         popupMeta.appendChild(header)
 
@@ -809,28 +843,20 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 return '0.05–32'
             case 'angleOfView':
                 return '20°–120°'
-            case 'auraAngle':
-                return 'normalized 0–1'
             case 'auraDistance':
                 return 'normalized 0–1'
-            case 'auraHeight':
-                return 'normalized 0–1'
-            case 'auraSpread':
-                return 'scatter radius'
-            case 'centralGravity':
+            case 'auraAngle':
+                return 'nrmlzd 0–1'
+            case 'auraElevation':
+                return 'nrmlzd 0–1'
+            case 'auraLatitude':
+                return 'nrmlzd 0–1'
+            case 'repulsion':
+                return '0–1 push'
+            case 'centerGravity':
                 return '0–1 attract'
-            case 'lowGravity':
-                return '0–1 downward'
-            case 'highGravity':
-                return '0–1 upward'
-            case 'leftGravity':
-                return '0–1 left'
-            case 'rightGravity':
-                return '0–1 right'
-            case 'pullForce':
-                return '0–1 tension'
-            case 'pushForce':
-                return '0–1 repulsion'
+            case 'tension':
+                return '0–1 spring'
             default:
                 return ''
         }

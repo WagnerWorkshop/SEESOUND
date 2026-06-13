@@ -136,19 +136,15 @@ const _outputEntries = [
     { id: 'direction', type: 'enum', values: ['x', 'y', 'z'], targets: ['lines'], modes: ['particle', 'cloud'] },
     { id: 'thickness', type: 'number', range: [0, 64], targets: ['lines'], modes: ['particle', 'cloud'] },
     { id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines'], modes: ['particle', 'cloud'] },
-    // Cloud-mode only outputs — Coordinates (aura)
-    { id: 'auraAngle', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    // Cloud-mode only outputs — Aura positioning (available in both spacing modes)
     { id: 'auraDistance', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'auraHeight', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'auraSpread', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    // Cloud-mode only outputs — Network modifiers
-    { id: 'centralGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'lowGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'highGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'leftGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'rightGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'pullForce', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
-    { id: 'pushForce', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraAngle', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraElevation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'auraLatitude', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    // Cloud-mode only outputs — Network force modifiers
+    { id: 'repulsion', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'centerGravity', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
+    { id: 'tension', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
 ]
 
 export const RULE_TARGETS = Object.freeze(['spawnedParticles', 'allParticles', 'lines', 'background', 'camera'])

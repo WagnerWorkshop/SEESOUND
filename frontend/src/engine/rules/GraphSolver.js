@@ -1,15 +1,17 @@
 /**
  * SEESOUND v1.0 — GraphSolver.js
  * ═══════════════════════════════════════════════════════════════════════════
- * Force-Directed Graph layout for Cloud-mode entities.
+ * Force-Directed Graph layout for Cloud-mode entities (network spacing).
  *
- * When cloud spacing is set to "network", the GraphSolver assigns
- * pairwise forces between harmonic objects:
- *   - PULL force between objects that share harmonics (same fundamental
- *     or harmonic multiple relationship).
- *   - PUSH force between everything else.
+ * Three simple forces:
+ *   - **Repulsion ("Personal Space")**: Every fundamental inherently pushes
+ *     every other fundamental away (electrostatic / overlap prevention).
+ *   - **Center Gravity ("Stage Anchor")**: A gentle pull toward (0,0,0) so
+ *     nodes don't drift into the void.
+ *   - **Tension ("Musical Tie")**: A spring between fundamentals that share a
+ *     harmonic relationship (same fundamental ±20¢ or harmonic multiple).
  *
- * Positions are updated via simple spring-damper integration each frame.
+ * Damping, velocity clamping, soft locks — all automatic.
  *
  * @module GraphSolver
  */
@@ -30,27 +32,26 @@
  */
 
 const DEFAULT_CONFIG = Object.freeze({
-    /** Spring constant for pull (shared harmonics). */
-    pullStiffness: 0.002,
-    /** Spring constant for push (no shared harmonics). */
-    pushStiffness: 0.0008,
-    /** Rest length for pull connections. */
-    pullRestLength: 40,
-    /** Rest length for push connections (push wants separation). */
-    pushRestLength: 120,
+    /** Base repulsion stiffness per unit distance. */
+    repulsionStiffness: 0.0015,
+    /** Repulsion rest radius — nodes closer than this get pushed apart harder. */
+    repulsionRadius: 30,
+    /** Maximum repulsion force per pair per frame. */
+    maxRepulsion: 6,
+    /** Tension spring constant (shared harmonics). */
+    tensionStiffness: 0.003,
+    /** Tension rest length — harmonic nodes want to stay this far apart. */
+    tensionRestLength: 50,
     /** Damping factor (0-1). */
-    damping: 0.85,
-    /** Maximum force per frame to prevent explosion. */
-    maxForce: 8,
-    /** Center-attractor strength (pulls all nodes toward origin). */
-    centerGravity: 0.0005,
+    damping: 0.88,
+    /** Maximum force per frame (global clamp). */
+    maxForce: 10,
+    /** Base center-gravity strength. */
+    centerGravityBase: 0.0006,
     /** Velocity clamp per frame. */
-    maxVelocity: 20,
-    /** Z-spread range. */
-    zSpread: 60,
-    /** Repulsion at very short distances (avoid overlap). */
-    repulsionRadius: 15,
-    repulsionStrength: 0.01,
+    maxVelocity: 25,
+    /** Z-spread for initial positions. */
+    zSpread: 80,
 })
 
 export class GraphSolver {
@@ -129,77 +130,88 @@ export class GraphSolver {
     }
 
     /**
-     * Check whether two stream IDs share a harmonic relationship.
+     * Check whether two stream IDs share a musical relationship.
+     * Returns true if:
+     *   - They have the same fundamental frequency (same harmonic group), OR
+     *   - Their pitch classes are related by a consonant musical interval
+     *     (unison, perfect fifth, perfect fourth, major/minor third, or octave).
      * @param {number} a
      * @param {number} b
      * @returns {boolean}
      */
     _shareHarmonics(a, b) {
+        // Quick check: same harmonic group (same fundamental)
         for (const [, ids] of this._harmonicGroups) {
             if (ids.has(a) && ids.has(b)) return true
         }
-        return false
+        // Musical interval check: pitch class difference
+        const nodeA = this.nodes.get(a)
+        const nodeB = this.nodes.get(b)
+        if (!nodeA || !nodeB) return false
+        const pcDiff = Math.abs((nodeA.pitchClass || 0) - (nodeB.pitchClass || 0))
+        const interval = Math.min(pcDiff, 12 - pcDiff)
+        // Consonant intervals: unison (0), minor third (3), major third (4),
+        // perfect fourth (5), perfect fifth (7), octave (0→12).
+        return interval === 0 || interval === 3 || interval === 4 || interval === 5 || interval === 7
     }
 
     /**
      * Run one frame of the force simulation.
-     * Updates the X/Y/Z coordinates of all nodes in-place.
+     * Three forces, all scaled by user-defined rules:
+     *   - **Repulsion**: every node pushes every other node away.
+     *   - **Center Gravity**: gentle pull toward origin.
+     *   - **Tension (Musical Tie)**: spring between harmonically related nodes only.
+     *
      * @param {Object} [options]
      * @param {number} [options.deltaTime] - Frame delta in seconds (default 1/60).
-     * @param {number} [options.centralGravity] - Rule-driven center pull (0-1, default 1).
-     * @param {number} [options.lowGravity] - Rule-driven downward pull (0-1, default 0).
-     * @param {number} [options.highGravity] - Rule-driven upward pull (0-1, default 0).
-     * @param {number} [options.leftGravity] - Rule-driven left pull (0-1, default 0).
-     * @param {number} [options.rightGravity] - Rule-driven right pull (0-1, default 0).
-     * @param {number} [options.pullForce] - Rule-driven tension for shared-harmonics nodes (0-1, default 1).
-     * @param {number} [options.pushForce] - Rule-driven repulsion for non-shared nodes (0-1, default 1).
+     * @param {number} [options.repulsion] - Rule-driven repulsion multiplier (0-1, default 1).
+     * @param {number} [options.centerGravity] - Rule-driven center gravity multiplier (0-1, default 1).
+     * @param {number} [options.tension] - Rule-driven tension multiplier for harmonic ties (0-1, default 1).
      */
     step(options = {}) {
         const cfg = this.config
         const dt = options.deltaTime ?? (1 / 60)
-        const cGrav = options.centralGravity ?? 1
-        const lowGrav = options.lowGravity ?? 0
-        const highGrav = options.highGravity ?? 0
-        const leftGrav = options.leftGravity ?? 0
-        const rightGrav = options.rightGravity ?? 0
-        const pullMul = options.pullForce ?? 1
-        const pushMul = options.pushForce ?? 1
+        const repMul = options.repulsion ?? 1
+        const cgMul = options.centerGravity ?? 1
+        const tenMul = options.tension ?? 1
 
         const nodes = [...this.nodes.values()]
-        if (nodes.length < 2) {
-            // Single node or none — just apply gravity modifiers
-            for (const node of nodes) {
-                node.vx += -node.x * cfg.centerGravity * cGrav
-                node.vy += -node.y * cfg.centerGravity * cGrav + lowGrav * 0.5 - highGrav * 0.5
-                node.vz += -node.z * cfg.centerGravity * 0.5 * cGrav
-                // Directional gravity
-                node.vx += (rightGrav - leftGrav) * 2
-                node.vy += (highGrav - lowGrav) * 2
-                // Clamp velocity (automatic)
-                const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy + node.vz * node.vz)
-                if (speed > cfg.maxVelocity) {
-                    const scale = cfg.maxVelocity / speed
-                    node.vx *= scale; node.vy *= scale; node.vz *= scale
-                }
-                node.x += node.vx * dt * 60
-                node.y += node.vy * dt * 60
-                node.z += node.vz * dt * 60
+        if (nodes.length === 0) return
+
+        // ── Helper: apply velocity clamp + integrate ──
+        const _integrate = (node) => {
+            const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy + node.vz * node.vz)
+            if (speed > cfg.maxVelocity) {
+                const scale = cfg.maxVelocity / speed
+                node.vx *= scale; node.vy *= scale; node.vz *= scale
             }
+            node.x += node.vx * dt * 60
+            node.y += node.vy * dt * 60
+            node.z += node.vz * dt * 60
+        }
+
+        if (nodes.length < 2) {
+            // Single node — only center gravity applies
+            const node = nodes[0]
+            node.vx += -node.x * cfg.centerGravityBase * cgMul
+            node.vy += -node.y * cfg.centerGravityBase * cgMul
+            node.vz += -node.z * cfg.centerGravityBase * 0.5 * cgMul
+            node.vx *= cfg.damping
+            node.vy *= cfg.damping
+            node.vz *= cfg.damping
+            _integrate(node)
             return
         }
 
-        // Compute pairwise forces
+        // ── Force computation (pairwise) ──
         for (let i = 0; i < nodes.length; i++) {
             const a = nodes[i]
             let fx = 0, fy = 0, fz = 0
 
-            // Center gravity (scaled by rule)
-            fx += -a.x * cfg.centerGravity * cGrav
-            fy += -a.y * cfg.centerGravity * cGrav
-            fz += -a.z * cfg.centerGravity * 0.5 * cGrav
-            // Directional gravity (scaled by rules)
-            fx += (rightGrav - leftGrav) * 4
-            fy += (highGrav - lowGrav) * 4
+            // 1. Center gravity ("Stage Anchor") — scaled by rule
+            fx += -a.x * cfg.centerGravityBase * cgMul
+            fy += -a.y * cfg.centerGravityBase * cgMul
+            fz += -a.z * cfg.centerGravityBase * 0.5 * cgMul
 
             for (let j = i + 1; j < nodes.length; j++) {
                 const b = nodes[j]
@@ -209,62 +221,40 @@ export class GraphSolver {
                 const distSq = dx * dx + dy * dy + dz * dz
                 const dist = Math.sqrt(Math.max(0.001, distSq))
 
-                // Short-range repulsion (prevent overlap) — automatic
-                if (dist < cfg.repulsionRadius) {
-                    const repForce = cfg.repulsionStrength * (cfg.repulsionRadius - dist) / cfg.repulsionRadius * pushMul
-                    const rfx = (dx / dist) * repForce
-                    const rfy = (dy / dist) * repForce
-                    const rfz = (dz / dist) * repForce
-                    fx -= rfx; fy -= rfy; fz -= rfz
-                    b.vx += rfx; b.vy += rfy; b.vz += rfz
-                    continue
-                }
+                // 2. Repulsion ("Personal Space") — every node vs every node
+                // Inverse-linear falloff: closer = stronger push
+                const repStrength = cfg.repulsionStiffness * repMul
+                const repForce = repStrength * Math.max(0, (cfg.repulsionRadius - dist) / cfg.repulsionRadius)
+                const clampedRep = Math.min(cfg.maxRepulsion, repForce)
+                const rfx = (dx / dist) * clampedRep
+                const rfy = (dy / dist) * clampedRep
+                const rfz = (dz / dist) * clampedRep
+                fx -= rfx; fy -= rfy; fz -= rfz
+                b.vx += rfx; b.vy += rfy; b.vz += rfz
 
-                const shareHarmonics = this._shareHarmonics(a.id, b.id)
-
-                if (shareHarmonics) {
-                    // PULL: spring toward rest length (scaled by pullForce rule)
-                    const displacement = dist - cfg.pullRestLength
-                    const force = displacement * cfg.pullStiffness * pullMul
-                    const f = Math.min(cfg.maxForce, Math.abs(force)) * Math.sign(force)
-                    const ffx = (dx / dist) * f
-                    const ffy = (dy / dist) * f
-                    const ffz = (dz / dist) * f
-                    fx += ffx; fy += ffy; fz += ffz
-                    // Equal and opposite
-                    b.vx -= ffx; b.vy -= ffy; b.vz -= ffz
-                } else {
-                    // PUSH: spring away from rest length (negative)
-                    const displacement = cfg.pushRestLength - dist
-                    const force = -displacement * cfg.pushStiffness * pushMul
-                    const f = Math.min(cfg.maxForce, Math.abs(force)) * Math.sign(force)
-                    const ffx = (dx / dist) * f
-                    const ffy = (dy / dist) * f
-                    const ffz = (dz / dist) * f
-                    fx += ffx; fy += ffy; fz += ffz
-                    b.vx -= ffx; b.vy -= ffy; b.vz -= ffz
+                // 3. Tension ("Musical Tie") — only between harmonically related nodes
+                if (this._shareHarmonics(a.id, b.id)) {
+                    // Spring: pull toward rest length
+                    const displacement = dist - cfg.tensionRestLength
+                    const tensionForce = displacement * cfg.tensionStiffness * tenMul
+                    const clampedTension = Math.min(cfg.maxForce, Math.abs(tensionForce)) * Math.sign(tensionForce)
+                    const tfx = (dx / dist) * clampedTension
+                    const tfy = (dy / dist) * clampedTension
+                    const tfz = (dz / dist) * clampedTension
+                    fx += tfx; fy += tfy; fz += tfz
+                    b.vx -= tfx; b.vy -= tfy; b.vz -= tfz
                 }
+                // No tension = no extra force for non-harmonic pairs (they just repel)
             }
 
-            // Apply accumulated force
+            // Apply damping
             a.vx = (a.vx + fx) * cfg.damping
             a.vy = (a.vy + fy) * cfg.damping
             a.vz = (a.vz + fz) * cfg.damping
-
-            // Clamp velocity
-            const speed = Math.sqrt(a.vx * a.vx + a.vy * a.vy + a.vz * a.vz)
-            if (speed > cfg.maxVelocity) {
-                const scale = cfg.maxVelocity / speed
-                a.vx *= scale; a.vy *= scale; a.vz *= scale
-            }
         }
 
-        // Integrate positions
-        for (const node of nodes) {
-            node.x += node.vx * dt * 60
-            node.y += node.vy * dt * 60
-            node.z += node.vz * dt * 60
-        }
+        // ── Integrate ──
+        for (const node of nodes) _integrate(node)
     }
 
     /**
