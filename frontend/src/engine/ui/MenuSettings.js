@@ -78,6 +78,47 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     registerSync(syncRegistry, syncTimeDropdown, ['timeMode'])
     syncTimeDropdown()
 
-    panel.append(sliderSection, modeSection, rangeSection)
+    // ── FFT Size dropdowns ──
+    const fftSection = el('section', 'cp-section')
+    fftSection.appendChild(el('h3', 'cp-section-title', { text: 'FFT Resolution' }))
+
+    const freqFftRow = el('div', 'cp-setting-row')
+    const freqFftLabel = el('label', 'cp-setting-label', { text: 'Frequency FFT Size' })
+    const freqFftSelect = el('select', 'cp-input-select')
+    freqFftSelect.appendChild(createSelectOptions([
+        { value: '1024', label: '1024' },
+        { value: '2048', label: '2048' },
+        { value: '4096', label: '4096' },
+        { value: '8192', label: '8192' },
+        { value: '16384', label: '16384' },
+        { value: '32768', label: '32768' },
+    ], String(params.frequencyFftSize ?? 16384)))
+    freqFftRow.append(freqFftLabel, freqFftSelect)
+    fftSection.appendChild(freqFftRow)
+
+    const rhythmFftRow = el('div', 'cp-setting-row')
+    const rhythmFftLabel = el('label', 'cp-setting-label', { text: 'Rhythm FFT Size' })
+    const rhythmFftSelect = el('select', 'cp-input-select')
+    rhythmFftSelect.appendChild(createSelectOptions([
+        { value: '256', label: '256' },
+        { value: '512', label: '512' },
+        { value: '1024', label: '1024' },
+        { value: '2048', label: '2048' },
+        { value: '4096', label: '4096' },
+    ], String(params.rhythmFftSize ?? 1024)))
+    rhythmFftRow.append(rhythmFftLabel, rhythmFftSelect)
+    fftSection.appendChild(rhythmFftRow)
+
+    freqFftSelect.addEventListener('change', () => set('frequencyFftSize', Number(freqFftSelect.value)))
+    rhythmFftSelect.addEventListener('change', () => set('rhythmFftSize', Number(rhythmFftSelect.value)))
+
+    const syncFftDropdowns = () => {
+        freqFftSelect.value = String(params.frequencyFftSize ?? 16384)
+        rhythmFftSelect.value = String(params.rhythmFftSize ?? 1024)
+    }
+    registerSync(syncRegistry, syncFftDropdowns, ['frequencyFftSize', 'rhythmFftSize'])
+    syncFftDropdowns()
+
+    panel.append(sliderSection, modeSection, fftSection, rangeSection)
     body.appendChild(panel)
 }

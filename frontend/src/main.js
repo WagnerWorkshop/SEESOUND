@@ -611,6 +611,8 @@ const ae = new AudioEngine({
 })
 ae.setFluxWindowFrames(params.fluxWindowFrames)
 ae.setCqtDetailsPer10Octaves(params.cqtDetailsPer10Octaves)
+ae.setFftSizes(Number(params.frequencyFftSize) || 16384, Number(params.rhythmFftSize) || 1024)
+ae._warmupFrameCount = Math.max(0, Math.min(60, Math.round(Number(params.warmupFrames) || 5)))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 4  STATUS (BROWSER-ONLY MODE)
@@ -1758,6 +1760,9 @@ animate()
         if (!preset?.params || typeof preset.params !== 'object') return
         set('ruleBlocks', [])
         setMany(preset.params)
+        window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+            detail: { presetName },
+        }))
         _scheduleLocalProjectDraftSave()
     })
 
@@ -1803,6 +1808,29 @@ animate()
     emitProjectFileState()
     void bootstrapDefaultProject()
 
+    // Save pending draft before page unload (sync to ensure it runs)
+    window.addEventListener('beforeunload', () => {
+        if (projectLocalSaveTimer) clearTimeout(projectLocalSaveTimer)
+        projectLocalSaveTimer = null
+        try {
+            const snapshot = getSnapshot()
+            const presetLibrary = [] // skip async collection
+            const payload = buildProjectPayload({
+                params: snapshot,
+                presetName: _currentPresetTitle(),
+                presetLibrary,
+                projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
+            })
+            const draft = {
+                payload,
+                fileName: String(projectFileName || '').trim(),
+                hasBoundFile: !!projectFileHandle,
+                updatedAt: Date.now(),
+                hasAudio: loadedAudioFile instanceof File,
+            }
+            localStorage.setItem(LOCAL_PROJECT_DRAFT_KEY, JSON.stringify(draft))
+        } catch { /* best-effort */ }
+    })
 }
 
 // ── 7b  Canvas Resizer ────────────────────────────────────────────────────────
@@ -1947,6 +1975,15 @@ subscribe((_, key) => {
         }
         ae.setCqtDetailsPer10Octaves(next)
     }
+    if (key === 'frequencyFftSize' || key === 'rhythmFftSize') {
+        const freq = Math.max(1024, Math.min(32768, Math.round(Number(params.frequencyFftSize) || 16384)))
+        const rhythm = Math.max(256, Math.min(4096, Math.round(Number(params.rhythmFftSize) || 1024)))
+        ae.setFftSizes(freq, rhythm)
+    }
+    if (key === 'warmupFrames') {
+        const next = Math.max(0, Math.min(60, Math.round(Number(params.warmupFrames) || 5)))
+        ae._warmupFrameCount = next
+    }
     if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
         // Rule compilation is handled by SeesoundEngine._syncParticleRules
         // via its own param subscription (see §8). This main.js subscribe
@@ -1980,17 +2017,19 @@ window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))
 
-const startupRuleCount = Array.isArray(params.ruleBlocks) ? params.ruleBlocks.length : 0
+const startupEntityCount = Array.isArray(params.ruleEntities) ? params.ruleEntities.length : 0
+const startupTotalRules = (Array.isArray(params.ruleEntities) ? params.ruleEntities : []).reduce((sum, e) => sum + (Array.isArray(e?.rules) ? e.rules.length : 0), 0)
 const startupCompile = ps.getRuleCompileState()
 const startupCompileStatus = startupCompile?.compileStatus ?? 'bootstrap-pending'
 console.info(
-    `[RuleEngine] schema=v${RULE_SCHEMA_VERSION} compile=${startupCompileStatus} rules=${startupRuleCount}`,
+    `[RuleEngine] schema=v${RULE_SCHEMA_VERSION} compile=${startupCompileStatus} entities=${startupEntityCount} rules=${startupTotalRules}`,
     {
         schemaVersion: RULE_SCHEMA_VERSION,
         compileStatus: startupCompileStatus,
         compileTimeMs: startupCompile?.compileTimeMs ?? 0,
         compileError: startupCompile?.compileError ?? null,
-        ruleCount: startupRuleCount,
+        entities: startupEntityCount,
+        rules: startupTotalRules,
         debug: RULE_DEBUG_FLAGS,
     }
 )
@@ -2026,4 +2065,25 @@ if (headlessMode) {
 
     // Kick off initial rule sync so the engine populates audio usage
     engine._syncParticleRules()
+
+    // Periodic compilation status (every 2s)
+    setInterval(() => {
+        const state = ps.getRuleCompileState()
+        const entities = Array.isArray(params.ruleEntities) ? params.ruleEntities : []
+        let spawned = 0, living = 0, lines = 0, bg = 0, cam = 0
+        for (const e of entities) {
+            if (!e || !Array.isArray(e.rules)) continue
+            for (const r of e.rules) {
+                if (!r || r.enabled === false) continue
+                if (r.target === 'spawnedParticles') spawned++
+                else if (r.target === 'allParticles') living++
+                else if (r.target === 'lines') lines++
+                else if (r.target === 'background') bg++
+                else if (r.target === 'camera') cam++
+            }
+        }
+        const liveCount = Array.isArray(params.ruleEntities) ? params.ruleEntities.reduce((s, e) => s + (Array.isArray(e?.rules) ? e.rules.length : 0), 0) : 0
+        const visible = ps.getVisibleCount()
+        console.log(`[RuleStatus] entities=${entities.length} totalRules=${liveCount} S=${spawned} L=${living} lines=${lines} bg=${bg} cam=${cam} | compiled=${state?.compileStatus || '?'} livingActive=${state?.livingRuleCount > 0 && visible > 0} visible=${visible}`)
+    }, 3000)
 }

@@ -70,7 +70,7 @@ export class AudioEngine {
         this._workletReady = false
         this._workletLoadPromise = null
         this._workletConfig = {
-            enabled: false,
+            enabled: true,
             needMagnitude: false,
             needFlux: false,
             needPhaseDeviation: false,
@@ -79,7 +79,8 @@ export class AudioEngine {
             needAttackTime: false,
             needPitchBrain: false,
             needTextureBrain: false,
-            needRhythmBrain: false,
+            // Rhythm brain always on for transient detection
+            needRhythmBrain: true,
             needTrackerBrain: false,
             objectMode: 'particle',
             fluxWindowFrames: 10,
@@ -108,12 +109,19 @@ export class AudioEngine {
             needChromagram: false,
         }
 
-        this.FFT_SIZE = 2048
+        // High-resolution frequency FFT (16384 → 8192 bins)
+        this.FFT_SIZE = 16384
         this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
         this.timeDomainData = new Uint8Array(this.FFT_SIZE)
         this._freqL = new Uint8Array(128)
         this._freqR = new Uint8Array(128)
         this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+
+        // Rhythm/transient FFT (1024 → 512 bins, always on)
+        this.RHYTHM_FFT_SIZE = 1024
+        this._rhythmAnalyser = null
+        this._rhythmFrequencyData = new Uint8Array(this.RHYTHM_FFT_SIZE / 2)
+        this._prevRhythmData = new Uint8Array(this.RHYTHM_FFT_SIZE / 2)
         this._binMagnitude = null
         this._binFlux = null
         this._binPhaseDeviation = null
@@ -146,11 +154,25 @@ export class AudioEngine {
         this.entityFlatness = 0
         this.entityInharmonicity = 0
         this.entityVolume = 0
+        // Rhythm/transient metrics from the 1024-FFT
         this.globalTransient = 0
+        this._rhythmTransient = 0
+        this._rhythmEnergy = 0
+
         this.entityAge = 0
         this.streamId = 0
         this.ctxState = 'none'
         this.monitorMuted = false
+
+        // Warmup frame counter — prevents first-frame impulse
+        this._warmupFrames = 0
+        this._warmupFrameCount = 5
+
+        // Lookahead buffer size auto-calculated from FFT sizes
+        this._lookaheadFrames = 0
+        
+        // Max bins for buffer sizing
+        this._maxBins = Math.max(this.FFT_SIZE / 2, this.RHYTHM_FFT_SIZE / 2)
     }
 
     _createBinAnalysisNode() {
@@ -239,7 +261,7 @@ export class AudioEngine {
 
     setRuleInputUsage(requiredInputsByTarget = null) {
         const usage = this._deriveAudioUsage(requiredInputsByTarget)
-        this._workletConfig.enabled = usage.worklet.enabled
+        this._workletConfig.enabled = true // always enabled
         this._workletConfig.needMagnitude = usage.worklet.needMagnitude
         this._workletConfig.needFlux = usage.worklet.needFlux
         this._workletConfig.needPhaseDeviation = usage.worklet.needPhaseDeviation
@@ -248,7 +270,7 @@ export class AudioEngine {
         this._workletConfig.needAttackTime = usage.worklet.needAttackTime
         this._workletConfig.needPitchBrain = usage.worklet.needPitchBrain
         this._workletConfig.needTextureBrain = usage.worklet.needTextureBrain
-        this._workletConfig.needRhythmBrain = usage.worklet.needRhythmBrain
+        this._workletConfig.needRhythmBrain = true // always on for transient detection
         this._workletConfig.needTrackerBrain = usage.worklet.needTrackerBrain
         this._workletConfig.objectMode = usage.worklet.objectMode || 'particle'
         this._calcUsage = usage.engine
@@ -286,6 +308,43 @@ export class AudioEngine {
         this._postWorkletConfig()
     }
 
+    /**
+     * Set FFT sizes dynamically. Recreates analyser nodes if context is active.
+     * @param {number} freqSize - Frequency FFT size (1024-32768, power of 2).
+     * @param {number} rhythmSize - Rhythm FFT size (256-4096, power of 2).
+     */
+    setFftSizes(freqSize, rhythmSize) {
+        const fft = AudioEngine._snapFftSize(freqSize, 1024, 32768)
+        const rfft = AudioEngine._snapFftSize(rhythmSize, 256, 4096)
+        if (fft === this.FFT_SIZE && rfft === this.RHYTHM_FFT_SIZE) return
+        this.FFT_SIZE = fft
+        this.RHYTHM_FFT_SIZE = rfft
+        this.frequencyData = new Uint8Array(this.FFT_SIZE / 2)
+        this.timeDomainData = new Uint8Array(this.FFT_SIZE)
+        this._prevFrequencyDataBins = new Uint8Array(this.FFT_SIZE / 2)
+        this._rhythmFrequencyData = new Uint8Array(this.RHYTHM_FFT_SIZE / 2)
+        this._prevRhythmData = new Uint8Array(this.RHYTHM_FFT_SIZE / 2)
+        if (this.analyser) this.analyser.fftSize = this.FFT_SIZE
+        if (this._rhythmAnalyser) this._rhythmAnalyser.fftSize = this.RHYTHM_FFT_SIZE
+        this._computeLookahead()
+        this._warmupFrames = 0
+    }
+
+    static _snapFftSize(value, min, max) {
+        let v = Math.max(min, Math.min(max, Math.round(Number(value) || min)))
+        // Round to nearest power of 2
+        return Math.max(min, Math.min(max, 1 << Math.round(Math.log2(v))))
+    }
+
+    _computeLookahead() {
+        // Lookahead = how many frames it takes for the FFT to stabilize
+        // Roughly 1.5x the FFT size / sampleRate in frames at 60fps
+        const sr = this.ctx?.sampleRate ?? 44100
+        const freqFrames = Math.ceil((this.FFT_SIZE / sr) * 60 * 1.5)
+        const rhythmFrames = Math.ceil((this.RHYTHM_FFT_SIZE / sr) * 60 * 1.5)
+        this._lookaheadFrames = Math.max(freqFrames, rhythmFrames, this._warmupFrameCount)
+    }
+
     init(el) {
         if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -293,6 +352,11 @@ export class AudioEngine {
             this.analyser.fftSize = this.FFT_SIZE
             this.analyser.smoothingTimeConstant = 0
             this.analyser.minDecibels = -140
+            // Rhythm analyser for transient detection
+            this._rhythmAnalyser = this.ctx.createAnalyser()
+            this._rhythmAnalyser.fftSize = this.RHYTHM_FFT_SIZE
+            this._rhythmAnalyser.smoothingTimeConstant = 0
+            this._rhythmAnalyser.minDecibels = -140
             this.outputGain = this.ctx.createGain()
             this.outputGain.gain.value = this.monitorMuted ? 0 : 1
             this.analyser.connect(this.outputGain)
@@ -318,12 +382,14 @@ export class AudioEngine {
             try {
                 this.source = this.ctx.createMediaElementSource(el)
                 this.source.connect(this.analyser)
+                this.source.connect(this._rhythmAnalyser)
             } catch {
                 const stream = (el.captureStream?.() || el.mozCaptureStream?.())
                 if (stream) {
                     this.streamNode = stream
                     this.streamSource = this.ctx.createMediaStreamSource(stream)
                     this.streamSource.connect(this.analyser)
+                    this.streamSource.connect(this._rhythmAnalyser)
                 }
             }
             try {
@@ -345,6 +411,11 @@ export class AudioEngine {
         }
         if (this.ctx.state === 'suspended') this.ctx.resume()
         this.ctxState = this.ctx.state
+
+        // Reset warmup counter on fresh init (new audio source)
+        this._warmupFrames = 0
+        this._warmupFrameCount = 5
+        this._computeLookahead()
     }
 
     setMonitorMuted(muted) {
@@ -364,8 +435,59 @@ export class AudioEngine {
             this.ctx.resume()
         }
         this.ctxState = this.ctx?.state ?? 'none'
+
+        // Warmup: fill buffers with real data but zero out outputs
+        const isWarmup = this._warmupFrames < this._warmupFrameCount
+        if (isWarmup) {
+            // Read real FFT data to fill history buffers
+            this.analyser.getByteFrequencyData(this.frequencyData)
+            this.analyser.getByteTimeDomainData(this.timeDomainData)
+            if (this._rhythmAnalyser) {
+                this._rhythmAnalyser.getByteFrequencyData(this._rhythmFrequencyData)
+                this._prevRhythmData.set(this._rhythmFrequencyData)
+            }
+            this._prevFrequencyDataBins.set(this.frequencyData)
+            // Zero out derived features during warmup
+            this.bass = 0; this.mid = 0; this.high = 0
+            this.peakFreq = 0; this.peakByte = 0; this.amplitude = 0
+            this.rmsDbfs = -96; this.pan = 0
+            this.spectralCentroidHz = 0; this.spectralCentroid = 0
+            this.spectralFluxAU = 0; this.spectralFlux = 0
+            this.spectralFlatnessRatio = 0; this.spectralFlatness = 0
+            this.inharmonicity = 0; this.peakAmplitude = 0
+            this.zeroCrossingRate = 0; this.spectralRolloff = 0
+            this.spectralSpread = 0; this.spectralSkewness = 0
+            this.chromagram = 0
+            this._rhythmTransient = 0; this._rhythmEnergy = 0
+            this.globalTransient = 0
+            this.frequencyData.fill(0)
+            this._warmupFrames++
+            return
+        }
+
         this.analyser.getByteFrequencyData(this.frequencyData)
         this.analyser.getByteTimeDomainData(this.timeDomainData)
+
+        // Read rhythm analyser (1024-FFT) for transient detection
+        if (this._rhythmAnalyser) {
+            this._rhythmAnalyser.getByteFrequencyData(this._rhythmFrequencyData)
+            // Compute transient metric: spectral flux on the rhythm FFT
+            let fluxSum = 0
+            const len = this._rhythmFrequencyData.length
+            for (let i = 0; i < len; i++) {
+                const diff = Math.abs(this._rhythmFrequencyData[i] - this._prevRhythmData[i])
+                fluxSum += diff
+            }
+            this._prevRhythmData.set(this._rhythmFrequencyData)
+            const transientNorm = fluxSum / (len * 255)
+            const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
+            this._rhythmTransient += (transientNorm - this._rhythmTransient) * alpha
+            this.globalTransient = this._rhythmTransient
+            // Rhythm energy = average magnitude of the 1024-FFT
+            let eSum = 0
+            for (let i = 0; i < len; i++) eSum += this._rhythmFrequencyData[i]
+            this._rhythmEnergy = eSum / (len * 255)
+        }
 
         const bc = this.frequencyData.length
         const sr = this.ctx?.sampleRate ?? 44100

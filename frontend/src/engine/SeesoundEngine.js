@@ -41,6 +41,9 @@ export class SeesoundEngine {
         this._graphSolver = new GraphSolver()
         /** @type {Object|null} */
         this._graphPositions = null
+        /** @type {string} */
+        this._lastRuleHash = ''
+        this._bootstrapCount = 0
 
         this._isPlaying = false
         this._frameN = 0
@@ -64,6 +67,7 @@ export class SeesoundEngine {
         // Param subscription — recompile rules when entity/global rules change
         this._unsubscribeParams = paramSubscribe((key) => {
             if (key === 'ruleEntities' || key === 'ruleGlobalBlocks' || key === 'ruleEngineEnabled') {
+                console.log('[Engine] param changed:', key, '→ recompiling')
                 this._syncParticleRules()
             }
         })
@@ -429,12 +433,32 @@ export class SeesoundEngine {
         const rules = params.ruleEngineEnabled !== false
             ? this._flattenRules(entities, params.ruleGlobalBlocks ?? {})
             : []
+        console.log('[Engine] _syncParticleRules: entities=', entities.length, 'hasCloud=', hasCloud, 'hasNetwork=', hasNetwork, 'derivedMode=', derivedMode, 'flattenedRules=', rules.length)
+        // Log target breakdown every compile
+        const targetCounts = {}
+        for (const r of rules) {
+            const t = r.target || 'unknown'
+            targetCounts[t] = (targetCounts[t] || 0) + 1
+        }
+        console.log('[Engine] rule target breakdown:', JSON.stringify(targetCounts))
         const graph = resolveDependencyGraph(rules, this._mode, { cloudNetwork: this._cloudPositioning === 'network' })
         const byTarget = this._buildRequiredInputsByTarget(rules)
         this._ae?.setRuleInputUsage(byTarget)
         const cr = this._ps.onRulesChanged({ ruleBlocks: rules, requiredInputsByTarget: byTarget })
         if (cr) this._emit(EngineEvent.COMPILE_STATE, cr)
         this._emit(EngineEvent.GRAPH_UPDATED, { referencedInputs: [...graph.referencedInputs], mode: this._mode })
+
+        // Force-particle clear so next frame respawns with fresh compile.
+        // This ensures rule changes always take effect immediately.
+        // Skip the very first call (startup bootstrap) — particles are not yet spawned anyway.
+        if (this._ps?.clear && this._bootstrapCount > 0) {
+            if (rules.length > 0 && cr?.hash && cr.hash !== this._lastRuleHash) {
+                this._lastRuleHash = cr.hash
+                console.log('[Engine] rule hash changed, clearing particles for fresh spawn')
+                this._ps.clear()
+            }
+        }
+        this._bootstrapCount++
     }
 
     _flattenRules(entities, globals) {
@@ -442,11 +466,17 @@ export class SeesoundEngine {
         const ordered = [...(entities ?? [])].sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
         ordered.forEach((entity, ei) => {
             if (!entity || typeof entity !== 'object') return
+            const entityRules = Array.isArray(entity.rules) ? entity.rules : []
+            if (entityRules.length > 0) {
+                console.log('[Engine] _flattenRules: entity=', entity.name, 'id=', entity.id, 'rulesCount=', entityRules.length, 'targets=', entityRules.map(r => r.target))
+            } else {
+                console.log('[Engine] _flattenRules: EMPTY entity=', entity.name, 'id=', entity.id, 'shapeType=', entity.entityShapeType, 'allKeys=', Object.keys(entity).join(','), 'Has rules key=', 'rules' in entity, 'rules type=', typeof entity.rules, 'isArray=', Array.isArray(entity.rules))
+            }
             const base = ei * 10000
             const defs = (Array.isArray(entity.definitions) ? entity.definitions : [])
                 .map((d) => String(d?.expression || '').trim()).filter(Boolean)
             const defExpr = defs.length ? defs.map((e) => `(${e})`).join(' && ') : ''
-                ; (Array.isArray(entity.rules) ? entity.rules : []).forEach((rule, ri) => {
+                ; (entityRules).forEach((rule, ri) => {
                     blocks.push({
                         ...rule, entityId: entity.id, entityName: entity.name,
                         sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
@@ -460,6 +490,7 @@ export class SeesoundEngine {
                 blocks.push({ ...rule, order: Number.isFinite(rule?.order) ? rule.order : 900000 + i })
             })
         }
+        if (blocks.length > 0) console.log('[Engine] _flattenRules: TOTAL=', blocks.length)
         return blocks
     }
 

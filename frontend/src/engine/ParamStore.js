@@ -252,6 +252,39 @@ const PARAMS_BASE = [
         canDisable: false,
     },
     {
+        key: 'frequencyFftSize', group: 'inputProcessing', label: 'Frequency FFT Size',
+        min: 1024, max: 32768, step: 2, default: 16384, unit: 'bins',
+        desc: 'FFT size for main frequency analysis. Higher = better frequency resolution, slower update rate. Must be power of 2.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: '1024', value: 1024 },
+            { label: '2048', value: 2048 },
+            { label: '4096', value: 4096 },
+            { label: '8192', value: 8192 },
+            { label: '16384', value: 16384 },
+            { label: '32768', value: 32768 },
+        ],
+    },
+    {
+        key: 'rhythmFftSize', group: 'inputProcessing', label: 'Rhythm FFT Size',
+        min: 256, max: 4096, step: 2, default: 1024, unit: 'bins',
+        desc: 'FFT size for rhythm/transient detection. Smaller = faster response.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: '256', value: 256 },
+            { label: '512', value: 512 },
+            { label: '1024', value: 1024 },
+            { label: '2048', value: 2048 },
+            { label: '4096', value: 4096 },
+        ],
+    },
+    {
+        key: 'warmupFrames', group: 'inputProcessing', label: 'Warmup Frames',
+        min: 0, max: 60, step: 1, default: 5, unit: 'frames',
+        desc: 'Number of initial frames to mute during analysis warmup. Prevents first-frame impulse on play.',
+        canDisable: false,
+    },
+    {
         key: 'fluxWindowFrames', group: 'inputProcessing', label: 'Activity Interval',
         min: 1, max: 64, step: 1, default: 10, unit: 'frames',
         desc: 'Rolling frame window used to smooth activity detection.',
@@ -780,11 +813,14 @@ function _buildInitial() {
         out[p.key] = Object.prototype.hasOwnProperty.call(saved, p.key) ? saved[p.key] : p.default
     }
     out.ruleBlocks = saved.ruleBlocks
+    out.ruleEntities = saved.ruleEntities ?? []
+    out.ruleGlobalBlocks = saved.ruleGlobalBlocks ?? { background: [], camera: [] }
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
     out.palettes = _sanitizePalettes(saved.palettes)
     out.tuners = _sanitizeTuners(saved.tuners)
     out.ruleUiState = _sanitizeRuleUiState(saved.ruleUiState)
+    console.log('[ParamStore] _buildInitial: entities=', Array.isArray(out.ruleEntities) ? out.ruleEntities.length : 0, 'tuners=', Array.isArray(out.tuners) ? out.tuners.length : 0)
     return out
 }
 
@@ -945,6 +981,28 @@ export function setMany(updates) {
         _notify(k, v)
     }
     _notify('*', changed)
+
+    // Auto-save rule state to STORAGE_KEY so it survives page reload
+    // without depending on the project draft recovery flow.
+    if (includesRuleSchemaField || Object.prototype.hasOwnProperty.call(patch, 'ruleEntities') || Object.prototype.hasOwnProperty.call(patch, 'ruleGlobalBlocks')) {
+        try {
+            const snapshot = {}
+            for (const key of Object.keys(params)) {
+                if (key === 'ruleEngineEnabled' || key === 'ruleEntities' || key === 'ruleGlobalBlocks' || key === 'ruleSchemaVersion' || key === 'palettes' || key === 'tuners' || key === 'ruleUiState' || key === 'ruleBlocks') {
+                    snapshot[key] = params[key]
+                }
+            }
+            const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')
+            existing.ruleEntities = snapshot.ruleEntities
+            existing.ruleGlobalBlocks = snapshot.ruleGlobalBlocks
+            existing.ruleEngineEnabled = snapshot.ruleEngineEnabled
+            existing.ruleSchemaVersion = snapshot.ruleSchemaVersion
+            existing.palettes = snapshot.palettes
+            existing.tuners = snapshot.tuners
+            existing.ruleUiState = snapshot.ruleUiState
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
+        } catch { /* noop */ }
+    }
 }
 
 export function resetParamsToDefaults(keys = []) {

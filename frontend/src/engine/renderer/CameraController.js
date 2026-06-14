@@ -103,10 +103,13 @@ export class CameraController {
             this.orbitTarget.add(delta)
             this.syncOrbitFromCamera()
         } else if (button === 2) {
-            const yaw = -dx * 0.004
-            const pitch = -dy * 0.004
-            camera.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), yaw)
-            camera.rotateX(pitch)
+            // Right-drag orbits the camera around the scene (consistent with left-drag)
+            this.orbitState.azimuth -= dx * 0.006
+            this.orbitState.elevation = Math.max(
+                -Math.PI * 0.49,
+                Math.min(Math.PI * 0.49, this.orbitState.elevation - dy * 0.005),
+            )
+            this.applyOrbitToCamera()
         }
     }
 

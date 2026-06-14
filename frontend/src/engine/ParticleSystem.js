@@ -183,10 +183,12 @@ export class ParticleSystem {
         this._N = Math.max(1, Math.floor(opts.maxParticles ?? 1024))
         this._capacity = this._N
         this._maxActiveParticles = this._N
-        this._insertIndex = 0
         this._visibleCount = 0
+        this._visible_count = 0
         this._paintCount = 0
         this._lineVisibleCount = 0
+        this._insertIndex = 0
+        this._insert_index = 0
 
         const geo = new THREE.BufferGeometry()
         const lineGeo = new THREE.BufferGeometry()
@@ -389,9 +391,11 @@ export class ParticleSystem {
 
         this._maxActiveParticles = clamped
         this._visibleCount = Math.min(this._visibleCount, clamped)
+        this._visible_count = this._visibleCount
         this._paintCount = this._visibleCount
         this._lineVisibleCount = Math.min(this._lineVisibleCount, clamped)
         this._insertIndex = this._visibleCount % clamped
+        this._insert_index = this._insertIndex
 
         this._geo.setDrawRange(0, this._visibleCount)
         this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
@@ -510,6 +514,7 @@ export class ParticleSystem {
 
     applyLivingRulesToRange(ctx, start, end) {
         const maxTouches = Math.max(0, end - start)
+        if (end > 0) console.log('[PS] applyLivingRules range:', start, end, 'touches:', maxTouches, 'livingRuleCount=', this._compiledRules.livingRuleCount)
         const stride = 1
         const loopCtx = ctx || {}
         const loopInputs = loopCtx.inputs || (loopCtx.inputs = {})
@@ -891,7 +896,7 @@ export class ParticleSystem {
 
         const activeParticleCapacity = this._getActiveParticleCapacity()
         let writeIndex = (persistMode === 1 && emitLightParticles)
-            ? (this._insertIndex % activeParticleCapacity)
+            ? ((this._insert_index ?? this._insertIndex ?? 0) % activeParticleCapacity)
             : 0
         let lineWriteIndex = (persistMode === 1 && emitLines) ? Math.min(this._lineVisibleCount, activeParticleCapacity) : 0
         let wroteParticles = 0
@@ -1322,7 +1327,8 @@ export class ParticleSystem {
 
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visible_count > 0
         if (livingRulesActive) {
-            this.applyLivingRulesToRange({ params, inputs: _frameRuleBase }, 0, this._visibleCount)
+            console.log('[PS] living rules active: count=', this._compiledRules.livingRuleCount, 'visible=', this._visible_count, 'spawnRuleCount=', this._compiledRules.spawnRuleCount)
+            this.applyLivingRulesToRange({ params, inputs: _frameRuleBase }, 0, this._visible_count)
         }
 
         if (params.ruleEngineEnabled !== false && this._compiledRules.backgroundRuleCount > 0) {
@@ -1343,9 +1349,9 @@ export class ParticleSystem {
                 angleOfView: null,
             }
         }
-        if (livingRulesActive && this._visibleCount > 0) {
+        if (livingRulesActive && this._visible_count > 0) {
             pointDirtyMin = Math.min(pointDirtyMin, 0)
-            pointDirtyMax = Math.max(pointDirtyMax, this._visibleCount - 1)
+            pointDirtyMax = Math.max(pointDirtyMax, this._visible_count - 1)
         }
 
         if (Number.isFinite(pointDirtyMin) && Number.isFinite(pointDirtyMax) && pointDirtyMax >= pointDirtyMin) {

@@ -589,6 +589,8 @@ export function compileRules(ruleBlocks, dictionaries) {
 
     if (_cache.hash === hash) return _cache.result
 
+    console.log('[Compiler] compileRules: spawned=', activeSpawnedRuleCount, 'living=', activeLivingRuleCount, 'bg=', activeBackgroundRuleCount, 'camera=', activeCameraRuleCount, 'total=', sortedRules.length)
+
     const inputIds = getInputDictionary().entries.map((entry) => entry.id)
     const inputIdSet = new Set(inputIds)
     const requiredInputsByTarget = {
