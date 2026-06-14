@@ -364,6 +364,7 @@ export class SeesoundEngine {
             time: ae.audioEl?.currentTime ?? 0, deltaTime: 1 / 60,
             canvasWidthPx: cw, canvasHeightPx: ch,
             canvasWidthUnits: cu.w, canvasHeightUnits: cu.h,
+            canvasWidth: Number(params.canvasWidth ?? cu.w), canvasHeight: Number(params.canvasHeight ?? cu.h),
             audioLengthSec: ae.audioEl?.duration ?? 0,
         }
     }

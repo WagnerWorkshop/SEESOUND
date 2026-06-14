@@ -251,6 +251,8 @@ function resetCameraPose() {
     const resetW = Math.max(1, renderer.domElement.clientWidth || col.clientWidth || window.innerWidth)
     const resetH = Math.max(1, renderer.domElement.clientHeight || col.clientHeight || window.innerHeight)
     resizeRenderer(resetW, resetH)
+    // On reset, canvas units align to pixels (1:1)
+    setMany({ cameraCanvasWidthUnits: resetW, cameraCanvasHeightUnits: resetH })
     for (const c of [cameraOrtho, cameraPerspective]) {
         c.position.copy(DEFAULT_CAMERA_POS)
         c.up.set(0, 1, 0)
@@ -874,24 +876,41 @@ function animate() {
     const isActuallyPlaying = !!(ae.audioEl && !ae.audioEl.paused && !ae.audioEl.ended)
     if (isActuallyPlaying !== isPlaying) isPlaying = isActuallyPlaying
     if (isActuallyPlaying && !ae.analyser && ae.audioEl) ae.init(ae.audioEl)
-    if (isActuallyPlaying) {
-        const w = renderer.domElement.width / window.devicePixelRatio
-        const h = renderer.domElement.height / window.devicePixelRatio
-        const cameraUnits = getCameraCanvasUnits()
-        const updateParams = {
-            ...params,
-            cameraState: {
-                x: camera.position.x,
-                y: camera.position.y,
-                z: camera.position.z,
-                zoom: camera.zoom,
-            },
-            cameraCanvasWidthUnits: cameraUnits.w,
-            cameraCanvasHeightUnits: cameraUnits.h,
-        }
-        ps.update(ae, updateParams, w, h)
-        applyRuleCameraOutput(ps.getCameraOutput())
 
+    // Always run particle update so rules-based particles render even when paused
+    const w = renderer.domElement.width / window.devicePixelRatio
+    const h = renderer.domElement.height / window.devicePixelRatio
+    const cameraUnits = getCameraCanvasUnits()
+    const updateParams = {
+        ...params,
+        cameraState: {
+            x: camera.position.x,
+            y: camera.position.y,
+            z: camera.position.z,
+            zoom: camera.zoom,
+        },
+        cameraCanvasWidthUnits: cameraUnits.w,
+        cameraCanvasHeightUnits: cameraUnits.h,
+    }
+    ps.update(ae, updateParams, w, h)
+    applyRuleCameraOutput(ps.getCameraOutput())
+
+    // Sync live camera state for View menu display every frame
+    // (captures position, target AND rotation from right-drag)
+    const cpX = camera.position.x, cpY = camera.position.y, cpZ = camera.position.z
+    const ctX = orbitTarget.x, ctY = orbitTarget.y, ctZ = orbitTarget.z
+    params.cameraPosX = cpX; params.cameraPosY = cpY; params.cameraPosZ = cpZ
+    params.cameraTargetX = ctX; params.cameraTargetY = ctY; params.cameraTargetZ = ctZ
+    window.dispatchEvent(new CustomEvent('seesound:camera-state', {
+        detail: {
+            position: { x: cpX, y: cpY, z: cpZ },
+            target: { x: ctX, y: ctY, z: ctZ },
+            fov: camera.isPerspectiveCamera ? camera.fov : Number(params.cameraAngleOfView ?? 55),
+            projection: camera.isPerspectiveCamera ? 'perspective' : 'axonometric',
+        },
+    }))
+
+    if (isActuallyPlaying) {
         // Emit probe inputs for UI — SeesoundEngine handles normalization
         const cameraUnitData = { w: cameraUnits.w, h: cameraUnits.h }
         window.__seesoundEngine?.tick({ ae, ps, canvasW: w, canvasH: h, cameraUnitData })

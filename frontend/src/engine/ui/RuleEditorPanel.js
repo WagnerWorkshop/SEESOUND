@@ -258,6 +258,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function openPopupForOwner(owner) {
         activeOwner = owner
         popupOpen = true
+        popup.classList.remove('is-display-none')
         popup.classList.add('is-open')
         renderPopupMeta()
         updateOwnerSectionVisibility()
@@ -267,6 +268,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function closePopup() {
         popupOpen = false
         popup.classList.remove('is-open')
+        popup.classList.add('is-display-none')
     }
 
     function renderEntityList() {
@@ -278,18 +280,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             row.dataset.entityId = entity.id
             if (entity.enabled === false) row.classList.add('is-disabled')
 
-            // Eye toggle (enabled/disabled)
-            const eyeBtn = el('button', 'cp-btn cp-btn-icon cp-styles-entity-eye', {
-                type: 'button',
-                title: entity.enabled === false ? 'Show element' : 'Hide element',
+            // Enable/disable toggle (checkbox styled as cp-input-toggle)
+            const toggleCheck = el('input', 'cp-input-toggle', {
+                type: 'checkbox',
+                checked: entity.enabled !== false ? 'checked' : undefined,
+                title: entity.enabled === false ? 'Enable element' : 'Disable element',
             })
-            applyIconOnlyButton(eyeBtn,
-                entity.enabled === false ? BUTTON_ICON_MAP.eyeClosed : BUTTON_ICON_MAP.eyeOpen,
-                entity.enabled === false ? 'Show element' : 'Hide element',
-            )
-            eyeBtn.addEventListener('click', (e) => {
+            toggleCheck.checked = entity.enabled !== false
+            toggleCheck.addEventListener('change', (e) => {
                 e.stopPropagation()
-                const nextEnabled = entity.enabled !== false ? false : true
+                const nextEnabled = toggleCheck.checked
                 const nextEntities = getRuleEntities().map((entry) =>
                     entry.id === entity.id ? { ...entry, enabled: nextEnabled } : entry
                 )
@@ -345,7 +345,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 setRuleEntities(normalized)
             })
 
-            row.append(eyeBtn, typeBadge, nameBtn, editBtn, removeBtn)
+            row.append(toggleCheck, typeBadge, nameBtn, editBtn, removeBtn)
             entityList.appendChild(row)
         })
     }
@@ -1377,11 +1377,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             })
             tokenEditor = expressionInput
 
-            const addSliderBtn = el('button', 'cp-btn cp-rule-add-slider-btn', {
+            const addSliderBtn = el('button', 'cp-btn cp-btn-icon', {
                 type: 'button',
                 title: 'Insert slider into expression',
-                text: '◍',
             })
+            applyIconOnlyButton(addSliderBtn, BUTTON_ICON_MAP.slider, 'Insert slider')
             addSliderBtn.addEventListener('click', () => {
                 const sliderId = `slider-${Date.now()}`
                 const vdef = getRuleVariableById('binMagnitude')

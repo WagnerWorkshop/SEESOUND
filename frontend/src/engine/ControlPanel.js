@@ -49,6 +49,7 @@ import fitIcon from '../icons/fit.svg?raw'
 import copyIcon from '../icons/copy.svg?raw'
 import undoIcon from '../icons/undo.svg?raw'
 import redoIcon from '../icons/redo.svg?raw'
+import sliderIcon from '../icons/slider.svg?raw'
 
 
 const NONE_VAR = '__none__'
@@ -354,6 +355,9 @@ const BUTTON_ICON_MAP = Object.freeze({
     fit: fitIcon,
     add: addIcon,
     condition: conditionIcon,
+    eyeOpen: eyeOpenIcon,
+    eyeClosed: eyeClosedIcon,
+    slider: sliderIcon,
     duplicate: copyIcon,
     clear: clearIcon,
     clean: clearIcon,

@@ -913,7 +913,6 @@ export class ParticleSystem {
         }
 
         const writeParticle = (bucket, alphaBoost = 1) => {
-            if (!emitLightParticles) return
             if (activeParticleCapacity <= 0) return
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) return
 
@@ -1177,6 +1176,9 @@ export class ParticleSystem {
             canvasHeightPx: canvasH,
             canvasWidthUnits: canvasUnitsW,
             canvasHeightUnits: canvasUnitsH,
+            // canvasWidth/canvasHeight alias — use fixed px values from View menu
+            canvasWidth: Number(params.canvasWidth ?? canvasUnitsW),
+            canvasHeight: Number(params.canvasHeight ?? canvasUnitsH),
             audioLengthSec,
             ...frameBinInputs,
             frequencyHz: 0,
@@ -1295,9 +1297,9 @@ export class ParticleSystem {
         }
 
         if (persistMode === 1) {
-            if (emitLightParticles) {
+            if (emitLightParticles || wroteParticles > 0) {
                 this._insert_index = writeIndex % activeParticleCapacity
-                this._visible_count = Math.min(activeParticleCapacity, this._visible_count + wrote_particles)
+                this._visible_count = Math.min(activeParticleCapacity, this._visible_count + wroteParticles)
                 this._paint_count = this._visible_count
             } else {
                 this._insert_index = 0

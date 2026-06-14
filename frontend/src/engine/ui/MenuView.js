@@ -218,12 +218,12 @@ export function buildViewMenu(body, syncRegistry, deps) {
     })
 
     const syncCameraNumbers = () => {
-        camPosX.value = String(Number(params.cameraPosX ?? 0))
-        camPosY.value = String(Number(params.cameraPosY ?? 0))
-        camPosZ.value = String(Number(params.cameraPosZ ?? 420))
-        camTargetX.value = String(Number(params.cameraTargetX ?? 0))
-        camTargetY.value = String(Number(params.cameraTargetY ?? 0))
-        camTargetZ.value = String(Number(params.cameraTargetZ ?? 0))
+        camPosX.value = Number(params.cameraPosX ?? 0).toFixed(2)
+        camPosY.value = Number(params.cameraPosY ?? 0).toFixed(2)
+        camPosZ.value = Number(params.cameraPosZ ?? 420).toFixed(2)
+        camTargetX.value = Number(params.cameraTargetX ?? 0).toFixed(2)
+        camTargetY.value = Number(params.cameraTargetY ?? 0).toFixed(2)
+        camTargetZ.value = Number(params.cameraTargetZ ?? 0).toFixed(2)
     }
 
     const applyCameraNumbers = () => {
@@ -474,12 +474,12 @@ export function buildViewMenu(body, syncRegistry, deps) {
         const tz = Number(detail.target?.z)
         const fov = Number(detail.fov)
         const projection = String(detail.projection || '')
-        if (Number.isFinite(px)) camPosX.value = String(px)
-        if (Number.isFinite(py)) camPosY.value = String(py)
-        if (Number.isFinite(pz)) camPosZ.value = String(pz)
-        if (Number.isFinite(tx)) camTargetX.value = String(tx)
-        if (Number.isFinite(ty)) camTargetY.value = String(ty)
-        if (Number.isFinite(tz)) camTargetZ.value = String(tz)
+        if (Number.isFinite(px)) camPosX.value = px.toFixed(2)
+        if (Number.isFinite(py)) camPosY.value = py.toFixed(2)
+        if (Number.isFinite(pz)) camPosZ.value = pz.toFixed(2)
+        if (Number.isFinite(tx)) camTargetX.value = tx.toFixed(2)
+        if (Number.isFinite(ty)) camTargetY.value = ty.toFixed(2)
+        if (Number.isFinite(tz)) camTargetZ.value = tz.toFixed(2)
         if (Number.isFinite(fov)) {
             fovSlider.value = String(fov)
             fovNumber.value = String(fov)
