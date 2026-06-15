@@ -48,17 +48,17 @@ export { AXIOMATIC_VARS }
 // Absence = legal in all modes.
 // Must match RuleDictionary _INPUT_MODES and _outputEntries[].modes.
 const MODE_GATED_VARS = new Map([
-    // Particle-mode only (per-bin variables)
-    ['binMagnitude', new Set(['particle'])],
-    ['binPhase', new Set(['particle'])],
-    ['binFlux', new Set(['particle'])],
-    ['binPhaseDeviation', new Set(['particle'])],
-    ['binEnvelope', new Set(['particle'])],
-    ['binEnvelopeState', new Set(['particle'])],
-    ['binAttackTime', new Set(['particle'])],
-    ['binRMSEnergy', new Set(['particle'])],
-    ['notePitchClass', new Set(['particle'])],
-    ['octave', new Set(['particle'])],
+    // Per-bin variables — available in all modes
+    ['binMagnitude', new Set(['particle', 'cloud'])],
+    ['binPhase', new Set(['particle', 'cloud'])],
+    ['binFlux', new Set(['particle', 'cloud'])],
+    ['binPhaseDeviation', new Set(['particle', 'cloud'])],
+    ['binEnvelope', new Set(['particle', 'cloud'])],
+    ['binEnvelopeState', new Set(['particle', 'cloud'])],
+    ['binAttackTime', new Set(['particle', 'cloud'])],
+    ['binRMSEnergy', new Set(['particle', 'cloud'])],
+    ['notePitchClass', new Set(['particle', 'cloud'])],
+    ['octave', new Set(['particle', 'cloud'])],
     // Cloud-mode only (entity-level variables)
     ['fundamentalHz', new Set(['cloud'])],
     ['fundamentalPitch', new Set(['cloud'])],
@@ -73,6 +73,7 @@ const MODE_GATED_VARS = new Map([
     ['globalTransient', new Set(['cloud'])],
     // Output variables gated by mode
     // Cloud aura mode outputs
+    ['cloudSize', new Set(['cloud'])],
     ['auraDistance', new Set(['cloud'])],
     ['auraAngle', new Set(['cloud'])],
     ['auraElevation', new Set(['cloud'])],
@@ -364,6 +365,7 @@ export function getOutputsForMode(mode, cloudNetwork = false) {
     ])
 
     if (mode === 'cloud') {
+        outputs.add('cloudSize')
         outputs.add('auraDistance')
         outputs.add('auraAngle')
         outputs.add('auraElevation')

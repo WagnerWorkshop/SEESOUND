@@ -932,8 +932,18 @@ function animate() {
     }
     ps.setViewportHeight(renderer.domElement.height)
 
+    // Bloom must not brighten the background. Render particles on black
+    // first, then overlay the background colour in a second pass without bloom.
     if (shouldUsePostProcessing()) {
+        renderer.setClearColor(0x000000, 1)
         composer.render()
+        if (bg.r > 0.002 || bg.g > 0.002 || bg.b > 0.002) {
+            renderer.autoClear = false
+            renderer.clearDepth()
+            renderer.setClearColor(bg, 1)
+            renderer.render(scene, camera)
+            renderer.autoClear = true
+        }
     } else {
         renderer.render(scene, camera)
     }
@@ -1488,6 +1498,10 @@ animate()
             const name = String(parsed?.presetName || _nameWithoutExt(file.name) || 'Imported Preset').trim()
             await savePreset(name, presetParams)
             window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+            // Update the preset section name label
+            window.dispatchEvent(new CustomEvent('seesound:preset-load-request', {
+                detail: { presetName: name },
+            }))
             return true
         } catch (err) {
             console.warn('[Preset] import failed:', err)

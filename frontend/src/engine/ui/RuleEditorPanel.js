@@ -141,16 +141,14 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         // Mode-gate by current engine mode (params.objectMode).
         // Per-bin variables are particle-only; entity variables are cloud-only.
         const mode = String(params.objectMode || 'particle')
-        const particleOnly = new Set(['binMagnitude', 'binPhase', 'binFlux', 'binPhaseDeviation',
-            'binEnvelope', 'binEnvelopeState', 'binAttackTime', 'binRMSEnergy', 'notePitchClass', 'octave'])
         const cloudOnly = new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote',
             'entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume',
             'globalTransient', 'entityAge', 'streamId'])
+        // Per-bin variables are available in ALL modes; only entity variables are cloud-only.
         if (mode === 'particle') {
             for (const id of ids) if (cloudOnly.has(id)) ids.delete(id)
-        } else if (mode === 'cloud') {
-            for (const id of ids) if (particleOnly.has(id)) ids.delete(id)
         }
+        // Cloud mode: all variables allowed (per-bin + entity + overall)
         return ids
     }
     const EVAL_HELPERS = Object.freeze({
@@ -918,6 +916,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 return 'nrmlzd 0–1'
             case 'auraLatitude':
                 return 'nrmlzd 0–1'
+            case 'cloudSize':
+                return '0–1 scale'
             case 'repulsion':
                 return '0–1 push'
             case 'centerGravity':
@@ -991,46 +991,23 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     function syncColorMode(target, changedOutput = '', changedRow = null) {
+        // No-op — colour mode gating removed. HSB and RGB work independently.
+        // Each rule toggles individually. When neither HSB nor RGB is set,
+        // the default particle colour is grayscale (brightness-based).
+        // Only refresh UI state for the affected rows.
         const byOutput = (outputId) => orderedRows.filter((row) => row.definition.target === target && row.definition.output === outputId)
-        const rgbRows = [
+        const allColorRows = [
             ...byOutput('red'),
             ...byOutput('green'),
             ...byOutput('blue'),
+            ...byOutput('hue'),
+            ...byOutput('saturation'),
+            ...byOutput('brightness'),
         ]
-        const hueRows = byOutput('hue')
-        const hueRow = hueRows[0] || null
-        if (!hueRow || rgbRows.length === 0) return
-
-        if (changedOutput === 'red' || changedOutput === 'green' || changedOutput === 'blue') {
-            const changed = changedRow || byOutput(changedOutput)[0]
-            if (changed) {
-                for (const row of rgbRows) row.enabled = !!changed.enabled
-                if (changed.enabled && String(changed.expression || '').trim()) hueRow.enabled = false
-            }
-        }
-
-        if (changedOutput === 'hue') {
-            if (hueRow.enabled && String(hueRow.expression || '').trim()) {
-                for (const row of rgbRows) row.enabled = false
-            }
-        }
-
-        const rgbActive = rgbRows.some((row) => row.enabled && String(row.expression || '').trim())
-        const hueActive = hueRow.enabled && String(hueRow.expression || '').trim()
-        if (rgbActive && hueActive) {
-            if (changedOutput === 'hue') {
-                for (const row of rgbRows) row.enabled = false
-            } else {
-                hueRow.enabled = false
-            }
-        }
-
-        for (const row of rgbRows) {
+        for (const row of allColorRows) {
             if (row.toggle) row.toggle.checked = row.enabled
             refreshRowCardState(row)
         }
-        if (hueRow.toggle) hueRow.toggle.checked = hueRow.enabled
-        refreshRowCardState(hueRow)
     }
 
     function buildCondition(rowState) {

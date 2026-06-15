@@ -539,11 +539,9 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const cfg = this._cfg
         const objectMode = cfg.objectMode || 'particle'
 
-        // Particle mode: skip the entire Quad-Brain pipeline.
-        // The CQT analysis (bin metrics) is already handled by _analyzeAndPost.
-        if (objectMode === 'particle') return null
-
-        // Cloud/Tracing/Lines mode: run brains
+        // Always run Quad-Brain when any brain is needed, regardless of objectMode.
+        // The particle/cloud distinction only matters for harmonic object output,
+        // not for entity-level metrics like fundamentalHz, entityVolume etc.
         const needPitch = cfg.needPitchBrain || cfg.needTrackerBrain
         const needTexture = cfg.needTextureBrain || cfg.needTrackerBrain
         const needRhythm = cfg.needRhythmBrain
@@ -933,10 +931,24 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             if (needsPhaseDeviation) {
                 const phase = result.phase
                 const d1 = this._phaseDelta(phase, this._prevPhase[binIndex])
-                const d2 = this._phaseDelta(d1, this._prevPhaseDelta[binIndex])
-                this._outPhaseDeviation[binIndex] = Math.max(0, Math.min(Math.PI, Math.abs(d2)))
+                // True phase instability: subtract the expected phase advance.
+                // For bin at frequency f with Goertzel window W and hop H at
+                // sample rate sr, the expected per-hop phase increment is:
+                //   expected = 2*PI * f * H / sr
+                // A pure tone at the bin's exact center frequency will have
+                // exactly this phase increment → corrected deviation = 0.
+                // Noisy/transient content misses the expected value → random.
+                const bin = this._bins[binIndex]
+                const hopSize = this._levelHopSize[bin.level] || 64
+                const sr = this._levelSampleRates[bin.level] || 44100
+                const expectedDelta = 2 * Math.PI * bin.freqHz * hopSize / sr
+                const corrected = this._phaseDelta(d1, expectedDelta)
+                // Second difference catches acceleration / rate-of-change of instability
+                const d2 = this._phaseDelta(corrected, this._prevPhaseDelta[binIndex])
+                // Output absolute value in [0, PI], then normalize to [0, 1]
+                this._outPhaseDeviation[binIndex] = Math.abs(d2) / Math.PI
                 this._prevPhase[binIndex] = phase
-                this._prevPhaseDelta[binIndex] = d1
+                this._prevPhaseDelta[binIndex] = corrected
             }
         }
 

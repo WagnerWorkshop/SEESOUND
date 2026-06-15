@@ -182,6 +182,7 @@ export function buildFileMenu(body, syncRegistry, deps) {
     presetTitleRow.append(presetTitle, presetNameLabel)
     presetSection.appendChild(presetTitleRow)
     const presetActions = el('div', 'cp-button-grid')
+    presetActions.style.gridTemplateColumns = '1fr 1fr'
     const addPresetBtn = el('button', 'cp-btn', { type: 'button', title: 'Save current settings as a new preset' })
     applyButtonIcon(addPresetBtn, BUTTON_ICON_MAP.add, 'New Preset')
     const btnExportPreset = el('button', 'cp-btn', { type: 'button', title: 'Export current preset as a file' })

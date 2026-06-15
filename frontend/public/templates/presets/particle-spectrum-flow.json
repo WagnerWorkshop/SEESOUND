@@ -1,0 +1,283 @@
+{
+    "schemaVersion": 3,
+    "name": "particle-spectrum-flow",
+    "params": {
+        "inputGain": 0.85,
+        "freqNormMin": 40,
+        "freqNormMax": 12000,
+        "frequencyFftSize": 16384,
+        "cqtDetailsPer10Octaves": 1000,
+        "fluxWindowFrames": 10,
+        "binMagnitudeNormMin": -70,
+        "binMagnitudeNormMax": 0,
+        "binFluxNormMin": 0,
+        "binFluxNormMax": 0.5,
+        "binPhaseDeviationNormMin": 0,
+        "binPhaseDeviationNormMax": 3.14,
+        "globalRmsNormMin": -60,
+        "globalRmsNormMax": 0,
+        "spectralCentroidNormMin": 150,
+        "spectralCentroidNormMax": 8000,
+        "globalSpectralFluxNormMin": 0,
+        "globalSpectralFluxNormMax": 100,
+        "spectralFlatnessNormMin": 0,
+        "spectralFlatnessNormMax": 1,
+        "defaultParticleSize": 2.5,
+        "canvasWidth": 2000,
+        "canvasHeight": 1000,
+        "canvasScale": 50,
+        "defaultBackgroundHue": 0,
+        "defaultBackgroundSaturation": 0,
+        "defaultBackgroundLightness": 0,
+        "maxParticles": 2000000,
+        "particlesByFrame": 1500,
+        "blendMode": "screen",
+        "blendEnabled": 1,
+        "cameraProjection": "axonometric",
+        "cameraAxoPreset": "orthoXY",
+        "persistMode": 0,
+        "postProcessEnabled": 1,
+        "bloomEnabled": 1,
+        "bloomStrength": 1.2,
+        "bloomRadius": 0.6,
+        "bloomThreshold": 0.25,
+        "fogEnabled": 0,
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 3,
+        "palettes": [],
+        "tuners": [],
+        "ruleUiState": {
+            "collapsedGroups": [],
+            "collapsedSubgroups": [],
+            "collapsedRules": [],
+            "selectedContextGroup": "spawnedParticles"
+        },
+        "ruleEntities": [
+            {
+                "id": "entity-spectrum",
+                "name": "Spectrum Flow",
+                "enabled": true,
+                "order": 0,
+                "entityShapeType": "particle",
+                "spacingMode": "coordinates",
+                "cloudShape": "cylindrical",
+                "definitions": [],
+                "rules": [
+                    {
+                        "id": "rule-x-time-pan",
+                        "group": "Position",
+                        "subgroup": "X",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "x",
+                                "expression": "(time / audioLengthSec - 0.5 + pan * 0.3) * canvasWidth"
+                            }
+                        ],
+                        "order": 0
+                    },
+                    {
+                        "id": "rule-y-frequency",
+                        "group": "Position",
+                        "subgroup": "Y",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "y",
+                                "expression": "(normFreq - 0.5) * canvasHeight"
+                            }
+                        ],
+                        "order": 1
+                    },
+                    {
+                        "id": "rule-z-depth",
+                        "group": "Position",
+                        "subgroup": "Z",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "z",
+                                "expression": "(spectralCentroid - 0.5) * 200"
+                            }
+                        ],
+                        "order": 2
+                    },
+                    {
+                        "id": "rule-size-energy",
+                        "group": "Appearance",
+                        "subgroup": "Size",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "size",
+                                "expression": "0.5 + amplitude * 4"
+                            }
+                        ],
+                        "order": 3
+                    },
+                    {
+                        "id": "rule-color-hue",
+                        "group": "Appearance",
+                        "subgroup": "Color",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "hue",
+                                "expression": "spectralCentroid"
+                            }
+                        ],
+                        "order": 4
+                    },
+                    {
+                        "id": "rule-color-saturation",
+                        "group": "Appearance",
+                        "subgroup": "Color",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "saturation",
+                                "expression": "0.6 + spectralFlatness * 0.4"
+                            }
+                        ],
+                        "order": 5
+                    },
+                    {
+                        "id": "rule-color-brightness",
+                        "group": "Appearance",
+                        "subgroup": "Color",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "brightness",
+                                "expression": "0.3 + binMagnitude"
+                            }
+                        ],
+                        "order": 6
+                    },
+                    {
+                        "id": "rule-opacity-flux",
+                        "group": "Appearance",
+                        "subgroup": "Opacity",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "opacity",
+                                "expression": "0.4 + spectralFlux * 0.6"
+                            }
+                        ],
+                        "order": 7
+                    },
+                    {
+                        "id": "rule-particlecount-density",
+                        "group": "Appearance",
+                        "subgroup": "Density",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "particleCount",
+                                "expression": "0.3 + binMagnitude * 0.7"
+                            }
+                        ],
+                        "order": 8
+                    },
+                    {
+                        "id": "rule-shape-attack",
+                        "group": "Appearance",
+                        "subgroup": "Shape",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "scope": "spawnedOnly",
+                        "condition": {
+                            "operator": ">=",
+                            "input": "binAttackTime",
+                            "value": 0.5
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "shapeType",
+                                "value": "circle"
+                            }
+                        ],
+                        "order": 9
+                    }
+                ]
+            }
+        ],
+        "ruleGlobalBlocks": {
+            "background": [
+                {
+                    "id": "bg-color",
+                    "enabled": true,
+                    "target": "background",
+                    "condition": {
+                        "operator": "always"
+                    },
+                    "actions": [
+                        {
+                            "operator": "set",
+                            "output": "hue",
+                            "expression": "spectralCentroid * 0.3"
+                        }
+                    ],
+                    "order": 0
+                }
+            ],
+            "camera": []
+        }
+    }
+}

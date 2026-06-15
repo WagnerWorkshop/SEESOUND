@@ -67,8 +67,43 @@ function normalizeHue(hue) {
     return ((unitHue % 1) + 1) % 1
 }
 
-// NOTE: frequencyToMidi, frequencyToPitchClass, frequencyToOctave removed (v2.0),
-// they were only used by the removed _buildRuleInputs method.
+// ── Frequency-to-note helpers ──
+function frequencyToMidi(freqHz) {
+    const hz = Math.max(1, Number(freqHz) || 0)
+    if (hz <= 0) return 0
+    return 12 * Math.log2(hz / 440) + 69
+}
+function midiToOctave(midi) { return Math.max(-2, Math.min(12, Math.floor((Number(midi) || 0) / 12) - 1)) }
+function midiToPitchClass(midi) { return ((Math.round(Number(midi) || 0) % 12) + 12) % 12 }
+
+// ── Blend: when both HSB and RGB are set, blend them so neither is lost ──
+function blendHsbRgb(hue, sat, bri, r, g, b) {
+    const hasHsb = Number.isFinite(hue)
+    const hasRgb = Number.isFinite(r) || Number.isFinite(g) || Number.isFinite(b)
+    // No colour rules at all → return null, caller keeps existing buffer colour (grayscale default)
+    if (!hasHsb && !hasRgb) return null
+    // Only HSB
+    if (hasHsb && !hasRgb) {
+        const hh = normalizeHue(hue)
+        const ss = Number.isFinite(sat) ? clamp01(sat) : 0.5
+        const vv = Number.isFinite(bri) ? clamp01(bri) : 0.5
+        const rgb = hsvToRgb(hh ?? 0, ss, vv)
+        return { r: rgb.r, g: rgb.g, b: rgb.b }
+    }
+    // Only RGB
+    if (!hasHsb && hasRgb) {
+        return { r: clamp01(r ?? 0), g: clamp01(g ?? 0), b: clamp01(b ?? 0) }
+    }
+    // Both HSB and RGB: equal blend
+    const hh = normalizeHue(hue)
+    const ss = Number.isFinite(sat) ? clamp01(sat) : 0.5
+    const vv = Number.isFinite(bri) ? clamp01(bri) : 0.5
+    const hsbRgb = hsvToRgb(hh ?? 0, ss, vv)
+    const wr = Number.isFinite(r) ? clamp01(r) : hsbRgb.r
+    const wg = Number.isFinite(g) ? clamp01(g) : hsbRgb.g
+    const wb = Number.isFinite(b) ? clamp01(b) : hsbRgb.b
+    return { r: hsbRgb.r * 0.5 + wr * 0.5, g: hsbRgb.g * 0.5 + wg * 0.5, b: hsbRgb.b * 0.5 + wb * 0.5 }
+}
 
 function rgbToHsv(r, g, b) {
     const rr = clamp01(r)
@@ -247,23 +282,47 @@ export class ParticleSystem {
     }
 
     _allocateBuffers(maxParticles) {
+        const oldPos = this._pos
+        const oldCol = this._col
+        const oldSz = this._sz
+        const oldAlpha = this._alpha
+        const oldShape = this._shape
+        const oldPan = this._pan
+        const oldBinRms = this._binRms
+        const oldIsFund = this._isFundamental
+        const oldLinePos = this._linePos
+        const oldLineCol = this._lineCol
+        const oldLineThick = this._lineThickness
+        const oldLineAlpha = this._lineAlpha
+
         this._capacity = Math.max(1, Math.floor(maxParticles))
         this._N = this._capacity
         this._maxActiveParticles = this._capacity
-        this._insertIndex = 0
+        // Preserve current visible count — don't reset to 0 on resize
+        const prevVisible = this._visible_count || this._visibleCount || 0
+        this._insertIndex = prevVisible
         if (this._archive) this._archive.updateOffloadBatch(this._N)
-        this._pos = new Float32Array(this._N * 3)
-        this._col = new Float32Array(this._N * 3)
-        this._sz = new Float32Array(this._N)
-        this._alpha = new Float32Array(this._N)
-        this._shape = new Float32Array(this._N)
-        this._pan = new Float32Array(this._N)
-        this._binRms = new Float32Array(this._N)
-        this._isFundamental = new Float32Array(this._N)
-        this._linePos = new Float32Array(this._N * 2 * 3)
-        this._lineCol = new Float32Array(this._N * 2 * 3)
-        this._lineThickness = new Float32Array(this._N)
-        this._lineAlpha = new Float32Array(this._N)
+
+        const copy = (old, newLen) => {
+            const arr = new Float32Array(newLen)
+            if (old) {
+                const copyLen = Math.min(old.length, newLen)
+                for (let i = 0; i < copyLen; i++) arr[i] = old[i]
+            }
+            return arr
+        }
+        this._pos = copy(oldPos, this._N * 3)
+        this._col = copy(oldCol, this._N * 3)
+        this._sz = copy(oldSz, this._N)
+        this._alpha = copy(oldAlpha, this._N)
+        this._shape = copy(oldShape, this._N)
+        this._pan = copy(oldPan, this._N)
+        this._binRms = copy(oldBinRms, this._N)
+        this._isFundamental = copy(oldIsFund, this._N)
+        this._linePos = copy(oldLinePos, this._N * 2 * 3)
+        this._lineCol = copy(oldLineCol, this._N * 2 * 3)
+        this._lineThickness = copy(oldLineThick, this._N)
+        this._lineAlpha = copy(oldLineAlpha, this._N)
 
         this._aPos = new THREE.BufferAttribute(this._pos, 3)
         this._aCol = new THREE.BufferAttribute(this._col, 3)
@@ -393,6 +452,7 @@ export class ParticleSystem {
         this._visibleCount = Math.min(this._visibleCount, clamped)
         this._visible_count = this._visibleCount
         this._paintCount = this._visibleCount
+        this._paint_count = this._visibleCount
         this._lineVisibleCount = Math.min(this._lineVisibleCount, clamped)
         this._insertIndex = this._visibleCount % clamped
         this._insert_index = this._insertIndex
@@ -404,7 +464,10 @@ export class ParticleSystem {
     clear() {
         this._paintCount = 0
         this._visibleCount = 0
+        this._visible_count = 0
+        this._paint_count = 0
         this._insertIndex = 0
+        this._insert_index = 0
         this._lineVisibleCount = 0
         if (this._archive) this._archive.clear()
         this._geo.setDrawRange(0, 0)
@@ -514,10 +577,15 @@ export class ParticleSystem {
 
     applyLivingRulesToRange(ctx, start, end) {
         const maxTouches = Math.max(0, end - start)
-        if (end > 0) console.log('[PS] applyLivingRules range:', start, end, 'touches:', maxTouches, 'livingRuleCount=', this._compiledRules.livingRuleCount)
         const stride = 1
         const loopCtx = ctx || {}
         const loopInputs = loopCtx.inputs || (loopCtx.inputs = {})
+
+        // Accumulators for cloud network modifiers (aggregated across all particles)
+        let netRep = 0, netCg = 0, netTen = 0
+        let netCount = 0
+        const hw = this._canvasHW || 500
+        const hh = this._canvasHH || 500
 
         let touched = 0
         for (let i = start; i < end; i += stride) {
@@ -540,23 +608,58 @@ export class ParticleSystem {
 
             this._compiledRules.applyLivingRules(loopCtx, particle)
 
+            // ── Aura → XYZ conversion ──
+            // Aura outputs create offsets from the entity centroid (average of
+            // all fundamental isFundamental=1 particles). This ensures harmonics
+            // distribute around the cloud centre, not around world origin (0,0,0).
+            const cloudScale = Number.isFinite(particle.cloudSize) ? Math.max(0.01, particle.cloudSize) : 1
+            const ec = this._entityCentroid || { x: 0, y: 0, z: 0 }
+            if (Number.isFinite(particle.auraDistance)) {
+                const dist = particle.auraDistance * Math.max(hw, hh) * 0.5 * cloudScale
+                const angle = Number.isFinite(particle.auraAngle)
+                    ? particle.auraAngle * Math.PI * 2
+                    : 0
+                if (Number.isFinite(particle.auraLatitude)) {
+                    // Spherical: offset from entity centroid
+                    const lat = (particle.auraLatitude - 0.5) * Math.PI
+                    particle.x = ec.x + dist * Math.cos(lat) * Math.cos(angle)
+                    particle.y = ec.y + dist * Math.sin(lat)
+                    particle.z = ec.z + dist * Math.cos(lat) * Math.sin(angle)
+                } else {
+                    // Cylindrical: offset from entity centroid
+                    const elev = Number.isFinite(particle.auraElevation)
+                        ? (particle.auraElevation - 0.5) * Math.max(hw, hh) * cloudScale * 0.5
+                        : 0
+                    particle.x = ec.x + dist * Math.cos(angle)
+                    particle.y = ec.y + elev
+                    particle.z = ec.z + dist * Math.sin(angle)
+                }
+            } else if (Number.isFinite(particle.cloudSize)) {
+                // Random cloud: scatter around entity centroid
+                const radius = particle.cloudSize * Math.max(hw, hh) * 0.4
+                const theta = Math.random() * Math.PI * 2
+                const phi = Math.acos(2 * Math.random() - 1)
+                particle.x = ec.x + radius * Math.sin(phi) * Math.cos(theta)
+                particle.y = ec.y + radius * Math.sin(phi) * Math.sin(theta)
+                particle.z = ec.z + radius * Math.cos(phi)
+            }
+
+            // ── Network modifier collection (aggregate across all particles) ──
+            if (Number.isFinite(particle.repulsion)) { netRep += particle.repulsion; netCount++ }
+            if (Number.isFinite(particle.centerGravity)) { netCg += particle.centerGravity; netCount++ }
+            if (Number.isFinite(particle.tension)) { netTen += particle.tension; netCount++ }
+
             this._pos[i * 3] = Number.isFinite(particle.x) ? particle.x : this._pos[i * 3]
             this._pos[i * 3 + 1] = Number.isFinite(particle.y) ? particle.y : this._pos[i * 3 + 1]
             this._pos[i * 3 + 2] = Number.isFinite(particle.z) ? particle.z : this._pos[i * 3 + 2]
             this._sz[i] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : this._sz[i]
-            let nextR = Number.isFinite(particle.red) ? clamp01(particle.red) : this._col[i * 3]
-            let nextG = Number.isFinite(particle.green) ? clamp01(particle.green) : this._col[i * 3 + 1]
-            let nextB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : this._col[i * 3 + 2]
-            if (this._compiledRules.usesParticleHsb) {
-                const baseHsv = rgbToHsv(nextR, nextG, nextB)
-                const hh = normalizeHue(particle.hue)
-                const ss = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : baseHsv.s
-                const vv = Number.isFinite(particle.brightness) ? clamp01(particle.brightness) : baseHsv.v
-                const rgb = hsvToRgb(hh ?? baseHsv.h, ss, vv)
-                nextR = rgb.r
-                nextG = rgb.g
-                nextB = rgb.b
-            }
+            // Blend HSB + RGB together (no gating). The blend function handles
+            // cases where only one system is active.
+            const blended = blendHsbRgb(particle.hue, particle.saturation, particle.brightness,
+                particle.red, particle.green, particle.blue)
+            let nextR = blended ? (Number.isFinite(blended.r) ? clamp01(blended.r) : this._col[i * 3]) : this._col[i * 3]
+            let nextG = blended ? (Number.isFinite(blended.g) ? clamp01(blended.g) : this._col[i * 3 + 1]) : this._col[i * 3 + 1]
+            let nextB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : this._col[i * 3 + 2]) : this._col[i * 3 + 2]
             this._col[i * 3] = nextR
             this._col[i * 3 + 1] = nextG
             this._col[i * 3 + 2] = nextB
@@ -565,6 +668,14 @@ export class ParticleSystem {
             this._binRms[i] = Number.isFinite(loopInputs.binRMSEnergy) ? clamp01(loopInputs.binRMSEnergy) : this._binRms[i]
             touched++
         }
+
+        // Store aggregated network modifiers for the engine
+        this.cloudNetworkModifiers = netCount > 0 ? {
+            repulsion: netRep / netCount,
+            centerGravity: netCg / netCount,
+            tension: netTen / netCount,
+        } : null
+
         return touched
     }
 
@@ -636,6 +747,30 @@ export class ParticleSystem {
     update(ae, params, canvasW, canvasH) {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
+
+        // ── Build harmonic object lookup for cloud mode ──
+        // Maps fundamental frequency bins → streamId, and stores per-stream positions.
+        const harmonicObjects = ae.getHarmonicObjects?.() ?? null
+        this._harmonicData = null
+        if (Array.isArray(harmonicObjects) && harmonicObjects.length > 0) {
+            const fundHzSet = new Set()      // set of fundamental Hz values
+            const fundStreamMap = new Map()   // streamId → fundamentalHz
+            const streamPositions = new Map() // streamId → {x, y, z} (to be filled during bucket loop)
+            for (const obj of harmonicObjects) {
+                const hz = obj.fundamentalHz || 0
+                if (hz > 0) {
+                    fundHzSet.add(hz)
+                    fundStreamMap.set(obj.streamId || 0, hz)
+                    streamPositions.set(obj.streamId || 0, { x: 0, y: 0, z: 0 })
+                }
+            }
+            this._harmonicData = {
+                fundHzSet,
+                fundStreamMap,
+                streamPositions,
+                objects: harmonicObjects,
+            }
+        }
 
         this._frameCounter++
         const now = performance.now()
@@ -810,6 +945,9 @@ export class ParticleSystem {
         )
         const hw = canvasUnitsW / 2
         const hh = canvasUnitsH / 2
+        // Store for aura→xyz conversion in living rules
+        this._canvasHW = hw
+        this._canvasHH = hh
         const currentTime = ae.audioEl?.currentTime ?? 0
         const audioLengthSec = ae.audioEl?.duration ?? 0
         const frameBinInputs = {
@@ -917,7 +1055,7 @@ export class ParticleSystem {
             lineDirtyMax = Math.max(lineDirtyMax, index)
         }
 
-        const writeParticle = (bucket, alphaBoost = 1) => {
+        const writeParticle = (bucket, alphaBoost = 1, isFundamentalFlag = 1) => {
             if (activeParticleCapacity <= 0) return
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) return
 
@@ -972,6 +1110,9 @@ export class ParticleSystem {
                         binEnvelope: binEnvelopeMetric,
                         binEnvelopeState: binEnvelopeMetric,
                         binRMSEnergy: binRmsMetric,
+                        // Per-bin music theory
+                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
+                        octave: midiToOctave(frequencyToMidi(hz)),
                     }),
                     particle,
                 })
@@ -988,17 +1129,12 @@ export class ParticleSystem {
             const py = Number.isFinite(particle.y) ? particle.y : y
             const pz = Number.isFinite(particle.z) ? particle.z : z
             const outSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
-            let outR = Number.isFinite(particle.red) ? clamp01(particle.red) : brightness
-            let outG = Number.isFinite(particle.green) ? clamp01(particle.green) : brightness
-            let outB = Number.isFinite(particle.blue) ? clamp01(particle.blue) : brightness
-            if (this._compiledRules.usesParticleHsb) {
-                const baseHsv = rgbToHsv(outR, outG, outB)
-                const hh = normalizeHue(particle.hue)
-                const ss = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : baseHsv.s
-                const vv = Number.isFinite(particle.brightness) ? clamp01(particle.brightness) : baseHsv.v
-                const rgb = hsvToRgb(hh ?? baseHsv.h, ss, vv)
-                outR = rgb.r; outG = rgb.g; outB = rgb.b
-            }
+            // Blend HSB + RGB — both work together, no gating
+            const blended = blendHsbRgb(particle.hue, particle.saturation, particle.brightness,
+                particle.red, particle.green, particle.blue)
+            let outR = blended ? (Number.isFinite(blended.r) ? clamp01(blended.r) : brightness) : brightness
+            let outG = blended ? (Number.isFinite(blended.g) ? clamp01(blended.g) : brightness) : brightness
+            let outB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : brightness) : brightness
             const outAlpha = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
 
             // Dedup: skip if identical particle already written this frame
@@ -1021,9 +1157,9 @@ export class ParticleSystem {
             this._shape[slotIndex] = shapeToValue(particle.shapeType)
             this._pan[slotIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
             this._binRms[slotIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
-            // Default isFundamental to 1 for all spawned particles;
-            // cloud particles representing harmonics will override this to 0.
-            this._isFundamental[slotIndex] = 1
+            // Set isFundamental based on harmonic object classification
+            // 1 = fundamental node, 0 = harmonic overtone
+            this._isFundamental[slotIndex] = isFundamentalFlag
             markPointDirty(slotIndex)
             wroteParticles++
 
@@ -1168,6 +1304,7 @@ export class ParticleSystem {
         }
 
         // ── Cache frame-level rule inputs once (not per-bucket) ───────────
+        const midi = frequencyToMidi(ae.peakFreq ?? 0)
         const _frameRuleBase = {
             amplitude: Number.isFinite(frameBinInputs.globalRmsEnergy) ? Number(frameBinInputs.globalRmsEnergy) : (ae.amplitude ?? 0),
             bass: ae.bass ?? 0,
@@ -1188,6 +1325,9 @@ export class ParticleSystem {
             ...frameBinInputs,
             frequencyHz: 0,
             normFreq: 0,
+            // Music theory helpers derived from peak frequency
+            notePitchClass: midiToPitchClass(midi),
+            octave: midiToOctave(midi),
         }
         // Dedup table: skip writing particles identical to one already written this frame
         const _particleDedup = persistMode !== 1 ? new Map() : null
@@ -1199,6 +1339,38 @@ export class ParticleSystem {
                 ? freqNormMaxHz
                 : Math.min(freqNormMaxHz, hzStart * stepRatio)
             const hzCenter = Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
+
+            // Determine if this bucket is a fundamental, harmonic, or neither
+            let isFund = 1 // default: treat as fundamental
+            let closestStreamId = -1
+            if (this._harmonicData) {
+                const { fundHzSet, streamPositions } = this._harmonicData
+                // Check if the bucket's frequency matches a detected fundamental (within 3%)
+                let matchFound = false
+                let minDist = Infinity
+                for (const fundHz of fundHzSet) {
+                    const ratio = hzCenter / Math.max(1, fundHz)
+                    const dist = Math.abs(ratio - 1)
+                    if (dist < minDist) minDist = dist
+                    // Exact fundamental match (±3%) → isFundamental = 1
+                    if (dist < 0.03) {
+                        isFund = 1
+                        matchFound = true
+                        break
+                    }
+                    // Harmonic multiple (integer ratio) → isFundamental = 0, track which stream
+                    const nearestInt = Math.round(ratio)
+                    if (nearestInt >= 2 && nearestInt <= 20 && Math.abs(ratio - nearestInt) < 0.03) {
+                        isFund = 0
+                        matchFound = true
+                        break
+                    }
+                }
+                if (!matchFound) {
+                    // Unclassified — nearest fundamental determines grouping
+                    isFund = 0
+                }
+            }
 
             const binStart = _hzToBin(hzStart)
             const binEnd = _hzToBin(hzEnd)
@@ -1283,7 +1455,7 @@ export class ParticleSystem {
                 binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
                 binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
                 binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-            })
+            }, 1, isFund)
             writeLine({
                 hz: hzCenter,
                 byte: peakByteBucket,
@@ -1327,7 +1499,18 @@ export class ParticleSystem {
 
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visible_count > 0
         if (livingRulesActive) {
-            console.log('[PS] living rules active: count=', this._compiledRules.livingRuleCount, 'visible=', this._visible_count, 'spawnRuleCount=', this._compiledRules.spawnRuleCount)
+            // Compute entity centroid from all fundamental isFundamental=1 particles
+            let cx = 0, cy = 0, cz = 0, nFund = 0
+            const n = Math.min(this._visible_count, this._pos.length / 3)
+            for (let i = 0; i < n; i++) {
+                if (this._isFundamental[i] > 0.5) {
+                    cx += this._pos[i * 3]
+                    cy += this._pos[i * 3 + 1]
+                    cz += this._pos[i * 3 + 2]
+                    nFund++
+                }
+            }
+            this._entityCentroid = nFund > 0 ? { x: cx / nFund, y: cy / nFund, z: cz / nFund } : null
             this.applyLivingRulesToRange({ params, inputs: _frameRuleBase }, 0, this._visible_count)
         }
 
@@ -1349,6 +1532,8 @@ export class ParticleSystem {
                 angleOfView: null,
             }
         }
+        // Always mark the living-rule range dirty on every frame when living rules are active
+        // This ensures GPU buffers always reflect the latest compiled rule values
         if (livingRulesActive && this._visible_count > 0) {
             pointDirtyMin = Math.min(pointDirtyMin, 0)
             pointDirtyMax = Math.max(pointDirtyMax, this._visible_count - 1)

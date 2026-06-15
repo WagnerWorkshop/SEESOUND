@@ -170,7 +170,7 @@ export class AudioEngine {
 
         // Lookahead buffer size auto-calculated from FFT sizes
         this._lookaheadFrames = 0
-        
+
         // Max bins for buffer sizing
         this._maxBins = Math.max(this.FFT_SIZE / 2, this.RHYTHM_FFT_SIZE / 2)
     }

@@ -1,6 +1,41 @@
 {
     "templates": [
         {
+            "id": "particle-spectrum-flow",
+            "title": "Spectrum Flow",
+            "presetPath": "/templates/presets/particle-spectrum-flow.json",
+            "presetName": "particle-spectrum-flow",
+            "thumbnail": "/templates/thumbnails/linear-colors.svg"
+        },
+        {
+            "id": "auroral-clouds",
+            "title": "Auroral Clouds (Cylindrical Aura)",
+            "presetPath": "/templates/presets/auroral-clouds.json",
+            "presetName": "auroral-clouds",
+            "thumbnail": "/templates/thumbnails/linear-timbre-colors.svg"
+        },
+        {
+            "id": "harmonic-network",
+            "title": "Harmonic Network (Force Graph)",
+            "presetPath": "/templates/presets/harmonic-network.json",
+            "presetName": "harmonic-network",
+            "thumbnail": "/templates/thumbnails/holistic-3d.svg"
+        },
+        {
+            "id": "spherical-aura",
+            "title": "Spherical Aura",
+            "presetPath": "/templates/presets/spherical-aura.json",
+            "presetName": "spherical-aura",
+            "thumbnail": "/templates/thumbnails/holistic-3d.svg"
+        },
+        {
+            "id": "timbre-lines",
+            "title": "Timbre Lines (Particles + Lines)",
+            "presetPath": "/templates/presets/timbre-lines.json",
+            "presetName": "timbre-lines",
+            "thumbnail": "/templates/thumbnails/linear-textured.svg"
+        },
+        {
             "id": "conversation-dual-clouds",
             "title": "Conversation Dual Clouds",
             "presetPath": "/templates/presets/conversation-dual-clouds.json",

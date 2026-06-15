@@ -72,9 +72,11 @@ export class GraphSolver {
     /**
      * Synchronise the graph with the latest harmonic objects from the worklet.
      * Adds new nodes, removes stale ones, and updates existing node properties.
-     * @param {Array<import('../types').HarmonicObject>} harmonicObjects
+     * When harmonicObjects is null/empty, creates fallback nodes based on visible count.
+     * @param {Array<import('../types').HarmonicObject>|null} harmonicObjects
+     * @param {number} [visibleCount=0] - Number of visible particles (used for fallback nodes).
      */
-    sync(harmonicObjects) {
+    sync(harmonicObjects, visibleCount = 0) {
         const incoming = Array.isArray(harmonicObjects) ? harmonicObjects : []
         const incomingIds = new Set()
 
@@ -123,8 +125,32 @@ export class GraphSolver {
 
         // Remove stale nodes
         for (const sid of this.nodes.keys()) {
-            if (!incomingIds.has(sid)) {
+            if (typeof sid === 'number' && sid >= 0 && !incomingIds.has(sid)) {
                 this.nodes.delete(sid)
+            }
+        }
+
+        // Fallback: create placeholder nodes when no harmonic data exists
+        // (particle mode, or worklet not yet producing objects)
+        if (incoming.length === 0 && visibleCount > 0 && this.nodes.size < visibleCount) {
+            const needed = Math.min(visibleCount - this.nodes.size, 50) // cap at 50 fallback nodes
+            for (let i = 0; i < needed; i++) {
+                const fid = -1 - i // negative IDs mark fallback nodes
+                if (this.nodes.has(fid)) continue
+                const angle = Math.random() * Math.PI * 2
+                const radius = 10 + Math.random() * 30
+                this.nodes.set(fid, {
+                    id: fid,
+                    fundamentalHz: 0,
+                    pitchClass: Math.floor(Math.random() * 12),
+                    volume: 0.5 + Math.random() * 0.5,
+                    x: Math.cos(angle) * radius,
+                    y: Math.sin(angle) * radius,
+                    z: (Math.random() - 0.5) * this.config.zSpread,
+                    vx: 0,
+                    vy: 0,
+                    vz: 0,
+                })
             }
         }
     }

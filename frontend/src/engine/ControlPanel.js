@@ -259,17 +259,19 @@ const FIXED_RULE_ROWS = Object.freeze([
     { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
     { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
 
-    // Cloud Aura — cylindrical (available in both spacing modes)
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraDistance', label: 'Distance', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraAngle', label: 'Angle', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
+    // Cloud Aura — cylindrical
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'General', output: 'cloudSize', label: 'Cloud Size', entityShapes: ['cloud'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraDistance', label: 'Radius', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraAngle', label: 'Angle (°)', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
     { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraElevation', label: 'Elevation', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
 
     // Cloud Aura — spherical
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraDistance', label: 'Distance', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraAngle', label: 'Longitude', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraLatitude', label: 'Latitude', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraDistance', label: 'Radius', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraAngle', label: 'Longitude (°)', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraLatitude', label: 'Latitude (°)', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
 
-    // Cloud Network — force modifiers (network mode only)
+    // Cloud Random — spread
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Random 3D', output: 'cloudSize', label: 'Spread', entityShapes: ['cloud'], cloudShapes: ['random'], sectionLabel: 'Aura' },
     { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'repulsion', label: 'Repulsion', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
     { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'centerGravity', label: 'Center Gravity', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
     { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'tension', label: 'Tension', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },

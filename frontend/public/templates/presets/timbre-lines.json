@@ -1,0 +1,291 @@
+{
+    "schemaVersion": 3,
+    "name": "timbre-lines",
+    "params": {
+        "inputGain": 0.9,
+        "freqNormMin": 80,
+        "freqNormMax": 6000,
+        "frequencyFftSize": 16384,
+        "cqtDetailsPer10Octaves": 1000,
+        "fluxWindowFrames": 10,
+        "binMagnitudeNormMin": -70,
+        "binMagnitudeNormMax": 0,
+        "globalRmsNormMin": -60,
+        "globalRmsNormMax": 0,
+        "spectralCentroidNormMin": 150,
+        "spectralCentroidNormMax": 8000,
+        "spectralFlatnessNormMin": 0,
+        "spectralFlatnessNormMax": 1,
+        "defaultParticleSize": 2,
+        "canvasWidth": 2000,
+        "canvasHeight": 1000,
+        "canvasScale": 50,
+        "defaultBackgroundHue": 200,
+        "defaultBackgroundSaturation": 15,
+        "defaultBackgroundLightness": 3,
+        "maxParticles": 2000000,
+        "particlesByFrame": 2000,
+        "blendMode": "screen",
+        "blendEnabled": 1,
+        "cameraProjection": "axonometric",
+        "cameraAxoPreset": "orthoXY",
+        "persistMode": 1,
+        "postProcessEnabled": 1,
+        "bloomEnabled": 1,
+        "bloomStrength": 1.1,
+        "bloomRadius": 0.5,
+        "bloomThreshold": 0.2,
+        "fogEnabled": 0,
+        "ruleEngineEnabled": true,
+        "ruleSchemaVersion": 3,
+        "palettes": [],
+        "tuners": [],
+        "ruleUiState": {
+            "collapsedGroups": [],
+            "collapsedSubgroups": [],
+            "collapsedRules": [],
+            "selectedContextGroup": "spawnedParticles"
+        },
+        "ruleEntities": [
+            {
+                "id": "entity-particle-layer",
+                "name": "Particle Layer",
+                "enabled": true,
+                "order": 0,
+                "entityShapeType": "particle",
+                "spacingMode": "coordinates",
+                "cloudShape": "cylindrical",
+                "definitions": [],
+                "rules": [
+                    {
+                        "id": "px-time",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "x",
+                                "expression": "(time / audioLengthSec - 0.5) * canvasWidth"
+                            }
+                        ],
+                        "order": 0
+                    },
+                    {
+                        "id": "py-freq",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "y",
+                                "expression": "(normFreq - 0.5) * canvasHeight"
+                            }
+                        ],
+                        "order": 1
+                    },
+                    {
+                        "id": "psize",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "size",
+                                "expression": "0.5 + binMagnitude * 3"
+                            }
+                        ],
+                        "order": 2
+                    },
+                    {
+                        "id": "phue",
+                        "enabled": true,
+                        "target": "spawnedParticles",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "hue",
+                                "expression": "normFreq"
+                            }
+                        ],
+                        "order": 3
+                    }
+                ]
+            },
+            {
+                "id": "entity-line-layer",
+                "name": "Timbre Lines",
+                "enabled": true,
+                "order": 1,
+                "entityShapeType": "line",
+                "spacingMode": "coordinates",
+                "cloudShape": "cylindrical",
+                "definitions": [],
+                "rules": [
+                    {
+                        "id": "lx-time",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "x",
+                                "expression": "(time / audioLengthSec - 0.5) * canvasWidth"
+                            }
+                        ],
+                        "order": 0
+                    },
+                    {
+                        "id": "ly-freq",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "y",
+                                "expression": "(normFreq - 0.5) * canvasHeight"
+                            }
+                        ],
+                        "order": 1
+                    },
+                    {
+                        "id": "llength",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "length",
+                                "expression": "amplitude * 100"
+                            }
+                        ],
+                        "order": 2
+                    },
+                    {
+                        "id": "lthickness",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "thickness",
+                                "expression": "1 + spectralFlux * 5"
+                            }
+                        ],
+                        "order": 3
+                    },
+                    {
+                        "id": "lcount",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "lineCount",
+                                "expression": "0.3 + binMagnitude * 0.7"
+                            }
+                        ],
+                        "order": 4
+                    },
+                    {
+                        "id": "ldirection",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": ">=",
+                            "input": "spectralCentroid",
+                            "value": 0.5
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "direction",
+                                "value": "x"
+                            }
+                        ],
+                        "order": 5
+                    },
+                    {
+                        "id": "lhue",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "hue",
+                                "expression": "normFreq"
+                            }
+                        ],
+                        "order": 6
+                    },
+                    {
+                        "id": "lopacity",
+                        "enabled": true,
+                        "target": "lines",
+                        "condition": {
+                            "operator": "always"
+                        },
+                        "actions": [
+                            {
+                                "operator": "set",
+                                "output": "opacity",
+                                "expression": "0.2 + amplitude * 0.8"
+                            }
+                        ],
+                        "order": 7
+                    }
+                ]
+            }
+        ],
+        "ruleGlobalBlocks": {
+            "background": [
+                {
+                    "id": "bg-update",
+                    "enabled": true,
+                    "target": "background",
+                    "condition": {
+                        "operator": "always"
+                    },
+                    "actions": [
+                        {
+                            "operator": "set",
+                            "output": "hue",
+                            "expression": "spectralCentroid * 0.2"
+                        }
+                    ],
+                    "order": 0
+                }
+            ],
+            "camera": []
+        }
+    }
+}

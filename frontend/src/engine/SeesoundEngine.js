@@ -44,6 +44,7 @@ export class SeesoundEngine {
         /** @type {string} */
         this._lastRuleHash = ''
         this._bootstrapCount = 0
+        this._hasLivingRules = false
 
         this._isPlaying = false
         this._frameN = 0
@@ -65,7 +66,7 @@ export class SeesoundEngine {
         this._camera = null
 
         // Param subscription — recompile rules when entity/global rules change
-        this._unsubscribeParams = paramSubscribe((key) => {
+        this._unsubscribeParams = paramSubscribe((_, key) => {
             if (key === 'ruleEntities' || key === 'ruleGlobalBlocks' || key === 'ruleEngineEnabled') {
                 console.log('[Engine] param changed:', key, '→ recompiling')
                 this._syncParticleRules()
@@ -295,30 +296,42 @@ export class SeesoundEngine {
         window.dispatchEvent(new CustomEvent('seesound:rule-probe', { detail: { inputs } }))
 
         // ── Cloud network graph solver ──
-        if (this._cloudPositioning === 'network') {
+        const isNetwork = this._cloudPositioning === 'network'
+        if (isNetwork) {
             const harmonicObjects = engine.getHarmonicObjects?.() ?? null
-            if (harmonicObjects) {
-                this._graphSolver.sync(harmonicObjects)
-                // Read modifier outputs from the particle system's compiled rule state
-                let repMul = 1, cgMul = 1, tenMul = 1
-                if (sys.cloudNetworkModifiers) {
-                    const m = sys.cloudNetworkModifiers
-                    if (Number.isFinite(m.repulsion)) repMul = Math.max(0, Math.min(1, m.repulsion))
-                    if (Number.isFinite(m.centerGravity)) cgMul = Math.max(0, Math.min(1, m.centerGravity))
-                    if (Number.isFinite(m.tension)) tenMul = Math.max(0, Math.min(1, m.tension))
-                }
-                this._graphSolver.step({
-                    deltaTime: 1 / 60,
-                    repulsion: repMul,
-                    centerGravity: cgMul,
-                    tension: tenMul,
-                })
-                this._graphPositions = this._graphSolver.getAllPositions()
-                // Emit positions for main.js / particle system to consume
-                window.dispatchEvent(new CustomEvent('seesound:cloud-network-positions', {
-                    detail: { positions: this._graphPositions, count: this._graphPositions.size },
-                }))
+            const visibleCount = sys._visible_count || 0
+            this._graphSolver.sync(harmonicObjects, visibleCount)
+            let repMul = 1, cgMul = 1, tenMul = 1
+            if (sys.cloudNetworkModifiers) {
+                const m = sys.cloudNetworkModifiers
+                if (Number.isFinite(m.repulsion)) repMul = Math.max(0, Math.min(1, m.repulsion))
+                if (Number.isFinite(m.centerGravity)) cgMul = Math.max(0, Math.min(1, m.centerGravity))
+                if (Number.isFinite(m.tension)) tenMul = Math.max(0, Math.min(1, m.tension))
             }
+            this._graphSolver.step({
+                deltaTime: 1 / 60,
+                repulsion: repMul,
+                centerGravity: cgMul,
+                tension: tenMul,
+            })
+            this._graphPositions = this._graphSolver.getAllPositions()
+            if (sys._pos && sys._visible_count > 0 && this._graphPositions.size > 0) {
+                const posArr = [...this._graphPositions.values()]
+                const n = Math.min(sys._visible_count, posArr.length)
+                // Scale to canvas units
+                const canvasScale = Math.max(1, Math.min(canvasW || 2000, canvasH || 1000)) * 0.4
+                for (let i = 0; i < n; i++) {
+                    const p = posArr[i % posArr.length]
+                    sys._pos[i * 3] = p.x / canvasScale * canvasW * 0.4
+                    sys._pos[i * 3 + 1] = p.y / canvasScale * canvasH * 0.4
+                    sys._pos[i * 3 + 2] = p.z
+                }
+                if (typeof sys._markPointRangeDirty === 'function') {
+                    sys._markPointRangeDirty(0, sys._visible_count - 1)
+                }
+            }
+        } else {
+            this._graphPositions = null
         }
     }
 
@@ -370,6 +383,9 @@ export class SeesoundEngine {
             canvasWidthUnits: cu.w, canvasHeightUnits: cu.h,
             canvasWidth: Number(params.canvasWidth ?? cu.w), canvasHeight: Number(params.canvasHeight ?? cu.h),
             audioLengthSec: ae.audioEl?.duration ?? 0,
+            // Music theory
+            notePitchClass: ae.fundamentalNote ?? 0,
+            octave: ae.fundamentalPitch > 0 ? Math.floor(ae.fundamentalPitch / 12) - 1 : 0,
         }
     }
 
@@ -409,9 +425,11 @@ export class SeesoundEngine {
     _syncParticleRules() {
         if (!this._ps) return
         // Derive engine mode from entity settings
+        // Only consider enabled entities for mode detection
         const entities = Array.isArray(params.ruleEntities) ? params.ruleEntities : []
-        const hasCloud = entities.some((e) => e?.entityShapeType === 'cloud')
-        const hasNetwork = entities.some((e) => e?.spacingMode === 'network' && e?.entityShapeType === 'cloud')
+        const enabledEntities = entities.filter((e) => e?.enabled !== false)
+        const hasCloud = enabledEntities.some((e) => e?.entityShapeType === 'cloud')
+        const hasNetwork = enabledEntities.some((e) => e?.spacingMode === 'network' && e?.entityShapeType === 'cloud')
 
         const derivedMode = hasCloud ? 'cloud' : 'particle'
         const derivedPositioning = hasNetwork ? 'network' : 'direct'
@@ -433,14 +451,12 @@ export class SeesoundEngine {
         const rules = params.ruleEngineEnabled !== false
             ? this._flattenRules(entities, params.ruleGlobalBlocks ?? {})
             : []
-        console.log('[Engine] _syncParticleRules: entities=', entities.length, 'hasCloud=', hasCloud, 'hasNetwork=', hasNetwork, 'derivedMode=', derivedMode, 'flattenedRules=', rules.length)
-        // Log target breakdown every compile
-        const targetCounts = {}
-        for (const r of rules) {
-            const t = r.target || 'unknown'
-            targetCounts[t] = (targetCounts[t] || 0) + 1
+        // Only log compile info if there are actual rule changes (skip first bootstrap echo)
+        if (this._bootstrapCount > 0) {
+            const targetCounts = {}
+            for (const r of rules) targetCounts[r.target || 'unknown'] = (targetCounts[r.target || 'unknown'] || 0) + 1
+            console.log('[Engine] compile: entities=', entities.length, 'mode=', derivedMode, 'rules=', rules.length, 'targets=', JSON.stringify(targetCounts), 'hasLiving=', this._hasLivingRules)
         }
-        console.log('[Engine] rule target breakdown:', JSON.stringify(targetCounts))
         const graph = resolveDependencyGraph(rules, this._mode, { cloudNetwork: this._cloudPositioning === 'network' })
         const byTarget = this._buildRequiredInputsByTarget(rules)
         this._ae?.setRuleInputUsage(byTarget)
@@ -448,16 +464,17 @@ export class SeesoundEngine {
         if (cr) this._emit(EngineEvent.COMPILE_STATE, cr)
         this._emit(EngineEvent.GRAPH_UPDATED, { referencedInputs: [...graph.referencedInputs], mode: this._mode })
 
-        // Force-particle clear so next frame respawns with fresh compile.
-        // This ensures rule changes always take effect immediately.
-        // Skip the very first call (startup bootstrap) — particles are not yet spawned anyway.
-        if (this._ps?.clear && this._bootstrapCount > 0) {
-            if (rules.length > 0 && cr?.hash && cr.hash !== this._lastRuleHash) {
-                this._lastRuleHash = cr.hash
-                console.log('[Engine] rule hash changed, clearing particles for fresh spawn')
-                this._ps.clear()
-            }
+        // Track whether ANY active rule could affect particle positions (living rules + network)
+        // This gates the graph solver and the GPU dirty path
+        this._hasLivingRules = rules.some((r) =>
+            (r.target === 'allParticles' || r.target === 'spawnedParticles')
+            && r.enabled !== false && r.sectionDisabled !== true
+        )
+        // Also set if we're in network mode with any rules at all
+        if (!this._hasLivingRules && this._cloudPositioning === 'network') {
+            this._hasLivingRules = rules.length > 0
         }
+
         this._bootstrapCount++
     }
 

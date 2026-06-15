@@ -77,17 +77,17 @@ const _legacyInputAliases = [
 // Maps input variable IDs to the set of modes they're available in.
 // Absence = legal in all modes.
 const _INPUT_MODES = {
-    // Particle-only: per-bin variables
-    binMagnitude: ['particle'],
-    binPhase: ['particle'],
-    binFlux: ['particle'],
-    binPhaseDeviation: ['particle'],
-    binAttackTime: ['particle'],
-    binEnvelope: ['particle'],
-    binEnvelopeState: ['particle'],
-    binRMSEnergy: ['particle'],
-    notePitchClass: ['particle'],
-    octave: ['particle'],
+    // Per-bin variables — available in ALL modes
+    binMagnitude: ['particle', 'cloud'],
+    binPhase: ['particle', 'cloud'],
+    binFlux: ['particle', 'cloud'],
+    binPhaseDeviation: ['particle', 'cloud'],
+    binAttackTime: ['particle', 'cloud'],
+    binEnvelope: ['particle', 'cloud'],
+    binEnvelopeState: ['particle', 'cloud'],
+    binRMSEnergy: ['particle', 'cloud'],
+    notePitchClass: ['particle', 'cloud'],
+    octave: ['particle', 'cloud'],
     // Cloud-only: entity variables
     fundamentalHz: ['cloud'],
     fundamentalPitch: ['cloud'],
@@ -139,6 +139,7 @@ const _outputEntries = [
     { id: 'thickness', type: 'number', range: [0, 64], targets: ['lines'], modes: ['particle', 'cloud'] },
     { id: 'lineCount', type: 'number', range: [0, 1], targets: ['lines'], modes: ['particle', 'cloud'] },
     // Cloud-mode only outputs — Aura positioning (available in both spacing modes)
+    { id: 'cloudSize', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
     { id: 'auraDistance', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
     { id: 'auraAngle', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
     { id: 'auraElevation', type: 'number', range: [0, 1], targets: ['spawnedParticles', 'allParticles'], modes: ['cloud'] },
