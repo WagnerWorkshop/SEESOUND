@@ -465,6 +465,12 @@ export function buildViewMenu(body, syncRegistry, deps) {
     registerSync(syncRegistry, syncCameraFields, ['cameraPosX', 'cameraPosY', 'cameraPosZ', 'cameraTargetX', 'cameraTargetY', 'cameraTargetZ'])
 
     window.addEventListener('seesound:camera-state', (event) => {
+        // Skip when the user is actively editing an input field
+        const activeEl = document.activeElement
+        if (activeEl && (activeEl === camPosX || activeEl === camPosY || activeEl === camPosZ ||
+            activeEl === camTargetX || activeEl === camTargetY || activeEl === camTargetZ)) {
+            return
+        }
         const detail = event?.detail || {}
         const px = Number(detail.position?.x)
         const py = Number(detail.position?.y)

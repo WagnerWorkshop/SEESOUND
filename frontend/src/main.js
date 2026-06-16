@@ -425,6 +425,19 @@ function applyRuleCameraOutput(output) {
         camera.position.z = output.z
         posChanged = true
     }
+    // Apply target (look-at point) from camera rules
+    if (Number.isFinite(output.targetX)) {
+        orbitTarget.x = output.targetX
+        posChanged = true
+    }
+    if (Number.isFinite(output.targetY)) {
+        orbitTarget.y = output.targetY
+        posChanged = true
+    }
+    if (Number.isFinite(output.targetZ)) {
+        orbitTarget.z = output.targetZ
+        posChanged = true
+    }
     if (posChanged) {
         camera.lookAt(orbitTarget)
         syncOrbitFromCamera()
@@ -890,12 +903,20 @@ function animate() {
             y: camera.position.y,
             z: camera.position.z,
             zoom: camera.zoom,
+            targetX: orbitTarget.x,
+            targetY: orbitTarget.y,
+            targetZ: orbitTarget.z,
         },
         cameraCanvasWidthUnits: cameraUnits.w,
         cameraCanvasHeightUnits: cameraUnits.h,
     }
     ps.update(ae, updateParams, w, h)
-    applyRuleCameraOutput(ps.getCameraOutput())
+    // Apply camera rules only when the user is NOT interacting with the canvas.
+    // While mouse buttons are down (pan/orbit/rotate), user input takes priority.
+    // On release, the camera snaps back to rule-driven position next frame.
+    if (!pointerState.active) {
+        applyRuleCameraOutput(ps.getCameraOutput())
+    }
 
     // Sync live camera state for View menu display every frame
     // (captures position, target AND rotation from right-drag)

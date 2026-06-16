@@ -77,32 +77,84 @@ function midiToOctave(midi) { return Math.max(-2, Math.min(12, Math.floor((Numbe
 function midiToPitchClass(midi) { return ((Math.round(Number(midi) || 0) % 12) + 12) % 12 }
 
 // ── Blend: when both HSB and RGB are set, blend them so neither is lost ──
+// Brightness (HSV value V) works as follows:
+//   - brightness=0 → black
+//   - brightness=1 → full colour intensity
+//   - brightness>1 → overbright, blends toward white
+// When brightness is set alongside RGB, it scales the final RGB toward white.
 function blendHsbRgb(hue, sat, bri, r, g, b) {
-    const hasHsb = Number.isFinite(hue)
+    const hasHue = Number.isFinite(hue)
+    const hasSat = Number.isFinite(sat)
+    const hasBri = Number.isFinite(bri)
     const hasRgb = Number.isFinite(r) || Number.isFinite(g) || Number.isFinite(b)
+    const hasHsb = hasHue || hasSat || hasBri
+
     // No colour rules at all → return null, caller keeps existing buffer colour (grayscale default)
     if (!hasHsb && !hasRgb) return null
-    // Only HSB
-    if (hasHsb && !hasRgb) {
-        const hh = normalizeHue(hue)
-        const ss = Number.isFinite(sat) ? clamp01(sat) : 0.5
-        const vv = Number.isFinite(bri) ? clamp01(bri) : 0.5
-        const rgb = hsvToRgb(hh ?? 0, ss, vv)
-        return { r: rgb.r, g: rgb.g, b: rgb.b }
+
+    // Brightness-only (no hue, no sat, no RGB): grayscale from black to white
+    if (hasBri && !hasHue && !hasSat && !hasRgb) {
+        const v = Math.max(0, bri)
+        return { r: Math.min(1, v), g: Math.min(1, v), b: Math.min(1, v) }
     }
-    // Only RGB
-    if (!hasHsb && hasRgb) {
-        return { r: clamp01(r ?? 0), g: clamp01(g ?? 0), b: clamp01(b ?? 0) }
+
+    // Compute base RGB from whatever is set
+    let baseR = 0, baseG = 0, baseB = 0
+
+    if (hasHsb) {
+        // Build HSB colour
+        const hh = hasHue ? normalizeHue(hue) ?? 0 : 0
+        const ss = hasSat ? clamp01(sat) : 0
+        // Value: 0=black, 1=full colour, >1=overbright (white blend)
+        const vv = hasBri ? Math.max(0, bri) : 1
+        const hsvRgb = hsvToRgb(hh, ss, Math.min(1, vv))
+        baseR = hsvRgb.r
+        baseG = hsvRgb.g
+        baseB = hsvRgb.b
+        // Overbright: blend toward white
+        if (vv > 1) {
+            const over = vv - 1
+            const maxOver = Math.min(over, 2)
+            const t = maxOver / 2
+            baseR = baseR * (1 - t) + t
+            baseG = baseG * (1 - t) + t
+            baseB = baseB * (1 - t) + t
+        }
     }
-    // Both HSB and RGB: equal blend
-    const hh = normalizeHue(hue)
-    const ss = Number.isFinite(sat) ? clamp01(sat) : 0.5
-    const vv = Number.isFinite(bri) ? clamp01(bri) : 0.5
-    const hsbRgb = hsvToRgb(hh ?? 0, ss, vv)
-    const wr = Number.isFinite(r) ? clamp01(r) : hsbRgb.r
-    const wg = Number.isFinite(g) ? clamp01(g) : hsbRgb.g
-    const wb = Number.isFinite(b) ? clamp01(b) : hsbRgb.b
-    return { r: hsbRgb.r * 0.5 + wr * 0.5, g: hsbRgb.g * 0.5 + wg * 0.5, b: hsbRgb.b * 0.5 + wb * 0.5 }
+
+    if (hasRgb) {
+        const wr = Number.isFinite(r) ? clamp01(r) : 0
+        const wg = Number.isFinite(g) ? clamp01(g) : 0
+        const wb = Number.isFinite(b) ? clamp01(b) : 0
+        if (hasHsb) {
+            // Both HSB and RGB: equal blend
+            baseR = (baseR + wr) * 0.5
+            baseG = (baseG + wg) * 0.5
+            baseB = (baseB + wb) * 0.5
+        } else {
+            // RGB only
+            baseR = wr
+            baseG = wg
+            baseB = wb
+        }
+        // If brightness is set alongside RGB, scale toward white
+        if (hasBri) {
+            const v = Math.max(0, bri)
+            if (v <= 1) {
+                baseR *= v
+                baseG *= v
+                baseB *= v
+            } else {
+                // Overbright: blend toward white
+                const t = Math.min(1, (v - 1) / 2)
+                baseR = baseR * (1 - t) + t
+                baseG = baseG * (1 - t) + t
+                baseB = baseB * (1 - t) + t
+            }
+        }
+    }
+
+    return { r: clamp01(baseR), g: clamp01(baseG), b: clamp01(baseB) }
 }
 
 function rgbToHsv(r, g, b) {
@@ -130,7 +182,9 @@ function hydrateColorState(state, r, g, b) {
     const base = rgbToHsv(r, g, b)
     if (!Number.isFinite(state.hue)) state.hue = base.h
     if (!Number.isFinite(state.saturation)) state.saturation = base.s
-    if (!Number.isFinite(state.brightness)) state.brightness = base.v
+    // Do NOT auto-set brightness from RGB — the user controls brightness independently
+    // via the brightness rule output. If unset, it stays undefined so blendHsbRgb
+    // can determine the correct behaviour.
 }
 
 function hsvToRgb(h, s, v) {
