@@ -127,29 +127,32 @@ function blendHsbRgb(hue, sat, bri, r, g, b) {
         const wg = Number.isFinite(g) ? clamp01(g) : 0
         const wb = Number.isFinite(b) ? clamp01(b) : 0
         if (hasHsb) {
-            // Both HSB and RGB: equal blend
-            baseR = (baseR + wr) * 0.5
-            baseG = (baseG + wg) * 0.5
-            baseB = (baseB + wb) * 0.5
+            // Both HSB and RGB: HSB is primary (chroma from hue/saturation/brightness).
+            // RGB provides a subtle secondary tint so explicit rgb() outputs aren't lost,
+            // but does NOT dilute HSB's chroma (which was the old 50/50 bug).
+            const tint = 0.15
+            baseR = baseR * (1 - tint) + wr * tint
+            baseG = baseG * (1 - tint) + wg * tint
+            baseB = baseB * (1 - tint) + wb * tint
         } else {
             // RGB only
             baseR = wr
             baseG = wg
             baseB = wb
-        }
-        // If brightness is set alongside RGB, scale toward white
-        if (hasBri) {
-            const v = Math.max(0, bri)
-            if (v <= 1) {
-                baseR *= v
-                baseG *= v
-                baseB *= v
-            } else {
-                // Overbright: blend toward white
-                const t = Math.min(1, (v - 1) / 2)
-                baseR = baseR * (1 - t) + t
-                baseG = baseG * (1 - t) + t
-                baseB = baseB * (1 - t) + t
+            // If brightness is set alongside RGB, scale the result
+            if (hasBri) {
+                const v = Math.max(0, bri)
+                if (v <= 1) {
+                    baseR *= v
+                    baseG *= v
+                    baseB *= v
+                } else {
+                    // Overbright: blend toward white
+                    const t = Math.min(1, (v - 1) / 2)
+                    baseR = baseR * (1 - t) + t
+                    baseG = baseG * (1 - t) + t
+                    baseB = baseB * (1 - t) + t
+                }
             }
         }
     }
@@ -1359,11 +1362,17 @@ export class ParticleSystem {
 
         // ── Cache frame-level rule inputs once (not per-bucket) ───────────
         const midi = frequencyToMidi(ae.peakFreq ?? 0)
+        // Apply input gain (Sensitivity) to key amplitude-based rule inputs.
+        // frameBinInputs goes FIRST so the explicit gain-scaled fields override it.
+        const _applyGain = (v) => v * gainMult
         const _frameRuleBase = {
-            amplitude: Number.isFinite(frameBinInputs.globalRmsEnergy) ? Number(frameBinInputs.globalRmsEnergy) : (ae.amplitude ?? 0),
-            bass: ae.bass ?? 0,
-            mid: ae.mid ?? 0,
-            high: ae.high ?? 0,
+            ...frameBinInputs,
+            amplitude: _applyGain(Number.isFinite(frameBinInputs.globalRmsEnergy) ? Number(frameBinInputs.globalRmsEnergy) : (ae.amplitude ?? 0)),
+            globalRmsEnergy: _applyGain(frameBinInputs.globalRmsEnergy),
+            binRMSEnergy: _applyGain(frameBinInputs.binRMSEnergy),
+            bass: _applyGain(ae.bass ?? 0),
+            mid: _applyGain(ae.mid ?? 0),
+            high: _applyGain(ae.high ?? 0),
             peakFreq: ae.peakFreq ?? 0,
             pan: ae.pan ?? 0,
             time: currentTime,
@@ -1376,7 +1385,6 @@ export class ParticleSystem {
             canvasWidth: Number(params.canvasWidth ?? canvasUnitsW),
             canvasHeight: Number(params.canvasHeight ?? canvasUnitsH),
             audioLengthSec,
-            ...frameBinInputs,
             frequencyHz: 0,
             normFreq: 0,
             // Music theory helpers derived from peak frequency

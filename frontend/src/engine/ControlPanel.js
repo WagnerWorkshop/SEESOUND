@@ -124,7 +124,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 0,
         max: 5,
         step: 0.1,
-        tooltip: 'Audio feature lookahead window in seconds. Only used in Interval time mode.',
+        tooltip: '⚠ Not yet wired — currently has no effect on the render pipeline.',
     },
     {
         key: 'delay',
@@ -132,7 +132,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 0,
         max: 2,
         step: 0.01,
-        tooltip: 'Delay in seconds before audio features are applied to visuals.',
+        tooltip: '⚠ Not yet wired — currently has no effect on the render pipeline.',
     },
     {
         key: 'trackingInterval',
@@ -140,7 +140,7 @@ const SETTINGS_SLIDERS = Object.freeze([
         min: 0.1,
         max: 2,
         step: 0.1,
-        tooltip: 'Update cadence in seconds for Interval time mode.',
+        tooltip: '⚠ Not yet wired — currently has no effect on the render pipeline.',
     },
 ])
 
@@ -388,6 +388,9 @@ const RULE_FUNCTION_GROUPS = Object.freeze([
             { id: 'clamp', hint: 'Math.max(min, Math.min(max, value))' },
             { id: 'pow', hint: 'Math.pow(value, exponent)' },
             { id: 'abs', hint: 'Math.abs(value)' },
+            { id: 'log', hint: 'Math.log(value) — natural logarithm (base e)' },
+            { id: 'log2', hint: 'Math.log2(value) — base-2 logarithm' },
+            { id: 'log10', hint: 'Math.log10(value) — base-10 logarithm' },
         ],
     },
     {
@@ -418,6 +421,9 @@ const RULE_FUNCTION_TEMPLATES = Object.freeze({
     clamp: ['clamp(', { slot: 'value' }, ', ', { slot: 'min' }, ', ', { slot: 'max' }, ')'],
     pow: ['pow(', { slot: 'value' }, ', ', { slot: 'exponent' }, ')'],
     abs: ['abs(', { slot: 'value' }, ')'],
+    log: ['log(', { slot: 'value' }, ')'],
+    log2: ['log2(', { slot: 'value' }, ')'],
+    log10: ['log10(', { slot: 'value' }, ')'],
     lerp: ['lerp(', { slot: 'start' }, ', ', { slot: 'end' }, ', ', { slot: 'amount' }, ')'],
     smoothstep: ['smoothstep(', { slot: 'edge0' }, ', ', { slot: 'edge1' }, ', ', { slot: 'value' }, ')'],
     mod: ['mod(', { slot: 'value' }, ', ', { slot: 'max' }, ')'],
@@ -431,6 +437,12 @@ const RULE_SLOT_MARKER = '__slot__'
 const RULE_SLOT_MARKER_PATTERN = RULE_SLOT_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const RULE_SLOT_TOKEN_PATTERN = `${RULE_SLOT_MARKER_PATTERN}([A-Za-z_][A-Za-z0-9_]*)?`
 const RULE_SLOT_MARKER_REGEX = new RegExp(`${RULE_SLOT_MARKER_PATTERN}[A-Za-z0-9_]*`, 'g')
+
+// Slider marker for preserving slider identity across serialisation.
+// Format: __SL__<sliderId>__<min>__<max>__<val>__
+const RULE_SLIDER_MARKER = '__SL__'
+const RULE_SLIDER_MARKER_PATTERN = '__(S)L__(.+?)__([\\d.-]+)__([\\d.-]+)__([\\d.-]+)__'
+const RULE_SLIDER_MARKER_REGEX = new RegExp(RULE_SLIDER_MARKER_PATTERN, 'g')
 const RULE_RENDER_TOKEN_REGEX = new RegExp(`${RULE_SLOT_TOKEN_PATTERN}|\\b(${RULE_VARIABLE_PATTERN})\\b`, 'g')
 
 function getRuleText(key, fallback = '') {
@@ -638,10 +650,18 @@ function appendExpressionPartsFromNode(node, parts) {
     if (element.classList?.contains('cp-rule-inline-slider')) {
         const sliderId = String(element.getAttribute('data-slider-id') || '')
         if (sliderId) {
-            // Serialize slider as its current numeric value for the expression
+            // Serialize slider with identity marker so it round-trips back as a slider.
             const numEl = element.querySelector('.cp-inline-slider-value')
+            const minEl = element.querySelector('.cp-inline-slider-endpoint:first-child')
+            const maxEl = element.querySelector('.cp-inline-slider-endpoint:last-child')
             const val = numEl ? parseFloat(numEl.value) : 0
-            if (Number.isFinite(val)) parts.push(String(val))
+            const mn = minEl ? parseFloat(minEl.value) : 0
+            const mx = maxEl ? parseFloat(maxEl.value) : 1
+            if (Number.isFinite(val) && Number.isFinite(mn) && Number.isFinite(mx)) {
+                parts.push(`${RULE_SLIDER_MARKER}${sliderId}__${mn}__${mx}__${val}__`)
+            } else if (Number.isFinite(val)) {
+                parts.push(String(val))
+            }
         }
         return
     }
@@ -925,6 +945,16 @@ function createSlotToken() {
     }
 }
 
+function createSliderToken(sliderId, minVal, maxVal, currentVal) {
+    return {
+        type: 'slider',
+        sliderId: String(sliderId || ''),
+        min: Number(minVal),
+        max: Number(maxVal),
+        value: Number(currentVal),
+    }
+}
+
 function mathTemplateTokens(actionId) {
     if (actionId === 'math:add') return [createOpToken(' + ')]
     if (actionId === 'math:subtract') return [createOpToken(' - ')]
@@ -945,6 +975,7 @@ function normalizeToken(token) {
     if (token.type === 'number') return createNumberToken(token.value)
     if (token.type === 'op') return createOpToken(token.code)
     if (token.type === 'slot') return createSlotToken()
+    if (token.type === 'slider') return createSliderToken(token.sliderId, token.min, token.max, token.value)
     return null
 }
 
@@ -963,6 +994,15 @@ function compileTokens(tokens) {
         }
         if (token.type === 'op') {
             parts.push(String(token.code || ''))
+            continue
+        }
+        if (token.type === 'slider') {
+            const id = String(token.sliderId || '')
+            const mn = Number.isFinite(token.min) ? token.min : 0
+            const mx = Number.isFinite(token.max) ? token.max : 1
+            const val = Number.isFinite(token.value) ? token.value : 0
+            parts.push(`${RULE_SLIDER_MARKER}${id}__${mn}__${mx}__${val}__`)
+            continue
         }
     }
     return parts.join('')
@@ -973,27 +1013,61 @@ function parseExpressionToTokens(expression) {
     if (!source.trim()) return []
 
     const variableSet = new Set(RULE_VARIABLES.map((entry) => entry.id))
-    const lexer = /([A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/])/g
     const tokens = []
     let cursor = 0
-    for (const match of source.matchAll(lexer)) {
-        const index = Number(match.index)
-        if (index > cursor) {
-            const gap = source.slice(cursor, index)
-            if (gap.trim()) tokens.push(createOpToken(gap))
+
+    // First extract slider markers — they take priority since the marker prefix
+    // would otherwise be tokenised as an identifier.
+    RULE_SLIDER_MARKER_REGEX.lastIndex = 0
+    for (const match of source.matchAll(RULE_SLIDER_MARKER_REGEX)) {
+        const idx = Number(match.index)
+        // Text before this slider
+        if (idx > cursor) {
+            const gap = source.slice(cursor, idx)
+            if (gap.trim()) tokens.push(..._tokenisePlain(gap, variableSet))
         }
-        const lexeme = String(match[0] || '')
-        if (variableSet.has(lexeme)) tokens.push(createPillToken(lexeme))
-        else if (/^\d+(?:\.\d+)?$/.test(lexeme)) tokens.push(createNumberToken(Number(lexeme)))
-        else tokens.push(createOpToken(['+', '-', '*', '/'].includes(lexeme) ? ` ${lexeme} ` : lexeme))
-        cursor = index + lexeme.length
+        const sliderId = String(match[1] || '')
+        const mn = parseFloat(match[2])
+        const mx = parseFloat(match[3])
+        const val = parseFloat(match[4])
+        if (sliderId && Number.isFinite(mn) && Number.isFinite(mx) && Number.isFinite(val)) {
+            tokens.push(createSliderToken(sliderId, mn, mx, val))
+        }
+        cursor = idx + match[0].length
     }
+
+    // Remaining text
     if (cursor < source.length) {
         const tail = source.slice(cursor)
-        if (tail.trim()) tokens.push(createOpToken(tail))
+        if (tail.trim()) tokens.push(..._tokenisePlain(tail, variableSet))
     }
+
     if (!tokens.length) tokens.push(createSlotToken())
     return tokens
+}
+
+/** Tokenise plain expression text (no slider markers). */
+function _tokenisePlain(text, variableSet) {
+    const lexer = /([A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/])/g
+    const result = []
+    let pos = 0
+    for (const match of text.matchAll(lexer)) {
+        const index = Number(match.index)
+        if (index > pos) {
+            const gap = text.slice(pos, index)
+            if (gap.trim()) result.push(createOpToken(gap))
+        }
+        const lexeme = String(match[0] || '')
+        if (variableSet.has(lexeme)) result.push(createPillToken(lexeme))
+        else if (/^\d+(?:\.\d+)?$/.test(lexeme)) result.push(createNumberToken(Number(lexeme)))
+        else result.push(createOpToken(['+', '-', '*', '/'].includes(lexeme) ? ` ${lexeme} ` : lexeme))
+        pos = index + lexeme.length
+    }
+    if (pos < text.length) {
+        const tail = text.slice(pos)
+        if (tail.trim()) result.push(createOpToken(tail))
+    }
+    return result
 }
 
 function createTokenInsertSelect(selected = '') {
@@ -1860,27 +1934,64 @@ function renderTokenEditor(rowState) {
     const source = String(rowState.expression || '')
     if (!source) return
 
-    RULE_RENDER_TOKEN_REGEX.lastIndex = 0
-    let lastIndex = 0
-    for (const match of source.matchAll(RULE_RENDER_TOKEN_REGEX)) {
-        const tokenText = String(match[0] || '')
-        const index = Number(match.index)
-        if (index > lastIndex) {
-            appendExpressionTextTokens(editor, source.slice(lastIndex, index))
+    // ── Pre-process slider markers ─────────────────────────────────────────
+    // Split the source on slider markers so each segment is either plain text
+    // or a slider marker — then render each accordingly.
+    const sliderParts = source.split(RULE_SLIDER_MARKER_REGEX)
+    // sliderParts is an alternating array: [text, id, min, max, val, text, id, min, max, val, ...]
+    // It starts with text, then every group of 4 is id, min, max, val.
+    // Reset regex state.
+    RULE_SLIDER_MARKER_REGEX.lastIndex = 0
+
+    // Build segments by scanning for slider markers manually with lastIndex tracking.
+    let cursor = 0
+    RULE_SLIDER_MARKER_REGEX.lastIndex = 0
+    for (const match of source.matchAll(RULE_SLIDER_MARKER_REGEX)) {
+        const idx = Number(match.index)
+        // Emit plain text before this slider
+        if (idx > cursor) {
+            const textBefore = source.slice(cursor, idx)
+            appendExpressionTextTokens(editor, textBefore)
         }
-        if (tokenText.startsWith(RULE_SLOT_MARKER)) {
-            // Legacy slot markers are intentionally rendered as empty gaps.
-            // Active parameter guidance is now shown by the floating hint UI.
-        } else {
-            const pill = createRuleExpressionPill(tokenText)
-            wirePillInteractions(pill)
-            editor.appendChild(pill)
+        const sliderId = String(match[1] || '')
+        const mn = parseFloat(match[2])
+        const mx = parseFloat(match[3])
+        const val = parseFloat(match[4])
+        if (sliderId && Number.isFinite(mn) && Number.isFinite(mx) && Number.isFinite(val)) {
+            const labelHint = getRuleVariableById(sliderId)?.label
+                ? getRuleVariableById(sliderId).label.replace(/([A-Z])/g, ' $1').trim()
+                : ''
+            const slider = createRuleInlineSlider(sliderId, mn, mx, val, labelHint)
+            editor.appendChild(slider)
         }
-        lastIndex = index + tokenText.length
+        cursor = idx + match[0].length
     }
 
-    if (lastIndex < source.length) {
-        appendExpressionTextTokens(editor, source.slice(lastIndex))
+    // Remaining text after last slider
+    if (cursor < source.length) {
+        const tail = source.slice(cursor)
+        // Render token pills in the remaining text
+        RULE_RENDER_TOKEN_REGEX.lastIndex = 0
+        let lastIndex = 0
+        for (const match of tail.matchAll(RULE_RENDER_TOKEN_REGEX)) {
+            const tokenText = String(match[0] || '')
+            const index = Number(match.index) + cursor
+            const localIdx = Number(match.index)
+            if (localIdx > lastIndex) {
+                appendExpressionTextTokens(editor, tail.slice(lastIndex, localIdx))
+            }
+            if (tokenText.startsWith(RULE_SLOT_MARKER)) {
+                // Legacy slot markers: render as empty gaps
+            } else {
+                const pill = createRuleExpressionPill(tokenText)
+                wirePillInteractions(pill)
+                editor.appendChild(pill)
+            }
+            lastIndex = localIdx + tokenText.length
+        }
+        if (lastIndex < tail.length) {
+            appendExpressionTextTokens(editor, tail.slice(lastIndex))
+        }
     }
 }
 

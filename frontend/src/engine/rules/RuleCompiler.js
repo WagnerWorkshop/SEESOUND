@@ -192,6 +192,9 @@ const _helpers = Object.freeze({
         if (!Number.isFinite(v) || !Number.isFinite(m) || Math.abs(m) < 1e-9) return 0
         return ((v % m) + m) % m
     },
+    log: Math.log,
+    log2: Math.log2,
+    log10: Math.log10,
     sin: Math.sin,
     cos: Math.cos,
     step: (edge, value) => (value < edge ? 0 : 1),

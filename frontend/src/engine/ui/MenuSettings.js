@@ -63,11 +63,13 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     const timeModeRow = el('div', 'cp-setting-row')
     const timeModeLabel = el('label', 'cp-setting-label', { text: 'Time Mode' })
     const timeModeSelect = el('select', 'cp-input-select')
+    timeModeSelect.title = '⚠ Not yet wired — has no effect on the render pipeline.'
     timeModeSelect.appendChild(createSelectOptions([
         { value: 'immediate', label: 'Immediate' },
         { value: 'interval', label: 'Interval' },
     ], params.timeMode || 'immediate'))
-    timeModeRow.append(timeModeLabel, timeModeSelect)
+    const timeModeNote = el('span', 'cp-setting-note', { text: '⚠ Not wired yet' })
+    timeModeRow.append(timeModeLabel, timeModeSelect, timeModeNote)
     modeSection.appendChild(timeModeRow)
 
     timeModeSelect.addEventListener('change', () => set('timeMode', timeModeSelect.value))

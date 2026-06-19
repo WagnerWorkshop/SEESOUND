@@ -692,25 +692,25 @@ const PARAMS_BASE = [
     {
         key: 'foresight', group: 'mixing', label: 'Foresight',
         min: 0, max: 5, step: 0.1, default: 0, unit: 's',
-        desc: 'How far ahead (in seconds) to buffer audio features for interval mode.',
+        desc: '⚠ NOT YET WIRED — currently has no effect on the render pipeline.',
         canDisable: false,
     },
     {
         key: 'delay', group: 'mixing', label: 'Delay',
         min: 0, max: 2, step: 0.01, default: 0, unit: 's',
-        desc: 'Delay in seconds before applying audio features to visuals.',
+        desc: '⚠ NOT YET WIRED — currently has no effect on the render pipeline.',
         canDisable: false,
     },
     {
         key: 'trackingInterval', group: 'mixing', label: 'Tracking Interval',
         min: 0.1, max: 2, step: 0.1, default: 0.5, unit: 's',
-        desc: 'Update cadence in seconds for interval mode. Lower = more responsive.',
+        desc: '⚠ NOT YET WIRED — currently has no effect on the render pipeline.',
         canDisable: false,
     },
     {
         key: 'timeMode', group: 'mixing', label: 'Time Mode',
         default: 'immediate', unit: '',
-        desc: 'Immediate: features applied per frame. Interval: features buffered over the foresight window.',
+        desc: '⚠ NOT YET WIRED — currently has no effect on the render pipeline.',
         isDropdown: true,
         dropdownOptions: [
             { label: 'Immediate', value: 'immediate' },
