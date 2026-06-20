@@ -12,26 +12,20 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     const sliderSection = el('section', 'cp-section')
     sliderSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.settings.processing || 'Processing' }))
 
-    const hearingToggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
-    const hearingLabel = UI_TEXT.settings.adjustForHumanHearing
-        || UI_TEXT.settings?.paramLabels?.adjustForHumanHearing
-        || 'Adjust for human hearing'
-    const hearingTooltip = UI_TEXT.settings?.tooltips?.adjustForHumanHearing
-        || 'Apply ISO 226 equal-loudness compensation to per-frequency volume.'
-    const hearingRow = el('label', 'cp-toggle-row')
-    hearingRow.title = hearingTooltip
-    hearingRow.append(
-        hearingToggle,
-        el('span', 'cp-setting-label', { text: hearingLabel, title: hearingTooltip }),
-    )
-    hearingToggle.addEventListener('change', () => {
-        set('adjustForHumanHearing', hearingToggle.checked ? 1 : 0)
-    })
-    sliderSection.appendChild(hearingRow)
-
     for (const definition of SETTINGS_SLIDERS) {
         sliderSection.appendChild(createSliderControl(definition, syncRegistry, deps))
     }
+
+    // ── ISO 226 Hearing Compensation slider ──
+    sliderSection.appendChild(createSliderControl({
+        key: 'adjustForHumanHearing',
+        label: UI_TEXT.settings.adjustForHumanHearing
+            || UI_TEXT.settings?.paramLabels?.adjustForHumanHearing
+            || 'Hearing Compensation',
+        min: 0, max: 60, step: 1,
+        tooltip: UI_TEXT.settings?.tooltips?.adjustForHumanHearing
+            || 'ISO 226 equal-loudness compensation. 0 = Off, 40-60 = normal listening.',
+    }, syncRegistry, deps))
 
     const resetButton = el('button', 'cp-btn cp-btn-wide', { text: UI_TEXT.settings.resetDefaults })
     applyButtonIcon(resetButton, BUTTON_ICON_MAP.reset, UI_TEXT.settings.resetDefaults)
@@ -45,12 +39,6 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     for (const definition of SETTINGS_RANGES) {
         rangeSection.appendChild(createRangePairControl(definition, syncRegistry, deps))
     }
-
-    const syncHearingToggle = () => {
-        hearingToggle.checked = Number(params.adjustForHumanHearing ?? 0) >= 0.5
-    }
-    registerSync(syncRegistry, syncHearingToggle, ['adjustForHumanHearing'])
-    syncHearingToggle()
 
     // ── Time dropdown only (engine mode is derived from entity settings) ──
     const modeSection = el('section', 'cp-section')

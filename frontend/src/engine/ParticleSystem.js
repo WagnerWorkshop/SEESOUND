@@ -64,7 +64,9 @@ function clamp01(value) {
 
 function normalizeHue(hue) {
     if (!Number.isFinite(hue)) return null
-    const unitHue = Math.abs(hue) > 1 ? hue / 360 : hue
+    // Values > 360 are in degrees (e.g. 720° = two full rotations).
+    // Values ≤ 360 are treated as unit-space [0,1) and just wrap mod 1.
+    const unitHue = Math.abs(hue) > 360 ? hue / 360 : hue
     return ((unitHue % 1) + 1) % 1
 }
 
@@ -1012,13 +1014,14 @@ export class ParticleSystem {
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
 
         // ── ISO 226 Equal-Loudness Compensation LUT ───────────────────────
-        const hearingEnabled = Number(params.adjustForHumanHearing ?? 0) >= 0.5
+        const hearingEnabled = Number(params.adjustForHumanHearing ?? 0) > 0
         if (hearingEnabled) {
             const currentFftSize = ae.FFT_SIZE || 16384
             if (!this._iso226Lut || this._iso226FftSize !== currentFftSize) {
+                const hearingPhon = Math.max(0, Math.min(120, Number(params.adjustForHumanHearing ?? 0) || 60))
                 this._iso226Lut = createIso226CompensationLut({
                     size: Math.max(100, Math.floor(currentFftSize / 2)),
-                    phon: 60,
+                    phon: hearingPhon,
                     minHz: FREQ_MIN_HZ,
                     maxHz: FREQ_MAX_HZ,
                     referenceHz: 1000,

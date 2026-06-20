@@ -202,18 +202,21 @@ const _helpers = Object.freeze({
     },
     log: (x) => {
         const v = Number(x)
-        if (!Number.isFinite(v) || v <= 0) return 0
-        return Math.log(v)
+        if (!Number.isFinite(v)) return 0
+        const eps = Math.max(v, 1e-10)
+        return Math.log(eps)
     },
     log2: (x) => {
         const v = Number(x)
-        if (!Number.isFinite(v) || v <= 0) return 0
-        return Math.log2(v)
+        if (!Number.isFinite(v)) return 0
+        const eps = Math.max(v, 1e-10)
+        return Math.log2(eps)
     },
     log10: (x) => {
         const v = Number(x)
-        if (!Number.isFinite(v) || v <= 0) return 0
-        return Math.log10(v)
+        if (!Number.isFinite(v)) return 0
+        const eps = Math.max(v, 1e-10)
+        return Math.log10(eps)
     },
     sin: Math.sin,
     cos: Math.cos,
