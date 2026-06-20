@@ -291,9 +291,9 @@ const PARAMS_BASE = [
         canDisable: false,
     },
     {
-        key: 'adjustForHumanHearing', group: 'inputProcessing', label: 'Hearing Compensation (phon)',
-        min: 0, max: 60, step: 1, default: 0, unit: 'phon',
-        desc: 'ISO 226 equal-loudness compensation level. 0 = Off, 40 = conversational speech, 60 = loud music.',
+        key: 'adjustForHumanHearing', group: 'inputProcessing', label: 'Hearing Compensation',
+        min: 0, max: 1, step: 0.1, default: 0, unit: '',
+        desc: 'ISO 226 equal-loudness compensation intensity. 0 = Off, 0.5 = moderate, 1.0 = full (60 phon).',
     },
     normRangeParam({
         key: 'binMagnitudeNormMin',

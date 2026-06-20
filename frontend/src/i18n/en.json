@@ -166,7 +166,7 @@
             "sharpness": "Sharpness",
             "activity": "Activity",
             "noisiness": "Noisiness",
-            "adjustForHumanHearing": "Adjust for Human Hearing (ISO226)",
+            "adjustForHumanHearing": "Adjust for Human Hearing",
             "sliders": "Sliders",
             "processing": "Processing",
             "system": "System",
@@ -200,7 +200,7 @@
                 "freqNormMax": "Frequency Range Max",
                 "fftSize": "Audio Resolution",
                 "fluxWindowFrames": "Activity Interval",
-                "adjustForHumanHearing": "Adjust for Human Hearing (ISO226)",
+                "adjustForHumanHearing": "Adjust for Human Hearing",
                 "binMagnitudeNormMin": "Volume Min",
                 "binMagnitudeNormMax": "Volume Max",
                 "binFluxNormMin": "Activity Detail Min",
@@ -337,7 +337,7 @@
             "undefined": "undefined",
             "insertVariable": "Audio data",
             "detailVariables": "Detail Variables",
-            "overallVariables": "Global Variables",
+            "overallVariables": "Overall Variables",
             "entityVariable": "Entity Variable",
             "entityVariables": "Entity Variables",
             "mathPlaceholder": "Type math or number and add",
@@ -786,35 +786,35 @@
         {
             "id": "bandFlatness",
             "group": "detail",
-            "label": "Local Noisiness",
+            "label": "Band Noisiness",
             "technicalName": "bandFlatness",
             "description": "Wiener entropy (geometric/arithmetic mean ratio) within the particle's local frequency band. High = noisy/breathy, low = pure tone."
         },
         {
             "id": "bandTransient",
             "group": "detail",
-            "label": "Local Transient",
+            "label": "Band Transient",
             "technicalName": "bandTransient",
             "description": "Rate of energy increase of the entire band's RMS. High = sharp attack in this octave."
         },
         {
             "id": "bandCentroid",
             "group": "detail",
-            "label": "Local Tilt",
+            "label": "Band Tilt",
             "technicalName": "bandCentroid",
             "description": "Spectral centre-of-mass within the local band. High = bright/buzzy instrument occupying this octave."
         },
         {
             "id": "bandFlux",
             "group": "detail",
-            "label": "Local Activity",
+            "label": "Band Activity",
             "technicalName": "bandFlux",
             "description": "Rate of spectral change within the local band from previous frame. High = rapid articulation or vibrato in this octave."
         },
         {
             "id": "bandInstability",
             "group": "detail",
-            "label": "Local Instability",
+            "label": "Band Instability",
             "technicalName": "bandInstability",
             "description": "Average phase deviation second derivative within the local band. High = organic/acoustic jitter, low = synthetic/steady."
         }

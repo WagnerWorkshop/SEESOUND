@@ -89,21 +89,23 @@ const MODE_GATED_VARS = new Map([
 const BRAIN_TRIGGERS = {
     pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote']),
     textureBrain: new Set(['entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume']),
-    rhythmBrain: new Set(['globalTransient']),
+    rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'bandTransient', 'bandFlux', 'bandInstability']),
     trackerBrain: new Set(['entityAge', 'streamId']),
 }
 
-// ── Worklet feature triggers (needMagnitude, needFlux, etc.)
+// ── Worklet feature triggers (frequency brain — high FFT)
+// Bin magnitude and phase stay on the frequency brain (worklet CQT).
+// Flux, phase deviation, attack time, envelope moved to rhythm brain (low FFT main-thread).
 const WORKLET_FEATURE_TRIGGERS = {
-    needMagnitude: new Set(['binMagnitude', 'binEnergy', 'binFlux', 'binEnvelope', 'binEnvelopeState', 'binRMSEnergy']),
-    needFlux: new Set(['binFlux', 'binEnvelope', 'binEnvelopeState', 'binAttackTime']),
+    needMagnitude: new Set(['binMagnitude', 'binEnergy', 'binRMSEnergy']),
+    needFlux: new Set(['binFlux']),
     needPhaseDeviation: new Set(['binPhaseDeviation']),
     needPhase: new Set(['binPhase']),
     needEnvelope: new Set(['binEnvelope', 'binEnvelopeState']),
     needAttackTime: new Set(['binAttackTime']),
 }
 
-// ── Engine feature triggers (computed on main thread)
+// ── Engine feature triggers (computed on main thread from high FFT)
 const ENGINE_FEATURE_TRIGGERS = {
     needRms: new Set(['globalRmsEnergy', 'binRMSEnergy', 'amplitude']),
     needSpectralCentroid: new Set(['spectralCentroid']),

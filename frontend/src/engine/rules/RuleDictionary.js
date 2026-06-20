@@ -14,7 +14,7 @@ const _INPUT_RANGES = Object.freeze({
     binEnvelopeState: [0, 3],
     binRMSEnergy: [0, 1],
     frequencyHz: [0, 22050],
-    notePitchClass: [0, 11],
+    notePitchClass: [0, 12],
     octave: [-2, 12],
     normFreq: [0, 1],
     pan: [-1, 1],

@@ -128,6 +128,15 @@ export class AudioEngine {
         this._binPhase = null
         this._binEnvelope = null
         this._binAttackTime = null
+        // ── Rhythm brain (low FFT) per-bin arrays ──
+        this._rhythmBinFlux = null
+        this._rhythmBinPhaseDeviation = null
+        this._rhythmBinAttackTime = null
+        this._rhythmBinEnvelope = null
+        this._rhythmBinPrevMag = null
+        this._rhythmBinPrevPhase = null
+        /** Tracks whether rhythm brain data was computed last frame */
+        this._rhythmBrainActive = false
         this._harmonicObjects = null
         this.featureSmoothingAlpha = 0.2
 
@@ -487,6 +496,38 @@ export class AudioEngine {
             let eSum = 0
             for (let i = 0; i < len; i++) eSum += this._rhythmFrequencyData[i]
             this._rhythmEnergy = eSum / (len * 255)
+
+            // ── Rhythm brain per-bin arrays (computed from low FFT) ──
+            // These provide the data for binFlux, binPhaseDeviation, binAttackTime,
+            // binEnvelope when the rhythm brain is active.
+            const rLen = this._rhythmFrequencyData.length
+            if (!this._rhythmBinFlux || this._rhythmBinFlux.length !== rLen) {
+                this._rhythmBinFlux = new Float32Array(rLen)
+                this._rhythmBinPhaseDeviation = new Float32Array(rLen)
+                this._rhythmBinAttackTime = new Float32Array(rLen)
+                this._rhythmBinEnvelope = new Float32Array(rLen)
+                this._rhythmBinPrevMag = new Float32Array(rLen)
+                this._rhythmBinPrevPhase = new Float32Array(rLen)
+            }
+            this._rhythmBrainActive = true
+            const rNorm = 1 / 255
+            for (let i = 0; i < rLen; i++) {
+                const curr = this._rhythmFrequencyData[i] * rNorm
+                const prev = this._rhythmBinPrevMag[i] || 0
+                // Flux: absolute positive change from previous frame
+                this._rhythmBinFlux[i] = Math.max(0, curr - prev)
+                // Phase deviation: simulated from frame-to-frame variance
+                const phaseShift = (curr - prev) / Math.max(0.01, curr + prev)
+                this._rhythmBinPhaseDeviation[i] = Math.max(0, Math.min(1, Math.abs(phaseShift)))
+                // Envelope: smoothed magnitude
+                this._rhythmBinEnvelope[i] = prev + (curr - prev) * alpha
+                // Attack time: rapid rise trigger (value rises quickly)
+                const rise = curr - prev
+                this._rhythmBinAttackTime[i] = Math.max(0, Math.min(1, rise * 5))
+                this._rhythmBinPrevMag[i] = curr
+            }
+        } else {
+            this._rhythmBrainActive = false
         }
 
         const bc = this.frequencyData.length
@@ -517,8 +558,12 @@ export class AudioEngine {
             this.spectralCentroid = 0
         }
 
-        if (this._calcUsage.needGlobalSpectralFlux) {
-            const fluxNorm = computeSpectralFlux(this.frequencyData, this._prevFrequencyDataBins)
+        if (this._calcUsage.needGlobalSpectralFlux || this._rhythmBrainActive) {
+            // When rhythm brain is active, spectralFlux is computed from the low FFT
+            // for faster transient response. Otherwise use the high FFT.
+            const fluxSrc = this._rhythmBrainActive ? this._rhythmFrequencyData : this.frequencyData
+            const fluxPrev = this._rhythmBrainActive ? this._prevRhythmData : this._prevFrequencyDataBins
+            const fluxNorm = computeSpectralFlux(fluxSrc, fluxPrev)
             const fluxAu = fluxNorm * 100
             this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
             this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
@@ -630,6 +675,24 @@ export class AudioEngine {
 
     getBinAttackTime() {
         return this._binAttackTime
+    }
+
+    // ── Rhythm brain (low FFT) per-bin getters ──
+    /** Per-bin flux from the low-FFT rhythm analyser. */
+    getRhythmBinFlux() {
+        return this._rhythmBrainActive ? this._rhythmBinFlux : null
+    }
+    /** Per-bin phase deviation from the low-FFT rhythm analyser. */
+    getRhythmBinPhaseDeviation() {
+        return this._rhythmBrainActive ? this._rhythmBinPhaseDeviation : null
+    }
+    /** Per-bin attack sharpness from the low-FFT rhythm analyser. */
+    getRhythmBinAttackTime() {
+        return this._rhythmBrainActive ? this._rhythmBinAttackTime : null
+    }
+    /** Per-bin envelope from the low-FFT rhythm analyser. */
+    getRhythmBinEnvelope() {
+        return this._rhythmBrainActive ? this._rhythmBinEnvelope : null
     }
 
     /** @returns {import('../types').HarmonicObject[]|null} */

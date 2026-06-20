@@ -77,7 +77,12 @@ function frequencyToMidi(freqHz) {
     return 12 * Math.log2(hz / 440) + 69
 }
 function midiToOctave(midi) { return Math.max(-2, Math.min(12, Math.floor((Number(midi) || 0) / 12) - 1)) }
-function midiToPitchClass(midi) { return ((Math.round(Number(midi) || 0) % 12) + 12) % 12 }
+function midiToPitchClass(midi) {
+    // Continuous fractional pitch class (0-12), not discretised to semitones.
+    // A4=440Hz → MIDI 69.0 → pitch class 9.0.  C4=261.6Hz → MIDI 60.0 → 0.0.
+    const m = Number(midi) || 0
+    return ((m % 12) + 12) % 12
+}
 
 /**
  * Compute band-level texture features by scanning a frequency window
@@ -423,6 +428,10 @@ export class ParticleSystem {
         this._iso226Lut = null
         /** @type {number} Tracks last known FFT size to rebuild LUT when it changes */
         this._iso226FftSize = 0
+        /** @type {number} Caches last hearing phon value to detect slider change */
+        this._lastHearingPhon = -1
+        /** @type {number} Hearing blend amount (0..1), cached from params each frame */
+        this._hearingAmount = 0
     }
 
     _allocateBuffers(maxParticles) {
@@ -977,11 +986,7 @@ export class ParticleSystem {
         const bgLight = Number.isFinite(Number(params.defaultBackgroundLightness)) ? Number(params.defaultBackgroundLightness) : 0
         const hasStereoBins = !!(ae.analyserL && ae.analyserR && ae.getBinPan)
         const binMagArr = ae.getBinMagnitude?.() || null
-        const binFluxArr = ae.getBinFlux?.() || null
-        const binPhaseDevArr = ae.getBinPhaseDeviation?.() || null
         const binPhaseArr = ae.getBinPhase?.() || null
-        const binEnvArr = ae.getBinEnvelope?.() || null
-        const binAttackTimeArr = ae.getBinAttackTime?.() || null
         const requiredInputs = new Set(this._compiledRules?.requiredInputs || [])
         const needBinMagnitude = requiredInputs.has('binMagnitude')
         const needBinPhase = requiredInputs.has('binPhase')
@@ -989,6 +994,15 @@ export class ParticleSystem {
         const needBinPhaseDev = requiredInputs.has('binPhaseDeviation')
         const needBinAttackTime = requiredInputs.has('binAttackTime')
         const needBinEnvelope = requiredInputs.has('binEnvelope') || requiredInputs.has('binEnvelopeState')
+
+        // ── Brain-routed bin arrays ──
+        // Frequency brain (high FFT worklet): magnitude, phase
+        // Rhythm brain (low FFT main-thread): flux, phaseDev, attackTime, envelope
+        const needRhythmBrain = needBinFlux || needBinPhaseDev || needBinAttackTime || needBinEnvelope
+        const binFluxArr = needRhythmBrain ? (ae.getRhythmBinFlux?.() || null) : (ae.getBinFlux?.() || null)
+        const binPhaseDevArr = needRhythmBrain ? (ae.getRhythmBinPhaseDeviation?.() || null) : (ae.getBinPhaseDeviation?.() || null)
+        const binAttackTimeArr = needRhythmBrain ? (ae.getRhythmBinAttackTime?.() || null) : (ae.getBinAttackTime?.() || null)
+        const binEnvArr = needRhythmBrain ? (ae.getRhythmBinEnvelope?.() || null) : (ae.getBinEnvelope?.() || null)
         // Band (local texture) variables
         const needBandFlatness = requiredInputs.has('bandFlatness')
         const needBandTransient = requiredInputs.has('bandTransient')
@@ -1014,14 +1028,15 @@ export class ParticleSystem {
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
 
         // ── ISO 226 Equal-Loudness Compensation LUT ───────────────────────
-        const hearingEnabled = Number(params.adjustForHumanHearing ?? 0) > 0
+        const hearingAmount = Number(params.adjustForHumanHearing ?? 0)
+        const hearingEnabled = hearingAmount > 0.001
         if (hearingEnabled) {
             const currentFftSize = ae.FFT_SIZE || 16384
+            // Build LUT once at full 60 phon compensation
             if (!this._iso226Lut || this._iso226FftSize !== currentFftSize) {
-                const hearingPhon = Math.max(0, Math.min(120, Number(params.adjustForHumanHearing ?? 0) || 60))
                 this._iso226Lut = createIso226CompensationLut({
                     size: Math.max(100, Math.floor(currentFftSize / 2)),
-                    phon: hearingPhon,
+                    phon: 60,
                     minHz: FREQ_MIN_HZ,
                     maxHz: FREQ_MAX_HZ,
                     referenceHz: 1000,
@@ -1031,6 +1046,7 @@ export class ParticleSystem {
         } else {
             this._iso226Lut = null
         }
+        this._hearingAmount = hearingAmount
 
         // Adjust Three.js blending mode
         if (!luminousMode) {
@@ -1305,6 +1321,9 @@ export class ParticleSystem {
                         bandCentroid: bandCentroidMetric,
                         bandFlux: bandFluxMetric,
                         bandInstability: bandInstabilityMetric,
+                        // Per-bin music theory
+                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
+                        octave: midiToOctave(frequencyToMidi(hz)),
                     }),
                     particle,
                 })
@@ -1534,9 +1553,7 @@ export class ParticleSystem {
             audioLengthSec,
             frequencyHz: 0,
             normFreq: 0,
-            // Music theory helpers derived from peak frequency
-            notePitchClass: midiToPitchClass(midi),
-            octave: midiToOctave(midi),
+            // Music theory helpers — overridden per-bin in writeParticle/writeLine
         }
         // Dedup table: skip writing particles identical to one already written this frame
         const _particleDedup = persistMode !== 1 ? new Map() : null
@@ -1607,13 +1624,13 @@ export class ParticleSystem {
                 let magNorm = Number.isFinite(sampledMagnitude)
                     ? normalizeByRange(sampledMagnitude, binMagnitudeNormMin, binMagnitudeNormMax)
                     : (byte / 255)
-                // ISO 226 human hearing compensation: reduce perceived loudness
-                // of very low and very high frequencies.
+                // ISO 226 human hearing compensation: blend between original and compensated
+                // using the hearingAmount slider (0 = off, 1 = full 60-phon compensation).
                 if (this._iso226Lut) {
                     const dbOffset = sampleIso226CompensationDb(this._iso226Lut, hzAtBin)
-                    if (dbOffset < 0) {
-                        // Negative offset = quieter → reduce magnitude non-linearly
-                        const linearFactor = Math.pow(10, dbOffset / 20)
+                    if (dbOffset < 0 && this._hearingAmount > 0.001) {
+                        // Negative offset = quieter → reduce magnitude
+                        const linearFactor = Math.pow(10, (dbOffset * this._hearingAmount) / 20)
                         magNorm *= Math.max(0, Math.min(1, linearFactor))
                     }
                 }
@@ -1710,8 +1727,10 @@ export class ParticleSystem {
                     bandInstabilityVal = clamp01(r.instability * Math.max(8, binCt * 3))
                 }
                 // Band transient: frame-over-frame energy rise across the bandwidth window
+                // Uses rhythm brain data (envelope) when available, otherwise high-FFT magnitude.
                 if (needBandTransient) {
-                    const r = computeBandFeatures(hzCenter, bandTransientOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const transMagArr = (needRhythmBrain && binEnvArr) ? binEnvArr : binMagArr
+                    const r = computeBandFeatures(hzCenter, bandTransientOct, transMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
                     const bandEnergy = r.bandEnergy
                     const prevEnergy = this._bandPrevEnergy[bucketIndex] ?? 0
                     const energyRise = bandEnergy - prevEnergy

@@ -22,9 +22,9 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
         label: UI_TEXT.settings.adjustForHumanHearing
             || UI_TEXT.settings?.paramLabels?.adjustForHumanHearing
             || 'Hearing Compensation',
-        min: 0, max: 60, step: 1,
+        min: 0, max: 1, step: 0.1,
         tooltip: UI_TEXT.settings?.tooltips?.adjustForHumanHearing
-            || 'ISO 226 equal-loudness compensation. 0 = Off, 40-60 = normal listening.',
+            || 'ISO 226 equal-loudness compensation. 0 = Off, 0.5 = moderate, 1.0 = full.',
     }, syncRegistry, deps))
 
     const resetButton = el('button', 'cp-btn cp-btn-wide', { text: UI_TEXT.settings.resetDefaults })

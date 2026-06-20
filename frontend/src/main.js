@@ -410,8 +410,23 @@ cameraController = new CameraController({
 cameraController.bindEvents()
 syncOrbitFromCamera()
 
+/** @type {object|null} Previous camera rule output — used to suppress redundant updates */
+let _prevCameraOutput = null
+
 function applyRuleCameraOutput(output) {
-    if (!output) return
+    if (!output) { _prevCameraOutput = null; return }
+    // Skip if nothing changed since last frame — prevents flickering
+    const prev = _prevCameraOutput
+    if (prev) {
+        const eq = (a, b) => (Number.isFinite(a) ? a : null) === (Number.isFinite(b) ? b : null)
+        if (eq(output.x, prev.x) && eq(output.y, prev.y) && eq(output.z, prev.z) &&
+            eq(output.targetX, prev.targetX) && eq(output.targetY, prev.targetY) && eq(output.targetZ, prev.targetZ) &&
+            eq(output.zoom, prev.zoom) && eq(output.angleOfView, prev.angleOfView)) {
+            return
+        }
+    }
+    _prevCameraOutput = { ...output }
+
     let posChanged = false
     if (Number.isFinite(output.x)) {
         camera.position.x = output.x
