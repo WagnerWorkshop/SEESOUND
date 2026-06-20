@@ -325,13 +325,21 @@ export function buildFileMenu(body, syncRegistry, deps) {
         })
     }
     addPresetBtn.addEventListener('click', () => {
-        const name = prompt('New preset name:', '')
-        if (name && name.trim()) {
-            import('../ParamStore.js').then(({ savePreset }) => {
-                savePreset(name.trim(), params)
-                    .then(() => { window.dispatchEvent(new CustomEvent('seesound:preset-library-changed')) })
-            })
-        }
+        import('../ParamStore.js').then(async ({ savePreset, resetToDefaults }) => {
+            const currentPresetName = presetNameLabel.textContent || ''
+            const saveName = (currentPresetName && currentPresetName !== 'None' && currentPresetName !== (UI_TEXT.file?.projectNew || 'New Project'))
+                ? currentPresetName
+                : ''
+            // 1. Auto-save current state into the existing preset (if one is loaded)
+            if (saveName) {
+                await savePreset(saveName, params)
+            }
+            // 2. Reset to defaults (wipes rules, tuners, all params)
+            resetToDefaults()
+            // 3. Update UI — blank state
+            updatePresetNameLabel('')
+            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+        })
     })
     btnExportPreset.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('seesound:preset-export-request'))

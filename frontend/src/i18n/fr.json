@@ -195,7 +195,7 @@
                 "freqNormMax": "Frequency Range Max",
                 "fftSize": "Audio Resolution",
                 "fluxWindowFrames": "Activity Interval",
-                "adjustForHumanHearing": "Adjust for Human Hearing",
+                "adjustForHumanHearing": "Adjust for Human Hearing (ISO226)",
                 "binMagnitudeNormMin": "Volume Min",
                 "binMagnitudeNormMax": "Volume Max",
                 "binFluxNormMin": "Activity Detail Min",

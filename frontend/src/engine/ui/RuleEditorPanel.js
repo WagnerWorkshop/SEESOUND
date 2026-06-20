@@ -166,6 +166,9 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             if (!Number.isFinite(v) || !Number.isFinite(m) || Math.abs(m) < 1e-9) return 0
             return ((v % m) + m) % m
         },
+        log: (x) => { const v = Number(x); return Number.isFinite(v) && v > 0 ? Math.log(v) : 0 },
+        log2: (x) => { const v = Number(x); return Number.isFinite(v) && v > 0 ? Math.log2(v) : 0 },
+        log10: (x) => { const v = Number(x); return Number.isFinite(v) && v > 0 ? Math.log10(v) : 0 },
         sin: Math.sin,
         cos: Math.cos,
         step: (edge, value) => (value < edge ? 0 : 1),

@@ -185,16 +185,36 @@ const _helpers = Object.freeze({
         const t = Math.max(0, Math.min(1, (x - e0) / Math.max(1e-9, e1 - e0)))
         return t * t * (3 - 2 * t)
     },
-    pow: Math.pow,
+    pow: (b, e) => {
+        // Safe pow: return 0 for invalid combinations (negative base with fractional exponent)
+        const base = Number(b)
+        const exp = Number(e)
+        if (!Number.isFinite(base) || !Number.isFinite(exp)) return 0
+        if (base < 0 && !Number.isInteger(exp)) return 0
+        const r = Math.pow(base, exp)
+        return Number.isFinite(r) ? r : 0
+    },
     mod: (value, max) => {
         const v = Number(value)
         const m = Number(max)
         if (!Number.isFinite(v) || !Number.isFinite(m) || Math.abs(m) < 1e-9) return 0
         return ((v % m) + m) % m
     },
-    log: Math.log,
-    log2: Math.log2,
-    log10: Math.log10,
+    log: (x) => {
+        const v = Number(x)
+        if (!Number.isFinite(v) || v <= 0) return 0
+        return Math.log(v)
+    },
+    log2: (x) => {
+        const v = Number(x)
+        if (!Number.isFinite(v) || v <= 0) return 0
+        return Math.log2(v)
+    },
+    log10: (x) => {
+        const v = Number(x)
+        if (!Number.isFinite(v) || v <= 0) return 0
+        return Math.log10(v)
+    },
     sin: Math.sin,
     cos: Math.cos,
     step: (edge, value) => (value < edge ? 0 : 1),
@@ -479,14 +499,23 @@ function _compileAction(action) {
     }
     const rhs = _toRhs(action)
     switch (action.operator) {
-        case 'set':
-            return `target.${output} = ${rhs};`
-        case 'add':
-            return `target.${output} = (target.${output} ?? 0) + (${rhs});`
-        case 'subtract':
-            return `target.${output} = (target.${output} ?? 0) - (${rhs});`
-        case 'multiply':
-            return `target.${output} = (target.${output} ?? 0) * (${rhs});`
+        case 'set': {
+            // Guard: only assign if the RHS evaluates to a finite number
+            const rhsSafe = `(()=>{const __v=${rhs};return Number.isFinite(__v)?__v:undefined;})()`
+            return `if (${rhsSafe} !== undefined) target.${output} = ${rhsSafe};`
+        }
+        case 'add': {
+            const rhsSafe = `(()=>{const __v=${rhs};return Number.isFinite(__v)?__v:0;})()`
+            return `target.${output} = (target.${output} ?? 0) + ${rhsSafe};`
+        }
+        case 'subtract': {
+            const rhsSafe = `(()=>{const __v=${rhs};return Number.isFinite(__v)?__v:0;})()`
+            return `target.${output} = (target.${output} ?? 0) - ${rhsSafe};`
+        }
+        case 'multiply': {
+            const rhsSafe = `(()=>{const __v=${rhs};return Number.isFinite(__v)?__v:0;})()`
+            return `target.${output} = (target.${output} ?? 0) * ${rhsSafe};`
+        }
         case 'divide':
             return `if ((${rhs}) !== 0) target.${output} = (target.${output} ?? 0) / (${rhs});`
         case 'clamp':
@@ -534,12 +563,14 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
         }
         if (emittedActions.length === 0) return
         lines.push(`  // rule ${rule.id}`)
+        lines.push(`  try {`)
         lines.push(`  if (${cond}) {`)
         lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: lines.length + 1 })
         for (const action of emittedActions) {
             lines.push(`    ${_compileAction(action)}`)
         }
         lines.push('  }')
+        lines.push(`  } catch(_e) { /* rule ${rule.id} error: */ }`)
     })
 
     lines.push('}')
@@ -621,7 +652,7 @@ export function compileRules(ruleBlocks, dictionaries) {
 
     const source = [
         `'use strict';`,
-        'const { clamp, lerp, smoothstep, pow, mod, sin, cos, step, iif, min, max, abs } = helpers;',
+        'const { clamp, lerp, smoothstep, pow, mod, log, log2, log10, sin, cos, step, iif, min, max, abs } = helpers;',
         spawnBuild.source,
         livingBuild.source,
         physicalBuild.source,

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
 import { ParticleArchive } from './ParticleArchive.js'
+import { createIso226CompensationLut, sampleIso226CompensationDb } from './audio/Iso226Lut.js'
 
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
@@ -75,6 +76,78 @@ function frequencyToMidi(freqHz) {
 }
 function midiToOctave(midi) { return Math.max(-2, Math.min(12, Math.floor((Number(midi) || 0) / 12) - 1)) }
 function midiToPitchClass(midi) { return ((Math.round(Number(midi) || 0) % 12) + 12) % 12 }
+
+/**
+ * Compute band-level texture features by scanning a frequency window
+ * around hzCenter spanning bandOctaves (in octaves).
+ * @param {number} hzCenter - Centre frequency of the band
+ * @param {number} bandOctaves - Bandwidth in octaves
+ * @param {Float32Array|null} binMagArr - Per-bin magnitude array (normalised 0-1)
+ * @param {Float32Array|null} binFluxArr - Per-bin flux array
+ * @param {Float32Array|null} binPhaseDevArr - Per-bin phase deviation array
+ * @param {Uint8Array} freqData - Raw frequency data
+ * @param {number} binMin - Minimum bin index for the bucket
+ * @param {number} binMax - Maximum bin index for the bucket
+ * @param {Function} binToHzFn - Function to convert bin index to Hz
+ * @param {Function} hzToBinFn - Function to convert Hz to bin index
+ * @returns {{ flatness: number, centroid: number, flux: number, instability: number, bandEnergy: number }}
+ */
+function computeBandFeatures(hzCenter, bandOctaves, binMagArr, binFluxArr, binPhaseDevArr, freqData, binMin, binMax, binToHzFn, hzToBinFn) {
+    if (!bandOctaves || bandOctaves <= 0) {
+        return { flatness: 0, centroid: 0, flux: 0, instability: 0, bandEnergy: 0 }
+    }
+    const halfOct = bandOctaves / 2
+    const hzLow = Math.max(FREQ_MIN_HZ, hzCenter / Math.pow(2, halfOct))
+    const hzHigh = Math.min(FREQ_MAX_HZ, hzCenter * Math.pow(2, halfOct))
+    const loBin = Math.max(binMin, hzToBinFn(hzLow))
+    const hiBin = Math.min(binMax, hzToBinFn(hzHigh))
+    const n = Math.max(1, hiBin - loBin + 1)
+
+    let sumMag = 0
+    let sumLog = 0
+    let sumCentroid = 0
+    let sumFlux = 0
+    let sumInstability = 0
+    let weightedFreq = 0
+    let fluxCount = 0
+    let instCount = 0
+
+    for (let i = loBin; i <= hiBin; i++) {
+        const byte = freqData[i]
+        const hzAtI = binToHzFn(i)
+        // CQT arrays are log-spaced — MUST sample by Hz, not by bin index
+        const cqtMag = sampleLogCqtArrayAtHz(binMagArr, hzAtI)
+        const mag = Number.isFinite(cqtMag) ? cqtMag : (byte / 255)
+        sumMag += mag
+        if (mag > 1e-9) sumLog += Math.log(Math.max(1e-12, mag))
+        sumCentroid += hzAtI * mag
+        weightedFreq += mag
+
+        // CQT arrays: sample by Hz
+        const cqtFlux = sampleLogCqtArrayAtHz(binFluxArr, hzAtI)
+        if (Number.isFinite(cqtFlux)) { sumFlux += cqtFlux; fluxCount++ }
+        const cqtInstability = sampleLogCqtArrayAtHz(binPhaseDevArr, hzAtI)
+        if (Number.isFinite(cqtInstability)) { sumInstability += cqtInstability; instCount++ }
+    }
+
+    // Flatness = geometric mean / arithmetic mean (Wiener entropy)
+    const arithMean = sumMag / n
+    const flatness = arithMean > 1e-12 ? Math.exp(sumLog / n) / arithMean : 0
+
+    // Centroid = weighted frequency centre
+    const centroid = weightedFreq > 1e-9 ? sumCentroid / weightedFreq : 0
+
+    // Flux = average per-bin flux in the band
+    const flux = fluxCount > 0 ? sumFlux / fluxCount : 0
+
+    // Instability = average phase deviation
+    const instability = instCount > 0 ? sumInstability / instCount : 0
+
+    // Band energy = total magnitude
+    const bandEnergy = sumMag / n
+
+    return { flatness, centroid, flux, instability, bandEnergy }
+}
 
 // ── Blend: when both HSB and RGB are set, blend them so neither is lost ──
 // Brightness (HSV value V) works as follows:
@@ -336,6 +409,18 @@ export class ParticleSystem {
         this._lastPersistMode = 0
         this._archive = new ParticleArchive()
         this._archive.updateOffloadBatch(this._N)
+        // ── Band texture analysis: previous-frame storage ──
+        /** @type {Float64Array|number[]} Bucket-band total energy from previous frame */
+        this._bandPrevEnergy = []
+        /** @type {Float64Array|number[]} Bucket-band per-bin magnitude array from previous frame (for bandFlux) */
+        this._bandPrevMag = []
+        /** @type {number} Frame counter for band data refresh */
+        this._bandFrameN = -1
+        // ── ISO 226 equal-loudness compensation LUT ──
+        /** @type {object|null} */
+        this._iso226Lut = null
+        /** @type {number} Tracks last known FFT size to rebuild LUT when it changes */
+        this._iso226FftSize = 0
     }
 
     _allocateBuffers(maxParticles) {
@@ -902,9 +987,47 @@ export class ParticleSystem {
         const needBinPhaseDev = requiredInputs.has('binPhaseDeviation')
         const needBinAttackTime = requiredInputs.has('binAttackTime')
         const needBinEnvelope = requiredInputs.has('binEnvelope') || requiredInputs.has('binEnvelopeState')
+        // Band (local texture) variables
+        const needBandFlatness = requiredInputs.has('bandFlatness')
+        const needBandTransient = requiredInputs.has('bandTransient')
+        const needBandCentroid = requiredInputs.has('bandCentroid')
+        const needBandFlux = requiredInputs.has('bandFlux')
+        const needBandInstability = requiredInputs.has('bandInstability')
+        const needAnyBand = needBandFlatness || needBandTransient || needBandCentroid || needBandFlux || needBandInstability
+        // Bandwidth in octaves
+        const bandFlatnessOct = Number(params.bandFlatnessOctaves ?? 0.33)
+        const bandTransientOct = Number(params.bandTransientOctaves ?? 0.33)
+        const bandCentroidOct = Number(params.bandCentroidOctaves ?? 0.33)
+        const bandFluxOct = Number(params.bandFluxOctaves ?? 0.33)
+        const bandInstabilityOct = Number(params.bandInstabilityOctaves ?? 0.33)
+        const bandOctaves = [bandFlatnessOct, bandTransientOct, bandCentroidOct, bandFluxOct, bandInstabilityOct]
+        // Reset band previous-frame storage on first frame / bucket count change
+        if (this._bandFrameN < 0 || this._bandPrevEnergy.length !== logBucketCount) {
+            this._bandPrevEnergy = new Float64Array(logBucketCount)
+            this._bandPrevMag = new Array(logBucketCount)
+            this._bandFrameN = 0
+        }
         const rulesEnabled = params.ruleEngineEnabled !== false
         const emitLightParticles = rulesEnabled && this._compiledRules.spawnRuleCount > 0
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
+
+        // ── ISO 226 Equal-Loudness Compensation LUT ───────────────────────
+        const hearingEnabled = Number(params.adjustForHumanHearing ?? 0) >= 0.5
+        if (hearingEnabled) {
+            const currentFftSize = ae.FFT_SIZE || 16384
+            if (!this._iso226Lut || this._iso226FftSize !== currentFftSize) {
+                this._iso226Lut = createIso226CompensationLut({
+                    size: Math.max(100, Math.floor(currentFftSize / 2)),
+                    phon: 60,
+                    minHz: FREQ_MIN_HZ,
+                    maxHz: FREQ_MAX_HZ,
+                    referenceHz: 1000,
+                })
+                this._iso226FftSize = currentFftSize
+            }
+        } else {
+            this._iso226Lut = null
+        }
 
         // Adjust Three.js blending mode
         if (!luminousMode) {
@@ -1130,6 +1253,12 @@ export class ParticleSystem {
             const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
             const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
             const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
+            // Band texture metrics (from writeParticle)
+            const bandFlatnessMetric = Number.isFinite(bucket.bandFlatness) ? bucket.bandFlatness : undefined
+            const bandTransientMetric = Number.isFinite(bucket.bandTransient) ? bucket.bandTransient : undefined
+            const bandCentroidMetric = Number.isFinite(bucket.bandCentroid) ? bucket.bandCentroid : undefined
+            const bandFluxMetric = Number.isFinite(bucket.bandFlux) ? bucket.bandFlux : undefined
+            const bandInstabilityMetric = Number.isFinite(bucket.bandInstability) ? bucket.bandInstability : undefined
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -1167,9 +1296,12 @@ export class ParticleSystem {
                         binEnvelope: binEnvelopeMetric,
                         binEnvelopeState: binEnvelopeMetric,
                         binRMSEnergy: binRmsMetric,
-                        // Per-bin music theory
-                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
-                        octave: midiToOctave(frequencyToMidi(hz)),
+                        // Band (local texture) variables
+                        bandFlatness: bandFlatnessMetric,
+                        bandTransient: bandTransientMetric,
+                        bandCentroid: bandCentroidMetric,
+                        bandFlux: bandFluxMetric,
+                        bandInstability: bandInstabilityMetric,
                     }),
                     particle,
                 })
@@ -1239,6 +1371,12 @@ export class ParticleSystem {
             const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
             const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
             const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
+            // Band texture metrics (from writeLine)
+            const bandFlatnessMetric = Number.isFinite(bucket.bandFlatness) ? bucket.bandFlatness : undefined
+            const bandTransientMetric = Number.isFinite(bucket.bandTransient) ? bucket.bandTransient : undefined
+            const bandCentroidMetric = Number.isFinite(bucket.bandCentroid) ? bucket.bandCentroid : undefined
+            const bandFluxMetric = Number.isFinite(bucket.bandFlux) ? bucket.bandFlux : undefined
+            const bandInstabilityMetric = Number.isFinite(bucket.bandInstability) ? bucket.bandInstability : undefined
 
             const y = (freqNorm * 2 - 1) * hh
             const x = 0
@@ -1278,6 +1416,12 @@ export class ParticleSystem {
                         binEnvelope: binEnvelopeMetric,
                         binEnvelopeState: binEnvelopeMetric,
                         binRMSEnergy: binRmsMetric,
+                        // Band (local texture) variables
+                        bandFlatness: bandFlatnessMetric,
+                        bandTransient: bandTransientMetric,
+                        bandCentroid: bandCentroidMetric,
+                        bandFlux: bandFluxMetric,
+                        bandInstability: bandInstabilityMetric,
                     }),
                 }, line)
             }
@@ -1457,9 +1601,19 @@ export class ParticleSystem {
                 const byte = freqData[i]
                 const hzAtBin = binToHz(i)
                 const sampledMagnitude = sampleLogCqtArrayAtHz(binMagArr, hzAtBin)
-                const magNorm = Number.isFinite(sampledMagnitude)
+                let magNorm = Number.isFinite(sampledMagnitude)
                     ? normalizeByRange(sampledMagnitude, binMagnitudeNormMin, binMagnitudeNormMax)
                     : (byte / 255)
+                // ISO 226 human hearing compensation: reduce perceived loudness
+                // of very low and very high frequencies.
+                if (this._iso226Lut) {
+                    const dbOffset = sampleIso226CompensationDb(this._iso226Lut, hzAtBin)
+                    if (dbOffset < 0) {
+                        // Negative offset = quieter → reduce magnitude non-linearly
+                        const linearFactor = Math.pow(10, dbOffset / 20)
+                        magNorm *= Math.max(0, Math.min(1, linearFactor))
+                    }
+                }
                 sumRawEnergy += magNorm
                 if (needBinMagnitude) sumBinMagnitude += magNorm
                 if (needBinPhase && binPhaseArr) {
@@ -1505,6 +1659,64 @@ export class ParticleSystem {
             const avgRaw = sumRawEnergy / count
             const bucketEnergy = avgRaw * gainMult
 
+            // ── Band (local texture) feature calculation ─────────────────
+            // Each feature uses its OWN bandwidth setting and is normalized
+            // within the frequency range of that bandwidth (not globally),
+            // so narrow windows produce usable [0,1] values.
+            let bandFlatnessVal, bandTransientVal, bandCentroidVal, bandFluxVal, bandInstabilityVal
+            if (needAnyBand) {
+                // Helper: count FFT bins in a given octave window around hzCenter
+                const _binCountInOctWindow = (oct) => {
+                    const half = oct / 2
+                    return Math.max(1, _hzToBin(hzCenter * Math.pow(2, half)) - _hzToBin(hzCenter / Math.pow(2, half)))
+                }
+                // Local Spectral Flatness (Band Noisiness) — uses bandFlatnessOct
+                // Wiener entropy compresses toward 1.0 with few bins. The "noise floor"
+                // (minimum expected flatness for a pure tone) rises as bins decrease.
+                // Aggressively remap so the narrow-window case still produces usable [0,1].
+                if (needBandFlatness) {
+                    const r = computeBandFeatures(hzCenter, bandFlatnessOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const binCt = _binCountInOctWindow(bandFlatnessOct)
+                    // With ~3 FFT bins even a pure tone gives flatness ~0.82-0.88;
+                    // with ~24 bins a pure tone gives ~0.35-0.50.
+                    // noiseFloor approximates the minimum flatness for a strong tone at this bandwidth.
+                    const noiseFloor = clamp01(1 - Math.sqrt(binCt) * 0.08)
+                    bandFlatnessVal = clamp01((r.flatness - noiseFloor) / Math.max(0.05, 1 - noiseFloor))
+                }
+                // Local Spectral Centroid (Band Tilt) — uses bandCentroidOct
+                // Normalize within the actual band's frequency bounds, not globally.
+                if (needBandCentroid) {
+                    const r = computeBandFeatures(hzCenter, bandCentroidOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const bandMinHz = Math.max(FREQ_MIN_HZ, hzCenter / Math.pow(2, bandCentroidOct / 2))
+                    const bandMaxHz = Math.min(FREQ_MAX_HZ, hzCenter * Math.pow(2, bandCentroidOct / 2))
+                    bandCentroidVal = normalizeByRange(r.centroid, bandMinHz, bandMaxHz)
+                }
+                // Local Spectral Flux (Band Activity) — uses bandFluxOct
+                // Flux is the average per-bin spectral change. With few bins the chance
+                // of any single bin showing flux is low — scale up aggressively.
+                if (needBandFlux) {
+                    const r = computeBandFeatures(hzCenter, bandFluxOct, null, binFluxArr, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const binCt = _binCountInOctWindow(bandFluxOct)
+                    // Amplify by total bin count so a single active bin fills the range
+                    bandFluxVal = clamp01(r.flux * Math.max(8, binCt * 3))
+                }
+                // Local Phase Deviation (Band Instability) — uses bandInstabilityOct
+                if (needBandInstability) {
+                    const r = computeBandFeatures(hzCenter, bandInstabilityOct, null, null, binPhaseDevArr, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const binCt = _binCountInOctWindow(bandInstabilityOct)
+                    bandInstabilityVal = clamp01(r.instability * Math.max(8, binCt * 3))
+                }
+                // Band transient: frame-over-frame energy rise across the bandwidth window
+                if (needBandTransient) {
+                    const r = computeBandFeatures(hzCenter, bandTransientOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                    const bandEnergy = r.bandEnergy
+                    const prevEnergy = this._bandPrevEnergy[bucketIndex] ?? 0
+                    const energyRise = bandEnergy - prevEnergy
+                    bandTransientVal = clamp01(Math.max(0, energyRise) * 5)
+                    this._bandPrevEnergy[bucketIndex] = bandEnergy
+                }
+            }
+
             writeParticle({
                 hz: hzCenter,
                 byte: peakByteBucket,
@@ -1517,6 +1729,12 @@ export class ParticleSystem {
                 binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
                 binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
                 binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+                // Band texture variables
+                bandFlatness: bandFlatnessVal,
+                bandTransient: bandTransientVal,
+                bandCentroid: bandCentroidVal,
+                bandFlux: bandFluxVal,
+                bandInstability: bandInstabilityVal,
             }, 1, isFund)
             writeLine({
                 hz: hzCenter,
@@ -1530,6 +1748,12 @@ export class ParticleSystem {
                 binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
                 binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
                 binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+                // Band texture variables
+                bandFlatness: bandFlatnessVal,
+                bandTransient: bandTransientVal,
+                bandCentroid: bandCentroidVal,
+                bandFlux: bandFluxVal,
+                bandInstability: bandInstabilityVal,
             })
             hzStart = hzEnd
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break

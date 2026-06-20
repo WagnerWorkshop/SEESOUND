@@ -54,6 +54,12 @@ const _INPUT_RANGES = Object.freeze({
     canvasWidth: [0, Number.POSITIVE_INFINITY],
     canvasHeight: [0, Number.POSITIVE_INFINITY],
     audioLengthSec: [0, Number.POSITIVE_INFINITY],
+    // Band (local texture) variables
+    bandFlatness: [0, 1],
+    bandTransient: [0, 10],
+    bandCentroid: [0, 1],
+    bandFlux: [0, 1],
+    bandInstability: [0, 1],
 })
 
 const _legacyInputAliases = [
@@ -100,6 +106,12 @@ const _INPUT_MODES = {
     entityAge: ['cloud'],
     streamId: ['cloud'],
     isFundamental: ['particle', 'cloud'],
+    // Band (local texture) variables — available in all modes
+    bandFlatness: ['particle', 'cloud', 'tracing', 'lines'],
+    bandTransient: ['particle', 'cloud', 'tracing', 'lines'],
+    bandCentroid: ['particle', 'cloud', 'tracing', 'lines'],
+    bandFlux: ['particle', 'cloud', 'tracing', 'lines'],
+    bandInstability: ['particle', 'cloud', 'tracing', 'lines'],
 }
 
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({
