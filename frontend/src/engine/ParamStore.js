@@ -793,7 +793,7 @@ export function migrateRuleSchema(snapshot) {
     const sanitization = sanitizeRuleBlocks(incomingBlocks)
 
     // Schema v2→v3 migration: strip luma and yellow from all rule blocks,
-    // entity rules, and global blocks.
+    // entity rules, and global blocks (luma was removed as a rule output).
     const stripLuma = (blocks) => {
         if (!Array.isArray(blocks)) return blocks
         return blocks.map((rule) => {

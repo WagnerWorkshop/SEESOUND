@@ -551,30 +551,90 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
         lines.push(`  const ${id} = Number.isFinite(i.${id}) ? i.${id} : 0;`)
     }
 
-    rules.forEach((rule) => {
-        if (!rule.enabled || rule.sectionDisabled === true) return
-        const cond = _compileCondition(rule.condition, rule.definitionExpression)
-        const actions = Array.isArray(rule.actions) ? rule.actions : []
-        const emittedActions = []
-        for (const action of actions) {
-            const out = String(action?.output || '')
-            if (!out) continue
-            const conflictKey = `${cond}::${out}`
-            if (seenConditionOutput.has(conflictKey)) continue
-            seenConditionOutput.add(conflictKey)
-            emittedActions.push(action)
+    // Pipeline phases: RGB → Hue → Saturation → Brightness → Other
+    // Phase 0: Non-color rules (position, size, opacity, etc.)
+    // Phase 1: RGB (red, green, blue, rgb)
+    // Phase 2: Hue (hue, hsv — with 50-50 interpolation to RGB hue)
+    // Phase 3: Saturation
+    // Phase 4: Brightness (using lstar perceptive luminosity)
+    // Phase 5: Remaining color outputs (opacity, etc.)
+    const _outputPhase = (output) => {
+        if (output === 'red' || output === 'green' || output === 'blue' || output === 'rgb') return 1
+        if (output === 'hue' || output === 'hsv') return 2
+        if (output === 'saturation') return 3
+        if (output === 'brightness') return 4
+        return 0
+    }
+    const _phaseLabel = ['', '/* Phase 1: RGB */', '/* Phase 2: Hue */', '/* Phase 3: Saturation */', '/* Phase 4: Brightness */']
+
+    for (let phase = 0; phase <= 5; phase++) {
+        let phaseHasRules = false
+        const phaseLines = []
+
+        for (const rule of rules) {
+            if (!rule.enabled || rule.sectionDisabled === true) continue
+            const cond = _compileCondition(rule.condition, rule.definitionExpression)
+            const actions = Array.isArray(rule.actions) ? rule.actions : []
+            const emittedActions = []
+            for (const action of actions) {
+                const out = String(action?.output || '')
+                if (!out) continue
+                const actionPhase = _outputPhase(out)
+                if (actionPhase !== phase) continue
+                const conflictKey = `${cond}::${out}`
+                if (seenConditionOutput.has(conflictKey)) continue
+                seenConditionOutput.add(conflictKey)
+                emittedActions.push(action)
+            }
+            if (emittedActions.length === 0) continue
+
+            // Special handling: Phase 2 (Hue) — wrap hue set with 50-50 interpolation
+            if (phase === 2) {
+                for (const action of emittedActions) {
+                    if (action.output === 'hue' && action.operator === 'set') {
+                        // Wrap hue set: blend 50-50 with hue from current RGB
+                        const rhs = _toRhs(action)
+                        phaseLines.push(`  // rule ${rule.id}`)
+                        phaseLines.push(`  try {`)
+                        phaseLines.push(`  if (${cond}) {`)
+                        lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: phaseLines.length + 1 })
+                        phaseLines.push(`    const __hueRgb = helpers.rgbToHsvColor(target.red ?? 0, target.green ?? 0, target.blue ?? 0)[0];`)
+                        phaseLines.push(`    const __hueNew = (${rhs});`)
+                        phaseLines.push(`    target.hue = Number.isFinite(__hueNew) ? (__hueRgb + __hueNew) / 2 : undefined;`)
+                        phaseLines.push(`  }`)
+                        phaseLines.push(`  } catch(_e) { /* rule ${rule.id} error: */ }`)
+                        continue
+                    }
+                    // Fall through for hsv vector output or non-set operators
+                    phaseLines.push(`  // rule ${rule.id}`)
+                    phaseLines.push(`  try {`)
+                    phaseLines.push(`  if (${cond}) {`)
+                    lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: phaseLines.length + 1 })
+                    phaseLines.push(`    ${_compileAction(action)}`)
+                    phaseLines.push(`  }`)
+                    phaseLines.push(`  } catch(_e) { /* rule ${rule.id} error: */ }`)
+                }
+                phaseHasRules = true
+                continue
+            }
+
+            phaseHasRules = true
+            phaseLines.push(`  // rule ${rule.id}`)
+            phaseLines.push(`  try {`)
+            phaseLines.push(`  if (${cond}) {`)
+            lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: phaseLines.length + 1 })
+            for (const action of emittedActions) {
+                phaseLines.push(`    ${_compileAction(action)}`)
+            }
+            phaseLines.push('  }')
+            phaseLines.push(`  } catch(_e) { /* rule ${rule.id} error: */ }`)
         }
-        if (emittedActions.length === 0) return
-        lines.push(`  // rule ${rule.id}`)
-        lines.push(`  try {`)
-        lines.push(`  if (${cond}) {`)
-        lineMap.push({ ruleId: rule.id, functionName: fnName, sourceLine: lines.length + 1 })
-        for (const action of emittedActions) {
-            lines.push(`    ${_compileAction(action)}`)
+
+        if (phaseHasRules) {
+            if (phase > 0 && phase <= 4) lines.push(`  ${_phaseLabel[phase]}`)
+            lines.push(...phaseLines)
         }
-        lines.push('  }')
-        lines.push(`  } catch(_e) { /* rule ${rule.id} error: */ }`)
-    })
+    }
 
     lines.push('}')
     return { source: lines.join('\n'), lineMap }

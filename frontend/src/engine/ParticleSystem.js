@@ -156,12 +156,10 @@ function computeBandFeatures(hzCenter, bandOctaves, binMagArr, binFluxArr, binPh
     return { flatness, centroid, flux, instability, bandEnergy }
 }
 
-// ── Blend: when both HSB and RGB are set, blend them so neither is lost ──
-// Brightness (HSV value V) works as follows:
-//   - brightness=0 → black
-//   - brightness=1 → full colour intensity
-//   - brightness>1 → overbright, blends toward white
-// When brightness is set alongside RGB, it scales the final RGB toward white.
+// ── Blend: pipeline color processing ──────────────────────────────────────
+// Pipeline order: RGB → Hue (50-50 blend with RGB hue) → Saturation → Brightness
+// Brightness uses the lstar (perceptive luminosity) formula natively:
+//   lstar = sqrt(0.299 * R^2 + 0.587 * G^2 + 0.114 * B^2)
 function blendHsbRgb(hue, sat, bri, r, g, b) {
     const hasHue = Number.isFinite(hue)
     const hasSat = Number.isFinite(sat)
@@ -172,68 +170,71 @@ function blendHsbRgb(hue, sat, bri, r, g, b) {
     // No colour rules at all → return null, caller keeps existing buffer colour (grayscale default)
     if (!hasHsb && !hasRgb) return null
 
-    // Brightness-only (no hue, no sat, no RGB): grayscale from black to white
-    if (hasBri && !hasHue && !hasSat && !hasRgb) {
-        const v = Math.max(0, bri)
-        return { r: Math.min(1, v), g: Math.min(1, v), b: Math.min(1, v) }
+    // Lstar perceptive luminosity: sqrt(0.299*R^2 + 0.587*G^2 + 0.114*B^2)
+    function lstar(rr, gg, bb) {
+        return Math.sqrt(0.299 * rr * rr + 0.587 * gg * gg + 0.114 * bb * bb)
     }
 
-    // Compute base RGB from whatever is set
-    let baseR = 0, baseG = 0, baseB = 0
+    // Brightness-only (no hue, no sat, no RGB): grayscale at brightness level
+    if (hasBri && !hasHue && !hasSat && !hasRgb) {
+        const v = Math.max(0, Math.min(1, bri))
+        return { r: v, g: v, b: v }
+    }
 
-    if (hasHsb) {
-        // Build HSB colour
-        const hh = hasHue ? normalizeHue(hue) ?? 0 : 0
-        const ss = hasSat ? clamp01(sat) : 0
-        // Value: 0=black, 1=full colour, >1=overbright (white blend)
-        const vv = hasBri ? Math.max(0, bri) : 1
-        const hsvRgb = hsvToRgb(hh, ss, Math.min(1, vv))
-        baseR = hsvRgb.r
-        baseG = hsvRgb.g
-        baseB = hsvRgb.b
-        // Overbright: blend toward white
-        if (vv > 1) {
-            const over = vv - 1
-            const maxOver = Math.min(over, 2)
-            const t = maxOver / 2
-            baseR = baseR * (1 - t) + t
-            baseG = baseG * (1 - t) + t
-            baseB = baseB * (1 - t) + t
+    // Phase 1: Start from RGB if set
+    let baseR = Number.isFinite(r) ? clamp01(r) : 0
+    let baseG = Number.isFinite(g) ? clamp01(g) : 0
+    let baseB = Number.isFinite(b) ? clamp01(b) : 0
+    const hasBaseRgb = hasRgb
+
+    // Phase 2: Apply Hue (50-50 blend with RGB hue if both present)
+    if (hasHue) {
+        const hh = normalizeHue(hue) ?? 0
+        let hueToUse = hh
+        if (hasBaseRgb) {
+            // 50-50 blend: blend the rule hue with the hue derived from the current RGB
+            const rgbHsv = rgbToHsv(baseR, baseG, baseB)
+            hueToUse = (hh + rgbHsv.h) / 2
+        }
+        // Apply the blended hue to the current color
+        const curSat = hasSat ? clamp01(sat) : (hasBaseRgb ? rgbToHsv(baseR, baseG, baseB).s : 0)
+        const hsvRgb = hsvToRgb(hueToUse, 1, 1)
+        if (hasBaseRgb) {
+            // Blend half-way toward the new hue color to preserve some original RGB character
+            baseR = (baseR + hsvRgb.r) / 2
+            baseG = (baseG + hsvRgb.g) / 2
+            baseB = (baseB + hsvRgb.b) / 2
+        } else {
+            baseR = hsvRgb.r
+            baseG = hsvRgb.g
+            baseB = hsvRgb.b
         }
     }
 
-    if (hasRgb) {
-        const wr = Number.isFinite(r) ? clamp01(r) : 0
-        const wg = Number.isFinite(g) ? clamp01(g) : 0
-        const wb = Number.isFinite(b) ? clamp01(b) : 0
-        if (hasHsb) {
-            // Both HSB and RGB: HSB is primary (chroma from hue/saturation/brightness).
-            // RGB provides a subtle secondary tint so explicit rgb() outputs aren't lost,
-            // but does NOT dilute HSB's chroma (which was the old 50/50 bug).
-            const tint = 0.15
-            baseR = baseR * (1 - tint) + wr * tint
-            baseG = baseG * (1 - tint) + wg * tint
-            baseB = baseB * (1 - tint) + wb * tint
+    // Phase 3: Apply Saturation (modify saturation of current color)
+    if (hasSat) {
+        const hsv = rgbToHsv(baseR, baseG, baseB)
+        const ss = Math.max(0, Math.min(1, sat))
+        const rgb = hsvToRgb(hsv.h, ss, hsv.v)
+        baseR = rgb.r
+        baseG = rgb.g
+        baseB = rgb.b
+    }
+
+    // Phase 4: Apply Brightness (use lstar perceptive luminosity)
+    if (hasBri) {
+        const targetLstar = Math.max(0, Math.min(1, bri))
+        const currentLstar = lstar(baseR, baseG, baseB)
+        if (currentLstar < 1e-6) {
+            // Near black: set uniform gray at target brightness
+            baseR = targetLstar
+            baseG = targetLstar
+            baseB = targetLstar
         } else {
-            // RGB only
-            baseR = wr
-            baseG = wg
-            baseB = wb
-            // If brightness is set alongside RGB, scale the result
-            if (hasBri) {
-                const v = Math.max(0, bri)
-                if (v <= 1) {
-                    baseR *= v
-                    baseG *= v
-                    baseB *= v
-                } else {
-                    // Overbright: blend toward white
-                    const t = Math.min(1, (v - 1) / 2)
-                    baseR = baseR * (1 - t) + t
-                    baseG = baseG * (1 - t) + t
-                    baseB = baseB * (1 - t) + t
-                }
-            }
+            const scale = targetLstar / currentLstar
+            baseR = clamp01(baseR * scale)
+            baseG = clamp01(baseG * scale)
+            baseB = clamp01(baseB * scale)
         }
     }
 
@@ -854,14 +855,14 @@ export class ParticleSystem {
         let outG = Number.isFinite(state.green) ? clamp01(state.green) : bg.g
         let outB = Number.isFinite(state.blue) ? clamp01(state.blue) : bg.b
         if (this._compiledRules.usesBackgroundHsb) {
-            const base = rgbToHsv(outR, outG, outB)
-            const hh = normalizeHue(state.hue)
-            const ss = Number.isFinite(state.saturation) ? clamp01(state.saturation) : base.s
-            const vv = Number.isFinite(state.brightness) ? clamp01(state.brightness) : base.v
-            const rgb = hsvToRgb(hh ?? base.h, ss, vv)
-            outR = rgb.r
-            outG = rgb.g
-            outB = rgb.b
+            // Use the same blendHsbRgb pipeline (lstar brightness, 50-50 hue blend)
+            const blended = blendHsbRgb(state.hue, state.saturation, state.brightness,
+                state.red, state.green, state.blue)
+            if (blended) {
+                outR = blended.r
+                outG = blended.g
+                outB = blended.b
+            }
         }
         bg.setRGB(outR, outG, outB)
     }

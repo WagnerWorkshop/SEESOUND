@@ -325,7 +325,6 @@ const FIXED_RULE_ROWS = Object.freeze([
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
 
     // Lines
@@ -342,7 +341,6 @@ const FIXED_RULE_ROWS = Object.freeze([
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'hue', label: 'Hue' },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'saturation', label: 'Saturation' },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'brightness', label: 'Brightness' },
-    { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'luma', label: 'Luma' },
     { target: 'lines', section: 'Lines', subgroup: 'Appearance', output: 'opacity', label: 'Opacity' },
 
     // Background
