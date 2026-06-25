@@ -405,7 +405,7 @@ input[type=number]::-webkit-inner-spin-button {
     appearance: none;
     -webkit-appearance: none;
     margin-top: -3px;
-    width: 10px;
+    width: 3px;
     height: 10px;
     corner-shape: squircle;
     border-radius: var(--radius-s);
@@ -426,10 +426,10 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 .cp-range-slider.noUi-horizontal .noUi-handle {
-    width: 10px;
+    width: 3px;
     height: 10px;
-    right: -5px;
-    top: -3px;
+    right: -1.5px;
+    top: 0px;
     corner-shape: squircle;
     border-radius: var(--radius-s);
     border: none;
@@ -2570,6 +2570,35 @@ input[type=number]::-webkit-inner-spin-button {
     padding: 1px 6px;
     border-radius: var(--radius-s);
     border: var(--border-soft);
+}
+
+/* Modifier layer badge — distinct color */
+.cp-styles-entity-badge.is-modifier {
+    color: var(--color-accent, #8ab4f8);
+    background: var(--gradient);
+    border-color: var(--border-soft);
+}
+
+/* Move up/down buttons */
+.cp-styles-move-btn {
+    font-size: 10px;
+    padding: 2px 4px;
+    min-width: 10px;
+    height: 22px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cp-styles-move-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.cp-styles-move-btn:not(:disabled):hover {
+    background: var(--gradient-hover);
+    color: var(--color-text);
 }
 
 .cp-styles-entity-row.is-disabled {

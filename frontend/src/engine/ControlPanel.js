@@ -50,6 +50,7 @@ import copyIcon from '../icons/copy.svg?raw'
 import undoIcon from '../icons/undo.svg?raw'
 import redoIcon from '../icons/redo.svg?raw'
 import sliderIcon from '../icons/slider.svg?raw'
+import editIcon from '../icons/edit.svg?raw'
 
 
 const NONE_VAR = '__none__'
@@ -400,6 +401,7 @@ const BUTTON_ICON_MAP = Object.freeze({
     close: closeIcon,
     undo: undoIcon,
     redo: redoIcon,
+    edit: editIcon,
 })
 
 const MATH_ACTIONS = Object.freeze([

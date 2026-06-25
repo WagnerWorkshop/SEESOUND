@@ -363,6 +363,10 @@ export class ParticleSystem {
         this._insertIndex = 0
         this._insert_index = 0
 
+        // Modifier mode: no particle spawning, only living rules on proxy particles
+        this._isModifier = opts.isModifier === true
+        this._modifierSeeded = false
+
         const geo = new THREE.BufferGeometry()
         const lineGeo = new THREE.BufferGeometry()
         this._geo = geo
@@ -1614,232 +1618,274 @@ export class ParticleSystem {
         let dedupedCount = 0
         let dedupedLineCount = 0
 
-        let hzStart = freqNormMinHz
-        for (let bucketIndex = 0; bucketIndex < effectiveBucketCount; bucketIndex++) {
-            const isSingleBucket = effectiveBucketCount === 1 && logBucketCount > 1
-            const hzEnd = isSingleBucket
-                ? freqNormMaxHz
-                : (bucketIndex === logBucketCount - 1)
+        // ── Modifier mode: skip bucket loop, seed proxy particles once ──
+        if (this._isModifier) {
+            this._insert_index = 0
+            this._paint_count = 0
+            // Seed proxy particles on first frame (a small grid of overlay particles)
+            if (!this._modifierSeeded) {
+                this._modifierSeeded = true
+                const count = 5
+                const spread = Math.min(hw, hh) * 0.3
+                const proxyColors = [
+                    [1, 1, 1], [1, 0.5, 0.5], [0.5, 1, 0.5], [0.5, 0.5, 1], [1, 1, 0.5]
+                ]
+                for (let i = 0; i < count && i < activeParticleCapacity; i++) {
+                    const angle = (i / count) * Math.PI * 2
+                    const radius = spread * (0.3 + 0.7 * (i / count))
+                    const px = Math.cos(angle) * radius
+                    const py = Math.sin(angle) * radius
+                    const pz = 0
+                    this._pos[i * 3] = px
+                    this._pos[i * 3 + 1] = py
+                    this._pos[i * 3 + 2] = pz
+                    this._sz[i] = 4
+                    const [cr, cg, cb] = proxyColors[i % proxyColors.length]
+                    this._col[i * 3] = cr
+                    this._col[i * 3 + 1] = cg
+                    this._col[i * 3 + 2] = cb
+                    this._alpha[i] = 0.6
+                    this._shape[i] = 1
+                    this._pan[i] = 0
+                    this._binRms[i] = 0
+                    this._isFundamental[i] = 1
+                    this._particleAge[i] = 0
+                    pointDirtyMin = Math.min(pointDirtyMin, i)
+                    pointDirtyMax = Math.max(pointDirtyMax, i)
+                }
+                this._visible_count = count
+                this._geo.setDrawRange(0, count)
+            }
+            // Skip bucket loop — modifier layers don't spawn particles from audio
+        } else {
+            // ── Normal generator: bucket loop ──
+            let hzStart = freqNormMinHz
+            for (let bucketIndex = 0; bucketIndex < effectiveBucketCount; bucketIndex++) {
+                const isSingleBucket = effectiveBucketCount === 1 && logBucketCount > 1
+                const hzEnd = isSingleBucket
                     ? freqNormMaxHz
-                    : Math.min(freqNormMaxHz, hzStart * stepRatio)
-            const hzCenter = isSingleBucket
-                ? Math.sqrt(freqNormMinHz * freqNormMaxHz)
-                : Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
+                    : (bucketIndex === logBucketCount - 1)
+                        ? freqNormMaxHz
+                        : Math.min(freqNormMaxHz, hzStart * stepRatio)
+                const hzCenter = isSingleBucket
+                    ? Math.sqrt(freqNormMinHz * freqNormMaxHz)
+                    : Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
 
-            // Determine if this bucket is a fundamental, harmonic, or neither
-            let isFund = 1 // default: treat as fundamental
-            let closestStreamId = -1
-            if (this._harmonicData) {
-                const { fundHzSet, streamPositions } = this._harmonicData
-                // Check if the bucket's frequency matches a detected fundamental (within 3%)
-                let matchFound = false
-                let minDist = Infinity
-                for (const fundHz of fundHzSet) {
-                    const ratio = hzCenter / Math.max(1, fundHz)
-                    const dist = Math.abs(ratio - 1)
-                    if (dist < minDist) minDist = dist
-                    // Exact fundamental match (±3%) → isFundamental = 1
-                    if (dist < 0.03) {
-                        isFund = 1
-                        matchFound = true
-                        break
+                // Determine if this bucket is a fundamental, harmonic, or neither
+                let isFund = 1 // default: treat as fundamental
+                let closestStreamId = -1
+                if (this._harmonicData) {
+                    const { fundHzSet, streamPositions } = this._harmonicData
+                    // Check if the bucket's frequency matches a detected fundamental (within 3%)
+                    let matchFound = false
+                    let minDist = Infinity
+                    for (const fundHz of fundHzSet) {
+                        const ratio = hzCenter / Math.max(1, fundHz)
+                        const dist = Math.abs(ratio - 1)
+                        if (dist < minDist) minDist = dist
+                        // Exact fundamental match (±3%) → isFundamental = 1
+                        if (dist < 0.03) {
+                            isFund = 1
+                            matchFound = true
+                            break
+                        }
+                        // Harmonic multiple (integer ratio) → isFundamental = 0, track which stream
+                        const nearestInt = Math.round(ratio)
+                        if (nearestInt >= 2 && nearestInt <= 20 && Math.abs(ratio - nearestInt) < 0.03) {
+                            isFund = 0
+                            matchFound = true
+                            break
+                        }
                     }
-                    // Harmonic multiple (integer ratio) → isFundamental = 0, track which stream
-                    const nearestInt = Math.round(ratio)
-                    if (nearestInt >= 2 && nearestInt <= 20 && Math.abs(ratio - nearestInt) < 0.03) {
+                    if (!matchFound) {
+                        // Unclassified — nearest fundamental determines grouping
                         isFund = 0
-                        matchFound = true
-                        break
                     }
                 }
-                if (!matchFound) {
-                    // Unclassified — nearest fundamental determines grouping
-                    isFund = 0
-                }
-            }
 
-            const binStart = _hzToBin(hzStart)
-            const binEnd = _hzToBin(hzEnd)
-            if (binEnd < binStart) {
+                const binStart = _hzToBin(hzStart)
+                const binEnd = _hzToBin(hzEnd)
+                if (binEnd < binStart) {
+                    hzStart = hzEnd
+                    continue
+                }
+
+                let count = 0
+                let peakByteBucket = 0
+                let sumRawEnergy = 0
+                let sumPan = 0
+                let sumPanWeight = 0
+                let sumBinMagnitude = 0
+                let sumBinPhase = 0
+                let sumBinFlux = 0
+                let sumBinPhaseDev = 0
+                let sumBinAttackTime = 0
+                let sumBinEnvelope = 0
+
+                for (let i = binStart; i <= binEnd; i++) {
+                    const byte = freqData[i]
+                    const hzAtBin = binToHz(i)
+                    const sampledMagnitude = sampleLogCqtArrayAtHz(binMagArr, hzAtBin)
+                    let magNorm = Number.isFinite(sampledMagnitude)
+                        ? normalizeByRange(sampledMagnitude, binMagnitudeNormMin, binMagnitudeNormMax)
+                        : (byte / 255)
+                    // ISO 226 human hearing compensation: blend between original and compensated
+                    // using the hearingAmount slider (0 = off, 1 = full 60-phon compensation).
+                    if (this._iso226Lut) {
+                        const dbOffset = sampleIso226CompensationDb(this._iso226Lut, hzAtBin)
+                        if (dbOffset < 0 && this._hearingAmount > 0.001) {
+                            // Negative offset = quieter → reduce magnitude
+                            const linearFactor = Math.pow(10, (dbOffset * this._hearingAmount) / 20)
+                            magNorm *= Math.max(0, Math.min(1, linearFactor))
+                        }
+                    }
+                    sumRawEnergy += magNorm
+                    if (needBinMagnitude) sumBinMagnitude += magNorm
+                    if (needBinPhase && binPhaseArr) {
+                        const sampledPhase = sampleLogCqtArrayAtHz(binPhaseArr, hzAtBin)
+                        if (Number.isFinite(sampledPhase)) {
+                            sumBinPhase += normalizeByRange(sampledPhase, -Math.PI, Math.PI)
+                        }
+                    }
+                    if (needBinFlux && binFluxArr) {
+                        const sampledFlux = sampleLogCqtArrayAtHz(binFluxArr, hzAtBin)
+                        if (Number.isFinite(sampledFlux)) {
+                            sumBinFlux += normalizeByRange(sampledFlux, binFluxNormMin, binFluxNormMax)
+                        }
+                    }
+                    if (needBinPhaseDev && binPhaseDevArr) {
+                        const sampledPhaseDev = sampleLogCqtArrayAtHz(binPhaseDevArr, hzAtBin)
+                        if (Number.isFinite(sampledPhaseDev)) {
+                            sumBinPhaseDev += normalizeByRange(sampledPhaseDev, binPhaseDeviationNormMin, binPhaseDeviationNormMax)
+                        }
+                    }
+                    if (needBinAttackTime && binAttackTimeArr) {
+                        const sampledAttackTime = sampleLogCqtArrayAtHz(binAttackTimeArr, hzAtBin)
+                        if (Number.isFinite(sampledAttackTime)) {
+                            sumBinAttackTime += normalizeByRange(sampledAttackTime, binAttackTimeNormMin, binAttackTimeNormMax)
+                        }
+                    }
+                    if (needBinEnvelope && binEnvArr) {
+                        const sampledEnvelope = sampleLogCqtArrayAtHz(binEnvArr, hzAtBin)
+                        if (Number.isFinite(sampledEnvelope)) {
+                            sumBinEnvelope += normalizeByRange(sampledEnvelope / 3, 0, 1)
+                        }
+                    }
+                    const panValue = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
+                    const panWeight = Math.max(1, byte)
+                    sumPan += panValue * panWeight
+                    sumPanWeight += panWeight
+                    if (byte > peakByteBucket) peakByteBucket = byte
+                    count++
+                }
+
+                if (count <= 0 || peakByteBucket <= 1) continue
+
+                const avgRaw = sumRawEnergy / count
+                const bucketEnergy = avgRaw * gainMult
+
+                // ── Band (local texture) feature calculation ─────────────────
+                // Each feature uses its OWN bandwidth setting and is normalized
+                // within the frequency range of that bandwidth (not globally),
+                // so narrow windows produce usable [0,1] values.
+                let bandFlatnessVal, bandTransientVal, bandCentroidVal, bandFluxVal, bandInstabilityVal
+                if (needAnyBand) {
+                    // Helper: count FFT bins in a given octave window around hzCenter
+                    const _binCountInOctWindow = (oct) => {
+                        const half = oct / 2
+                        return Math.max(1, _hzToBin(hzCenter * Math.pow(2, half)) - _hzToBin(hzCenter / Math.pow(2, half)))
+                    }
+                    // Local Spectral Flatness (Band Noisiness) — uses bandFlatnessOct
+                    // Wiener entropy compresses toward 1.0 with few bins. The "noise floor"
+                    // (minimum expected flatness for a pure tone) rises as bins decrease.
+                    // Aggressively remap so the narrow-window case still produces usable [0,1].
+                    if (needBandFlatness) {
+                        const r = computeBandFeatures(hzCenter, bandFlatnessOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                        const binCt = _binCountInOctWindow(bandFlatnessOct)
+                        // With ~3 FFT bins even a pure tone gives flatness ~0.82-0.88;
+                        // with ~24 bins a pure tone gives ~0.35-0.50.
+                        // noiseFloor approximates the minimum flatness for a strong tone at this bandwidth.
+                        const noiseFloor = clamp01(1 - Math.sqrt(binCt) * 0.08)
+                        bandFlatnessVal = clamp01((r.flatness - noiseFloor) / Math.max(0.05, 1 - noiseFloor))
+                    }
+                    // Local Spectral Centroid (Band Tilt) — uses bandCentroidOct
+                    // Normalize within the actual band's frequency bounds, not globally.
+                    if (needBandCentroid) {
+                        const r = computeBandFeatures(hzCenter, bandCentroidOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                        const bandMinHz = Math.max(FREQ_MIN_HZ, hzCenter / Math.pow(2, bandCentroidOct / 2))
+                        const bandMaxHz = Math.min(FREQ_MAX_HZ, hzCenter * Math.pow(2, bandCentroidOct / 2))
+                        bandCentroidVal = normalizeByRange(r.centroid, bandMinHz, bandMaxHz)
+                    }
+                    // Local Spectral Flux (Band Activity) — uses bandFluxOct
+                    // Flux is the average per-bin spectral change. With few bins the chance
+                    // of any single bin showing flux is low — scale up aggressively.
+                    if (needBandFlux) {
+                        const r = computeBandFeatures(hzCenter, bandFluxOct, null, binFluxArr, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                        const binCt = _binCountInOctWindow(bandFluxOct)
+                        // Amplify by total bin count so a single active bin fills the range
+                        bandFluxVal = clamp01(r.flux * Math.max(8, binCt * 3))
+                    }
+                    // Local Phase Deviation (Band Instability) — uses bandInstabilityOct
+                    if (needBandInstability) {
+                        const r = computeBandFeatures(hzCenter, bandInstabilityOct, null, null, binPhaseDevArr, freqData, binStart, binEnd, binToHz, _hzToBin)
+                        const binCt = _binCountInOctWindow(bandInstabilityOct)
+                        bandInstabilityVal = clamp01(r.instability * Math.max(8, binCt * 3))
+                    }
+                    // Band transient: frame-over-frame energy rise across the bandwidth window
+                    // Uses rhythm brain data (envelope) when available, otherwise high-FFT magnitude.
+                    if (needBandTransient) {
+                        const transMagArr = (needRhythmBrain && binEnvArr) ? binEnvArr : binMagArr
+                        const r = computeBandFeatures(hzCenter, bandTransientOct, transMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
+                        const bandEnergy = r.bandEnergy
+                        const prevEnergy = this._bandPrevEnergy[bucketIndex] ?? 0
+                        const energyRise = bandEnergy - prevEnergy
+                        bandTransientVal = clamp01(Math.max(0, energyRise) * 5)
+                        this._bandPrevEnergy[bucketIndex] = bandEnergy
+                    }
+                }
+
+                writeParticle({
+                    hz: hzCenter,
+                    byte: peakByteBucket,
+                    energy: bucketEnergy,
+                    binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
+                    binRMSEnergy: clamp01(avgRaw),
+                    binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
+                    binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
+                    binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
+                    binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
+                    binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
+                    binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+                    // Band texture variables
+                    bandFlatness: bandFlatnessVal,
+                    bandTransient: bandTransientVal,
+                    bandCentroid: bandCentroidVal,
+                    bandFlux: bandFluxVal,
+                    bandInstability: bandInstabilityVal,
+                }, 1, isFund)
+                writeLine({
+                    hz: hzCenter,
+                    byte: peakByteBucket,
+                    energy: bucketEnergy,
+                    binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
+                    binRMSEnergy: clamp01(avgRaw),
+                    binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
+                    binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
+                    binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
+                    binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
+                    binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
+                    binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
+                    // Band texture variables
+                    bandFlatness: bandFlatnessVal,
+                    bandTransient: bandTransientVal,
+                    bandCentroid: bandCentroidVal,
+                    bandFlux: bandFluxVal,
+                    bandInstability: bandInstabilityVal,
+                })
                 hzStart = hzEnd
-                continue
+                if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
             }
-
-            let count = 0
-            let peakByteBucket = 0
-            let sumRawEnergy = 0
-            let sumPan = 0
-            let sumPanWeight = 0
-            let sumBinMagnitude = 0
-            let sumBinPhase = 0
-            let sumBinFlux = 0
-            let sumBinPhaseDev = 0
-            let sumBinAttackTime = 0
-            let sumBinEnvelope = 0
-
-            for (let i = binStart; i <= binEnd; i++) {
-                const byte = freqData[i]
-                const hzAtBin = binToHz(i)
-                const sampledMagnitude = sampleLogCqtArrayAtHz(binMagArr, hzAtBin)
-                let magNorm = Number.isFinite(sampledMagnitude)
-                    ? normalizeByRange(sampledMagnitude, binMagnitudeNormMin, binMagnitudeNormMax)
-                    : (byte / 255)
-                // ISO 226 human hearing compensation: blend between original and compensated
-                // using the hearingAmount slider (0 = off, 1 = full 60-phon compensation).
-                if (this._iso226Lut) {
-                    const dbOffset = sampleIso226CompensationDb(this._iso226Lut, hzAtBin)
-                    if (dbOffset < 0 && this._hearingAmount > 0.001) {
-                        // Negative offset = quieter → reduce magnitude
-                        const linearFactor = Math.pow(10, (dbOffset * this._hearingAmount) / 20)
-                        magNorm *= Math.max(0, Math.min(1, linearFactor))
-                    }
-                }
-                sumRawEnergy += magNorm
-                if (needBinMagnitude) sumBinMagnitude += magNorm
-                if (needBinPhase && binPhaseArr) {
-                    const sampledPhase = sampleLogCqtArrayAtHz(binPhaseArr, hzAtBin)
-                    if (Number.isFinite(sampledPhase)) {
-                        sumBinPhase += normalizeByRange(sampledPhase, -Math.PI, Math.PI)
-                    }
-                }
-                if (needBinFlux && binFluxArr) {
-                    const sampledFlux = sampleLogCqtArrayAtHz(binFluxArr, hzAtBin)
-                    if (Number.isFinite(sampledFlux)) {
-                        sumBinFlux += normalizeByRange(sampledFlux, binFluxNormMin, binFluxNormMax)
-                    }
-                }
-                if (needBinPhaseDev && binPhaseDevArr) {
-                    const sampledPhaseDev = sampleLogCqtArrayAtHz(binPhaseDevArr, hzAtBin)
-                    if (Number.isFinite(sampledPhaseDev)) {
-                        sumBinPhaseDev += normalizeByRange(sampledPhaseDev, binPhaseDeviationNormMin, binPhaseDeviationNormMax)
-                    }
-                }
-                if (needBinAttackTime && binAttackTimeArr) {
-                    const sampledAttackTime = sampleLogCqtArrayAtHz(binAttackTimeArr, hzAtBin)
-                    if (Number.isFinite(sampledAttackTime)) {
-                        sumBinAttackTime += normalizeByRange(sampledAttackTime, binAttackTimeNormMin, binAttackTimeNormMax)
-                    }
-                }
-                if (needBinEnvelope && binEnvArr) {
-                    const sampledEnvelope = sampleLogCqtArrayAtHz(binEnvArr, hzAtBin)
-                    if (Number.isFinite(sampledEnvelope)) {
-                        sumBinEnvelope += normalizeByRange(sampledEnvelope / 3, 0, 1)
-                    }
-                }
-                const panValue = hasStereoBins ? ae.getBinPan(i) : (ae.pan ?? 0)
-                const panWeight = Math.max(1, byte)
-                sumPan += panValue * panWeight
-                sumPanWeight += panWeight
-                if (byte > peakByteBucket) peakByteBucket = byte
-                count++
-            }
-
-            if (count <= 0 || peakByteBucket <= 1) continue
-
-            const avgRaw = sumRawEnergy / count
-            const bucketEnergy = avgRaw * gainMult
-
-            // ── Band (local texture) feature calculation ─────────────────
-            // Each feature uses its OWN bandwidth setting and is normalized
-            // within the frequency range of that bandwidth (not globally),
-            // so narrow windows produce usable [0,1] values.
-            let bandFlatnessVal, bandTransientVal, bandCentroidVal, bandFluxVal, bandInstabilityVal
-            if (needAnyBand) {
-                // Helper: count FFT bins in a given octave window around hzCenter
-                const _binCountInOctWindow = (oct) => {
-                    const half = oct / 2
-                    return Math.max(1, _hzToBin(hzCenter * Math.pow(2, half)) - _hzToBin(hzCenter / Math.pow(2, half)))
-                }
-                // Local Spectral Flatness (Band Noisiness) — uses bandFlatnessOct
-                // Wiener entropy compresses toward 1.0 with few bins. The "noise floor"
-                // (minimum expected flatness for a pure tone) rises as bins decrease.
-                // Aggressively remap so the narrow-window case still produces usable [0,1].
-                if (needBandFlatness) {
-                    const r = computeBandFeatures(hzCenter, bandFlatnessOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
-                    const binCt = _binCountInOctWindow(bandFlatnessOct)
-                    // With ~3 FFT bins even a pure tone gives flatness ~0.82-0.88;
-                    // with ~24 bins a pure tone gives ~0.35-0.50.
-                    // noiseFloor approximates the minimum flatness for a strong tone at this bandwidth.
-                    const noiseFloor = clamp01(1 - Math.sqrt(binCt) * 0.08)
-                    bandFlatnessVal = clamp01((r.flatness - noiseFloor) / Math.max(0.05, 1 - noiseFloor))
-                }
-                // Local Spectral Centroid (Band Tilt) — uses bandCentroidOct
-                // Normalize within the actual band's frequency bounds, not globally.
-                if (needBandCentroid) {
-                    const r = computeBandFeatures(hzCenter, bandCentroidOct, binMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
-                    const bandMinHz = Math.max(FREQ_MIN_HZ, hzCenter / Math.pow(2, bandCentroidOct / 2))
-                    const bandMaxHz = Math.min(FREQ_MAX_HZ, hzCenter * Math.pow(2, bandCentroidOct / 2))
-                    bandCentroidVal = normalizeByRange(r.centroid, bandMinHz, bandMaxHz)
-                }
-                // Local Spectral Flux (Band Activity) — uses bandFluxOct
-                // Flux is the average per-bin spectral change. With few bins the chance
-                // of any single bin showing flux is low — scale up aggressively.
-                if (needBandFlux) {
-                    const r = computeBandFeatures(hzCenter, bandFluxOct, null, binFluxArr, null, freqData, binStart, binEnd, binToHz, _hzToBin)
-                    const binCt = _binCountInOctWindow(bandFluxOct)
-                    // Amplify by total bin count so a single active bin fills the range
-                    bandFluxVal = clamp01(r.flux * Math.max(8, binCt * 3))
-                }
-                // Local Phase Deviation (Band Instability) — uses bandInstabilityOct
-                if (needBandInstability) {
-                    const r = computeBandFeatures(hzCenter, bandInstabilityOct, null, null, binPhaseDevArr, freqData, binStart, binEnd, binToHz, _hzToBin)
-                    const binCt = _binCountInOctWindow(bandInstabilityOct)
-                    bandInstabilityVal = clamp01(r.instability * Math.max(8, binCt * 3))
-                }
-                // Band transient: frame-over-frame energy rise across the bandwidth window
-                // Uses rhythm brain data (envelope) when available, otherwise high-FFT magnitude.
-                if (needBandTransient) {
-                    const transMagArr = (needRhythmBrain && binEnvArr) ? binEnvArr : binMagArr
-                    const r = computeBandFeatures(hzCenter, bandTransientOct, transMagArr, null, null, freqData, binStart, binEnd, binToHz, _hzToBin)
-                    const bandEnergy = r.bandEnergy
-                    const prevEnergy = this._bandPrevEnergy[bucketIndex] ?? 0
-                    const energyRise = bandEnergy - prevEnergy
-                    bandTransientVal = clamp01(Math.max(0, energyRise) * 5)
-                    this._bandPrevEnergy[bucketIndex] = bandEnergy
-                }
-            }
-
-            writeParticle({
-                hz: hzCenter,
-                byte: peakByteBucket,
-                energy: bucketEnergy,
-                binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
-                binRMSEnergy: clamp01(avgRaw),
-                binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
-                binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
-                binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
-                binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
-                binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
-                binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-                // Band texture variables
-                bandFlatness: bandFlatnessVal,
-                bandTransient: bandTransientVal,
-                bandCentroid: bandCentroidVal,
-                bandFlux: bandFluxVal,
-                bandInstability: bandInstabilityVal,
-            }, 1, isFund)
-            writeLine({
-                hz: hzCenter,
-                byte: peakByteBucket,
-                energy: bucketEnergy,
-                binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
-                binRMSEnergy: clamp01(avgRaw),
-                binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
-                binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
-                binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
-                binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
-                binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
-                binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-                // Band texture variables
-                bandFlatness: bandFlatnessVal,
-                bandTransient: bandTransientVal,
-                bandCentroid: bandCentroidVal,
-                bandFlux: bandFluxVal,
-                bandInstability: bandInstabilityVal,
-            })
-            hzStart = hzEnd
-            if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
-        }
+        } // end else (generator bucket loop)
 
         if (persistMode === 1) {
             if (emitLightParticles || wroteParticles > 0) {

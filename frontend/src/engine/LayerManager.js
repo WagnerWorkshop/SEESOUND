@@ -86,7 +86,11 @@ export class LayerManager {
         let primaryAssigned = false
         for (const entity of sorted) {
             const isDisabled = entity.enabled === false
-            const ps = new ParticleSystem(this._scene, { maxParticles: this._maxParticles })
+            const isModifier = entity.layerType === 'modifier'
+            const ps = new ParticleSystem(this._scene, {
+                maxParticles: this._maxParticles,
+                isModifier,
+            })
 
             // Compile rules for this entity
             const entityRules = {
@@ -143,14 +147,20 @@ export class LayerManager {
     update(ae, params, canvasW, canvasH) {
         if (!ae?.analyser) return
 
-        // Update each enabled layer independently.
-        // Each layer's ps.update() internally handles its own rules including
-        // background/camera if the primary layer has them compiled in.
+        // Two-pass update: generators first (spawn particles), then modifiers (overlay)
+        // Within each pass, layers are processed in their user-defined order
+        // (lower order = lower in the stack, rendered first).
         let hasCamRules = false
-        for (const layer of this._layers) {
-            if (layer.entity?.enabled === false) continue
-            layer.ps.update(ae, params, canvasW, canvasH)
-            if (layer.ps._compiledRules?.cameraRuleCount > 0) hasCamRules = true
+
+        for (const pass of ['generator', 'modifier']) {
+            for (const layer of this._layers) {
+                if (layer.entity?.enabled === false) continue
+                const isModifier = layer.entity?.layerType === 'modifier'
+                if (pass === 'generator' && isModifier) continue
+                if (pass === 'modifier' && !isModifier) continue
+                layer.ps.update(ae, params, canvasW, canvasH)
+                if (layer.ps._compiledRules?.cameraRuleCount > 0) hasCamRules = true
+            }
         }
 
         // Forward camera output from whichever layer has camera rules
@@ -294,7 +304,9 @@ export class LayerManager {
      * Used by SeesoundEngine for cloud network graph access.
      */
     getPrimarySystem() {
-        const layer = this._layers.find((l) => l.entity?.enabled !== false)
+        // Prefer generator layers over modifiers for direct access (cloud graph, position data)
+        const layer = this._layers.find((l) => l.entity?.enabled !== false && l.entity?.layerType !== 'modifier')
+            || this._layers.find((l) => l.entity?.enabled !== false)
         return layer ? layer.ps : null
     }
 

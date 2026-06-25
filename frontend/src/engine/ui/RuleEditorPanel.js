@@ -27,6 +27,13 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
     panel.append(entityList, popup)
 
+    // ── Available audio track IDs ─────────────────────────────────────────
+    // Entities filter which audio stem they react to.
+    // 'full' = full mix. The stem splitter neural network (coming soon) will
+    // dynamically populate additional tracks such as 'vocals', 'drums', 'bass',
+    // 'other'. Additional models (e.g. piano, guitar) can push more IDs here.
+    const AVAILABLE_AUDIO_TRACKS = ['full', 'piano', 'guitar']
+
     const baseRowsByKey = new Map()
     const orderedRows = []
     const sectionToggleByName = new Map()
@@ -39,7 +46,6 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     let activeOwner = { type: 'entity', id: null }
     let popupOpen = false
     let draggingEntityId = null
-    let draggingDefinitionId = null
 
     const RULE_INPUT_IDS = [...RULE_VARIABLE_ID_SET]
     const RULE_INPUT_ENTRIES = RULE_INPUT_IDS
@@ -192,7 +198,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function ensureActiveOwner() {
         const entities = getRuleEntities()
         if (!entities.length) {
-            setRuleEntities([{ id: 'entity-all', name: 'All', enabled: true, order: 0, entityShapeType: 'particle', definitions: [], rules: [] }])
+            setRuleEntities([{ id: 'entity-all', name: 'All', enabled: true, order: 0, entityShapeType: 'particle', audioTrackId: 'full', rules: [] }])
             activeOwner = { type: 'entity', id: 'entity-all' }
             return
         }
@@ -275,21 +281,75 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 renderEntityList()
             })
 
-            // Badge showing type + spacing
+            // Badge: layer type + shape type
             const typeBadge = el('span', 'cp-styles-entity-badge')
-            let badgeText = entity.entityShapeType || 'particle'
-            if (entity.entityShapeType === 'cloud' && entity.spacingMode === 'network') {
-                badgeText = 'cloud·net'
-            } else if (entity.entityShapeType === 'cloud') {
-                badgeText = `cloud·${entity.cloudShape || 'cyl'}`
+            const isModifier = entity.layerType === 'modifier'
+            // Modifier badge is distinct
+            if (isModifier) {
+                typeBadge.classList.add('is-modifier')
+                typeBadge.textContent = 'mod'
+            } else {
+                let badgeText = entity.entityShapeType || 'particle'
+                if (entity.entityShapeType === 'cloud' && entity.spacingMode === 'network') {
+                    badgeText = 'cloud·net'
+                } else if (entity.entityShapeType === 'cloud') {
+                    badgeText = `cloud·${entity.cloudShape || 'cyl'}`
+                }
+                typeBadge.textContent = badgeText
             }
-            typeBadge.textContent = badgeText
 
             const nameBtn = el('button', 'cp-btn cp-styles-entity-name', { text: entity.name || `Entity ${index + 1}` })
-            const editBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.editEntity || 'Edit' })
-            const removeBtn = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.rules?.removeEntity || 'Remove' })
+            const editBtn = el('button', 'cp-btn', { type: 'button' })
+            applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editEntity || 'Edit')
+
+            // Move Up / Move Down buttons
+            const moveUpBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
+                type: 'button',
+                title: 'Move up',
+                text: '▲',
+                disabled: index === 0 ? 'disabled' : undefined,
+            })
+            const moveDownBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
+                type: 'button',
+                title: 'Move down',
+                text: '▼',
+                disabled: index >= entities.length - 1 ? 'disabled' : undefined,
+            })
+
+            const removeBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button' })
+            applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, UI_TEXT.rules?.removeEntity || 'Remove')
             nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
             editBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+
+            // Move up: swap order with previous
+            moveUpBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                if (index === 0) return
+                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                if (fromIndex < 1) return
+                const temp = ordered[fromIndex]
+                ordered[fromIndex] = ordered[fromIndex - 1]
+                ordered[fromIndex - 1] = temp
+                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
+                setRuleEntities(normalized)
+                renderEntityList()
+            })
+
+            // Move down: swap order with next
+            moveDownBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
+                const temp = ordered[fromIndex]
+                ordered[fromIndex] = ordered[fromIndex + 1]
+                ordered[fromIndex + 1] = temp
+                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
+                setRuleEntities(normalized)
+                renderEntityList()
+            })
+
             removeBtn.addEventListener('click', () => {
                 const next = getRuleEntities().filter((entry) => entry.id !== entity.id)
                 setRuleEntities(next)
@@ -321,11 +381,12 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 ordered.splice(toIndex, 0, moved)
                 const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
                 setRuleEntities(normalized)
+                renderEntityList()
             })
 
-            row.append(toggleCheck, typeBadge, nameBtn, editBtn, removeBtn)
+            row.append(toggleCheck, typeBadge, moveUpBtn, moveDownBtn, nameBtn, editBtn, removeBtn)
 
-            // ── Right-click context menu: Rename / Duplicate / Delete ──
+            // ── Right-click context menu: Move Up / Move Down / Edit / Rename / Duplicate / Delete ──
             row.addEventListener('contextmenu', (event) => {
                 event.preventDefault()
                 event.stopPropagation()
@@ -338,9 +399,47 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 menu.style.left = `${event.clientX}px`
                 menu.style.top = `${event.clientY}px`
 
+                const moveUpItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Up' })
+                const moveDownItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Down' })
+                const editItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Edit' })
                 const renameItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Rename' })
                 const duplicateItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Duplicate' })
                 const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
+
+                if (index === 0) moveUpItem.disabled = true
+                if (index >= entities.length - 1) moveDownItem.disabled = true
+
+                moveUpItem.addEventListener('click', () => {
+                    menu.remove()
+                    if (index === 0) return
+                    const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                    if (fromIndex < 1) return
+                    const temp = ordered[fromIndex]
+                    ordered[fromIndex] = ordered[fromIndex - 1]
+                    ordered[fromIndex - 1] = temp
+                    const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
+                    setRuleEntities(normalized)
+                    renderEntityList()
+                })
+
+                moveDownItem.addEventListener('click', () => {
+                    menu.remove()
+                    const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                    if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
+                    const temp = ordered[fromIndex]
+                    ordered[fromIndex] = ordered[fromIndex + 1]
+                    ordered[fromIndex + 1] = temp
+                    const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
+                    setRuleEntities(normalized)
+                    renderEntityList()
+                })
+
+                editItem.addEventListener('click', () => {
+                    menu.remove()
+                    openPopupForOwner({ type: 'entity', id: entity.id })
+                })
 
                 renameItem.addEventListener('click', () => {
                     menu.remove()
@@ -412,90 +511,29 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         titleRow.append(titleEl, typeBadge)
         popupMeta.appendChild(titleRow)
 
-        const definitionsSection = el('div', 'cp-styles-definitions')
-
-        const definitionsList = el('div', 'cp-styles-definition-list')
-        const definitions = Array.isArray(entity.definitions) ? entity.definitions : []
-        definitions.forEach((def) => {
-            const defRow = el('div', 'cp-styles-definition-row')
-            defRow.draggable = true
-            defRow.dataset.definitionId = def.id
-            const defName = el('input', 'cp-input-text cp-styles-definition-name', { value: def.name || 'Filter' })
-            const filterWrap = el('div', 'cp-styles-definition-filter')
-            const filterPrefix = el('span', 'cp-styles-definition-filter-prefix', { text: `${UI_TEXT.rules?.filterIf || 'if'} (` })
-            const filterInput = el('input', 'cp-input-text cp-styles-definition-filter-input', {
-                value: String(def.expression || ''),
-                placeholder: UI_TEXT.rules?.filterPlaceholder || 'amplitude > 0.2',
-            })
-            const filterSuffix = el('span', 'cp-styles-definition-filter-suffix', { text: ')' })
-            filterWrap.append(filterPrefix, filterInput, filterSuffix)
-            const defRemove = el('button', 'cp-btn cp-btn-danger', { text: UI_TEXT.rules?.removeDefinition || 'Remove' })
-            defName.addEventListener('change', () => {
-                const nextName = String(defName.value || '').trim() || def.name || 'Filter'
-                const nextDefs = definitions.map((entry) => (entry.id === def.id ? { ...entry, name: nextName } : entry))
-                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
-                setRuleEntities(nextEntities)
-            })
-            filterInput.addEventListener('change', () => {
-                const nextExpr = String(filterInput.value || '').trim()
-                const nextDefs = definitions.map((entry) => (entry.id === def.id ? { ...entry, expression: nextExpr } : entry))
-                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
-                setRuleEntities(nextEntities)
-            })
-            defRemove.addEventListener('click', () => {
-                const nextDefs = definitions.filter((entry) => entry.id !== def.id)
-                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
-                setRuleEntities(nextEntities)
-                renderPopupMeta()
-            })
-
-            defRow.addEventListener('dragstart', () => {
-                draggingDefinitionId = def.id
-                defRow.classList.add('is-dragging')
-            })
-            defRow.addEventListener('dragend', () => {
-                draggingDefinitionId = null
-                defRow.classList.remove('is-dragging')
-            })
-            defRow.addEventListener('dragover', (event) => {
-                event.preventDefault()
-            })
-            defRow.addEventListener('drop', (event) => {
-                event.preventDefault()
-                if (!draggingDefinitionId || draggingDefinitionId === def.id) return
-                const ordered = [...definitions]
-                const fromIndex = ordered.findIndex((entry) => entry.id === draggingDefinitionId)
-                const toIndex = ordered.findIndex((entry) => entry.id === def.id)
-                if (fromIndex < 0 || toIndex < 0) return
-                const moved = ordered.splice(fromIndex, 1)[0]
-                ordered.splice(toIndex, 0, moved)
-                const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: ordered } : entry))
-                setRuleEntities(nextEntities)
-            })
-
-            defRow.append(defName, filterWrap, defRemove)
-            definitionsList.appendChild(defRow)
-        })
-
-        const addDefinitionBtn = el('button', 'cp-btn cp-btn-icon', { type: 'button', title: UI_TEXT.rules?.addDefinition || 'Add Filter' })
-        applyIconOnlyButton(addDefinitionBtn, BUTTON_ICON_MAP.condition || BUTTON_ICON_MAP.add, UI_TEXT.rules?.addDefinition || 'Add Filter')
-        addDefinitionBtn.addEventListener('click', () => {
-            const baseName = UI_TEXT.rules?.newDefinitionPrompt || 'Filter'
-            const existingNames = new Set(definitions.map((entry) => String(entry?.name || '').trim()).filter(Boolean))
-            let index = 1
-            let nextName = `${baseName} ${index}`
-            while (existingNames.has(nextName)) {
-                index += 1
-                nextName = `${baseName} ${index}`
-            }
-            const nextDefs = [...definitions, { id: `def-${Date.now()}`, name: nextName, expression: '' }]
-            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, definitions: nextDefs } : entry))
+        // ── Audio Track Selector ──────────────────────────────────────────
+        // Replaces the old expression-based definitions filter.
+        const trackSection = el('div', 'cp-styles-definitions')
+        const trackRow = el('label', 'cp-setting-row')
+        const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
+        const trackSelect = el('select', 'cp-input-select')
+        const currentTrack = entity.audioTrackId || 'full'
+        const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
+            value: id,
+            label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
+        }))
+        trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
+        trackSelect.addEventListener('change', () => {
+            const nextTrack = trackSelect.value
+            const nextEntities = getRuleEntities().map((entry) =>
+                entry.id === entity.id ? { ...entry, audioTrackId: nextTrack } : entry
+            )
             setRuleEntities(nextEntities)
-            renderPopupMeta()
         })
-
-        definitionsSection.append(definitionsList, addDefinitionBtn)
-        popupMeta.appendChild(definitionsSection)
+        trackRow.append(trackLabel, trackSelect)
+        const trackHint = el('div', 'cp-styles-entity-info', { text: 'Select which audio stem this layer reacts to. Additional stems will appear when the stem splitter is active.' })
+        trackSection.append(trackRow, trackHint)
+        popupMeta.appendChild(trackSection)
     }
 
     function updateOwnerSectionVisibility() {
@@ -533,7 +571,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         })
         nameRow.append(nameLabel, nameInput)
 
-        // Entity type
+        // Entity type (shape type)
         const typeRow = el('label', 'cp-setting-row')
         const typeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' })
         const typeSelect = el('select', 'cp-input-select')
@@ -545,6 +583,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             { value: 'background', label: UI_TEXT.rules?.shapeBackground || 'Background' },
         ], 'particle'))
         typeRow.append(typeLabel, typeSelect)
+
+        // Layer type (generator vs modifier)
+        const layerTypeRow = el('label', 'cp-setting-row')
+        const layerTypeLabel = el('span', 'cp-setting-label', { text: 'Layer Type' })
+        const layerTypeSelect = el('select', 'cp-input-select')
+        layerTypeSelect.appendChild(createSelectOptions([
+            { value: 'generator', label: 'Generator — spawns shapes on canvas' },
+            { value: 'modifier', label: 'Modifier — overlays on top of lower layers' },
+        ], 'generator'))
+        layerTypeRow.append(layerTypeLabel, layerTypeSelect)
 
         // Spacing mode (cloud only)
         const spacingRow = el('label', 'cp-setting-row')
@@ -582,6 +630,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const rawName = String(nameInput.value || '').trim()
             const nextName = rawName || `Element ${getRuleEntities().length + 1}`
             const nextType = typeSelect.value || 'particle'
+            const nextLayerType = layerTypeSelect.value || 'generator'
             const nextSpacing = spacingSelect.value || 'coordinates'
             const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
 
@@ -600,9 +649,10 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 enabled: true,
                 order: getRuleEntities().length,
                 entityShapeType: nextType,
+                layerType: nextLayerType,
                 spacingMode: nextType === 'cloud' ? nextSpacing : 'coordinates',
                 cloudShape: nextType === 'cloud' ? nextCloudShape : 'cylindrical',
-                definitions: [],
+                audioTrackId: 'full',
                 rules: [],
             }]
             setRuleEntities(nextEntities)
@@ -612,7 +662,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         actions.append(cancelBtn, createBtn)
 
         const body = el('div', 'cp-entity-creation-body')
-        body.append(nameRow, typeRow, spacingRow, cloudShapeRow, actions)
+        body.append(nameRow, layerTypeRow, typeRow, spacingRow, cloudShapeRow, actions)
 
         const header = el('div', 'cp-entity-creation-header')
         header.append(title, closeBtn)
