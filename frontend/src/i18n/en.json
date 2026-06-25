@@ -6,7 +6,7 @@
             "view": "View",
             "settings": "Settings",
             "rules": "Behaviors",
-            "styles": "Design",
+            "styles": "Layers",
             "collapse": "Collapse"
         },
         "file": {
@@ -301,16 +301,18 @@
             "title": "Behaviors",
             "background": "Background",
             "camera": "Camera",
-            "entities": "Elements",
-            "addEntity": "Add Element",
+            "entities": "Layers",
+            "addEntity": "Add Layer",
             "editEntity": "Edit",
             "removeEntity": "Remove",
-            "newEntityPrompt": "Element name",
+            "newEntityPrompt": "Layer name",
             "entityName": "Name",
             "shapeType": "Type",
             "shapeParticle": "Particle",
             "shapeCloud": "Cloud",
             "shapeLine": "Line",
+            "shapeCamera": "Camera",
+            "shapeBackground": "Background",
             "definitions": "Listen For",
             "definitionsAll": "All",
             "definitionsSpecial": "Special",
@@ -782,6 +784,20 @@
             "label": "Is Fundamental",
             "technicalName": "isFundamental",
             "description": "1 if this particle represents a fundamental/root node, 0 if it is a harmonic overtone."
+        },
+        {
+            "id": "globalTransient",
+            "group": "overall",
+            "label": "Global Transient",
+            "technicalName": "globalTransient",
+            "description": "Frame-wide transient/attack energy from the rhythm analyser."
+        },
+        {
+            "id": "age",
+            "group": "overall",
+            "label": "Particle Age",
+            "technicalName": "age",
+            "description": "Frames elapsed since this particle was spawned."
         },
         {
             "id": "bandFlatness",

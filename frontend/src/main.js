@@ -415,10 +415,17 @@ let _prevCameraOutput = null
 
 function applyRuleCameraOutput(output) {
     if (!output) { _prevCameraOutput = null; return }
-    // Skip if nothing changed since last frame — prevents flickering
+    // Skip if nothing changed since last frame (within epsilon) — prevents flickering
+    const EPS = 0.01
     const prev = _prevCameraOutput
     if (prev) {
-        const eq = (a, b) => (Number.isFinite(a) ? a : null) === (Number.isFinite(b) ? b : null)
+        const eq = (a, b) => {
+            const va = Number.isFinite(a) ? a : null
+            const vb = Number.isFinite(b) ? b : null
+            if (va === null && vb === null) return true
+            if (va === null || vb === null) return false
+            return Math.abs(va - vb) < EPS
+        }
         if (eq(output.x, prev.x) && eq(output.y, prev.y) && eq(output.z, prev.z) &&
             eq(output.targetX, prev.targetX) && eq(output.targetY, prev.targetY) && eq(output.targetZ, prev.targetZ) &&
             eq(output.zoom, prev.zoom) && eq(output.angleOfView, prev.angleOfView)) {
@@ -600,14 +607,17 @@ applyAxoPresetFromParams()
 syncCameraFromParams()
 
 // ─────────────────────────────────────────────────────────────────────────────
-// § 2  PARTICLE SYSTEM
+// § 2  LAYER MANAGER (multi-layer particle systems)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ps = new ParticleSystem(scene, { maxParticles: params.maxParticles ?? 262144 })
-const _initialCompileState = ps.onRulesChanged({
+import { LayerManager } from './engine/LayerManager.js'
+
+const ps = new LayerManager(scene, { maxParticlesPerLayer: params.maxParticles ?? 262144 })
+ps.rebuild({
     ruleEntities: params.ruleEntities ?? [],
     ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
 })
+const _initialCompileState = ps.getRuleCompileState()
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
 syncPostProcessingFromParams()
 
@@ -889,7 +899,7 @@ function animate() {
     frameN++
 
     if ((frameN % 120) === 0) {
-        const fps = Number(ps?.getApproxFps?.() || 0)
+        const fps = 60 // estimated — no per-instance FPS counter
         if (fps > 0 && fps < 24) {
             const now = performance.now()
             if ((now - _lastPerformanceDropSignalTs) > 15000) {
@@ -2035,19 +2045,13 @@ subscribe((_, key) => {
         ae._warmupFrameCount = next
     }
     if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
-        // Rule compilation is handled by SeesoundEngine._syncParticleRules
-        // via its own param subscription (see §8). This main.js subscribe
-        // only passes through the compile state for the UI.
-        if (window.__seesoundEngine?.particleSystem) {
-            const state = window.__seesoundEngine.particleSystem.getRuleCompileState()
-            if (state) window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
-        } else {
-            const state = ps.onRulesChanged({
-                ruleEntities: params.ruleEntities ?? [],
-                ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
-            })
-            window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
-        }
+        // Rebuild all layers from current entity definitions
+        ps.rebuild({
+            ruleEntities: params.ruleEntities ?? [],
+            ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+        })
+        const state = ps.getRuleCompileState()
+        window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
         if (RULE_DEBUG_FLAGS.logCompilerStatus) {
             console.info('[RuleEngine] recompilation', {
                 status: state.compileStatus,

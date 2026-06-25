@@ -45,6 +45,7 @@ const _INPUT_RANGES = Object.freeze({
     entityAge: [0, Number.POSITIVE_INFINITY],
     streamId: [0, 1],
     isFundamental: [0, 1],
+    age: [0, Number.POSITIVE_INFINITY],
     time: [0, Number.POSITIVE_INFINITY],
     deltaTime: [0, 1],
     canvasWidthPx: [0, Number.POSITIVE_INFINITY],
@@ -102,7 +103,8 @@ const _INPUT_MODES = {
     entityFlatness: ['cloud'],
     entityInharmonicity: ['cloud'],
     entityVolume: ['cloud'],
-    globalTransient: ['cloud'],
+    // globalTransient is available in all modes
+    globalTransient: ['particle', 'cloud', 'tracing', 'lines'],
     entityAge: ['cloud'],
     streamId: ['cloud'],
     isFundamental: ['particle', 'cloud'],

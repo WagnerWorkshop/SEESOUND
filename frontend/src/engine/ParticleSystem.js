@@ -423,6 +423,8 @@ export class ParticleSystem {
         this._bandPrevMag = []
         /** @type {number} Frame counter for band data refresh */
         this._bandFrameN = -1
+        // ── Particle age buffer (frames since spawn) ──
+        this._particleAge = new Float32Array(this._N)
         // ── ISO 226 equal-loudness compensation LUT ──
         /** @type {object|null} */
         this._iso226Lut = null
@@ -472,6 +474,7 @@ export class ParticleSystem {
         this._pan = copy(oldPan, this._N)
         this._binRms = copy(oldBinRms, this._N)
         this._isFundamental = copy(oldIsFund, this._N)
+        this._particleAge = copy(oldIsFund, this._N) // reuse copy helper for age buffer
         this._linePos = copy(oldLinePos, this._N * 2 * 3)
         this._lineCol = copy(oldLineCol, this._N * 2 * 3)
         this._lineThickness = copy(oldLineThick, this._N)
@@ -818,6 +821,8 @@ export class ParticleSystem {
             this._col[i * 3 + 2] = nextB
             this._alpha[i] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : this._alpha[i]
             this._shape[i] = shapeToValue(particle.shapeType)
+            // Increment particle age
+            this._particleAge[i] = (this._particleAge[i] || 0) + 1
             this._binRms[i] = Number.isFinite(loopInputs.binRMSEnergy) ? clamp01(loopInputs.binRMSEnergy) : this._binRms[i]
             touched++
         }
@@ -1027,8 +1032,13 @@ export class ParticleSystem {
         const emitLightParticles = rulesEnabled && this._compiledRules.spawnRuleCount > 0
         const emitLines = rulesEnabled && this._compiledRules.lineRuleCount > 0
 
-        // ── ISO 226 Equal-Loudness Compensation LUT ───────────────────────
+        // ── ISO 226 Equal-Loudness Compensation ──────────────────────────
+        // Sync hearing amount to AudioEngine (for spectral feature correction)
+        // and build per-bin LUT for bucket computation.
         const hearingAmount = Number(params.adjustForHumanHearing ?? 0)
+        if (typeof ae.setHearingCompensation === 'function') {
+            ae.setHearingCompensation(hearingAmount)
+        }
         const hearingEnabled = hearingAmount > 0.001
         if (hearingEnabled) {
             const currentFftSize = ae.FFT_SIZE || 16384
@@ -1158,6 +1168,7 @@ export class ParticleSystem {
             binEnvelope: 0,
             binEnvelopeState: 0,
             globalRmsEnergy: normalizeByRange(ae.rmsDbfs, globalRmsNormMin, globalRmsNormMax),
+            globalTransient: ae.globalTransient ?? 0,
             binRMSEnergy: normalizeByRange(ae.rmsDbfs, globalRmsNormMin, globalRmsNormMax),
             spectralCentroid: normalizeByRange(ae.spectralCentroidHz, spectralCentroidNormMin, spectralCentroidNormMax),
             spectralFlux: normalizeByRange(ae.spectralFluxAU, globalSpectralFluxNormMin, globalSpectralFluxNormMax),
@@ -1348,12 +1359,14 @@ export class ParticleSystem {
             let outB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : brightness) : brightness
             const outAlpha = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
 
-            // Dedup: skip if identical particle already written this frame
-            // (only active in momentary mode — painting mode accumulates trails)
+            // Dedup: skip if a particle with the same position was already written this frame.
+            // When rules use only global inputs (e.g. spectralCentroid for x/y/z), every
+            // bucket spawns a particle at the same location — one is enough.
+            // In painting mode (persistMode=1) all buckets are kept to accumulate trails.
             if (_particleDedup) {
-                const hkey = `${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)},${outR.toFixed(4)},${outG.toFixed(4)},${outB.toFixed(4)},${outSize.toFixed(1)},${outAlpha.toFixed(4)}`
-                if (_particleDedup.has(hkey)) { dedupedCount++; return }
-                _particleDedup.set(hkey, true)
+                const posKey = `${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)}`
+                if (_particleDedup.has(posKey)) { dedupedCount++; return }
+                _particleDedup.set(posKey, true)
             }
 
             // Write to GPU buffers
@@ -1371,6 +1384,8 @@ export class ParticleSystem {
             // Set isFundamental based on harmonic object classification
             // 1 = fundamental node, 0 = harmonic overtone
             this._isFundamental[slotIndex] = isFundamentalFlag
+            // Reset age for newly spawned particle
+            this._particleAge[slotIndex] = 0
             markPointDirty(slotIndex)
             wroteParticles++
 
@@ -1444,6 +1459,10 @@ export class ParticleSystem {
                         bandCentroid: bandCentroidMetric,
                         bandFlux: bandFluxMetric,
                         bandInstability: bandInstabilityMetric,
+                        // Per-bin music theory
+                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
+                        octave: midiToOctave(frequencyToMidi(hz)),
+                        age: 0,
                     }),
                 }, line)
             }
@@ -1475,9 +1494,17 @@ export class ParticleSystem {
             const centerY = Number.isFinite(line.y) ? line.y : y
             const centerZ = Number.isFinite(line.z) ? line.z : z
             const lineLength = Number.isFinite(line.length) ? Math.max(0, line.length) : Math.max(1, hh * 0.12 * energy)
-            const halfLength = lineLength * 0.5
             const axisRaw = typeof line.direction === 'string' ? line.direction.trim().toLowerCase() : ''
             const axis = (axisRaw === 'x' || axisRaw === 'y' || axisRaw === 'z') ? axisRaw : 'y'
+
+            // Line dedup: skip lines with identical center + direction + length
+            if (_lineDedup) {
+                const lineKey = `${centerX.toFixed(2)},${centerY.toFixed(2)},${centerZ.toFixed(2)},${axis},${lineLength.toFixed(1)}`
+                if (_lineDedup.has(lineKey)) { dedupedLineCount++; return }
+                _lineDedup.set(lineKey, true)
+            }
+
+            const halfLength = lineLength * 0.5
 
             let xStart = centerX
             let yStart = centerY
@@ -1555,16 +1582,48 @@ export class ParticleSystem {
             normFreq: 0,
             // Music theory helpers — overridden per-bin in writeParticle/writeLine
         }
-        // Dedup table: skip writing particles identical to one already written this frame
+        // Expose globalTransient and age in frame rule base
+        _frameRuleBase.globalTransient = frameBinInputs.globalTransient
+        _frameRuleBase.age = 0
+
+        // ── Smart bucket count ───────────────────────────────────────────
+        // If spawn/line rules don't reference any per-bin variable, every
+        // bucket produces identical particles. One bucket is enough.
+        const PER_BIN_VARS = new Set([
+            'frequencyHz', 'normFreq',
+            'notePitchClass', 'octave',
+            'binMagnitude', 'binPhase', 'binFlux', 'binPhaseDeviation',
+            'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'binRMSEnergy',
+            'pan',
+            'bandFlatness', 'bandTransient', 'bandCentroid', 'bandFlux', 'bandInstability',
+            'isFundamental',
+        ])
+        const spawnInputs = this._compiledRules?.requiredInputsByTarget?.spawnedParticles ?? []
+        const lineInputs = this._compiledRules?.requiredInputsByTarget?.lines ?? []
+        const spawnNeedsBins = spawnInputs.some((id) => PER_BIN_VARS.has(id))
+        const lineNeedsBins = lineInputs.some((id) => PER_BIN_VARS.has(id))
+        const needsFullBucketLoop = (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
+        let effectiveBucketCount = needsFullBucketLoop ? logBucketCount : 1
+        // In painting mode always use full buckets to accumulate trails
+        if (persistMode === 1) effectiveBucketCount = logBucketCount
+
+        // One-particle dedup: skip particles at the same position
         const _particleDedup = persistMode !== 1 ? new Map() : null
+        const _lineDedup = persistMode !== 1 ? new Map() : null
         let dedupedCount = 0
+        let dedupedLineCount = 0
 
         let hzStart = freqNormMinHz
-        for (let bucketIndex = 0; bucketIndex < logBucketCount; bucketIndex++) {
-            const hzEnd = (bucketIndex === logBucketCount - 1)
+        for (let bucketIndex = 0; bucketIndex < effectiveBucketCount; bucketIndex++) {
+            const isSingleBucket = effectiveBucketCount === 1 && logBucketCount > 1
+            const hzEnd = isSingleBucket
                 ? freqNormMaxHz
-                : Math.min(freqNormMaxHz, hzStart * stepRatio)
-            const hzCenter = Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
+                : (bucketIndex === logBucketCount - 1)
+                    ? freqNormMaxHz
+                    : Math.min(freqNormMaxHz, hzStart * stepRatio)
+            const hzCenter = isSingleBucket
+                ? Math.sqrt(freqNormMinHz * freqNormMaxHz)
+                : Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
 
             // Determine if this bucket is a fundamental, harmonic, or neither
             let isFund = 1 // default: treat as fundamental

@@ -11,6 +11,7 @@ import {
     computeChromagram,
     normalizeCentroidHzToUnit,
 } from './AudioFeatures.js'
+import { createIso226CompensationLut, sampleIso226CompensationDb } from './Iso226Lut.js'
 
 function defaultUsage() {
     return {
@@ -43,6 +44,9 @@ function defaultUsage() {
         },
     }
 }
+
+const FREQ_MIN_HZ = 16
+const FREQ_MAX_HZ = 20000
 
 export function snapCqtDetailsPer10Octaves(value) {
     const n = Math.round(Number(value))
@@ -173,6 +177,14 @@ export class AudioEngine {
         this.ctxState = 'none'
         this.monitorMuted = false
 
+        // ── ISO 226 hearing compensation ──
+        /** @type {object|null} */
+        this._hearingLut = null
+        /** @type {number} Cached hearing amount (0..1) */
+        this._hearingAmount = 0
+        /** @type {number} Last FFT size used to build LUT */
+        this._hearingLutFftSize = 0
+
         // Warmup frame counter — prevents first-frame impulse
         this._warmupFrames = 0
         this._warmupFrameCount = 5
@@ -291,6 +303,14 @@ export class AudioEngine {
         if (this._workletConfig.fluxWindowFrames === next) return
         this._workletConfig.fluxWindowFrames = next
         this._postWorkletConfig()
+    }
+
+    /**
+     * Set ISO 226 hearing compensation amount.
+     * @param {number} amount 0 = off, 0.5 = moderate, 1.0 = full 60-phon curve
+     */
+    setHearingCompensation(amount) {
+        this._hearingAmount = Math.max(0, Math.min(1, Number(amount) || 0))
     }
 
     setCqtDetailsPer10Octaves(nextValue) {
@@ -530,14 +550,51 @@ export class AudioEngine {
             this._rhythmBrainActive = false
         }
 
-        const bc = this.frequencyData.length
+        // ── Global parameters use the rhythm brain (low FFT) when available ──
+        // This gives faster transient response and matches the user's intent
+        // that overall/global parameters react to rhythm, not fine frequency detail.
+        // Hearing compensation is applied to whichever FFT is used.
+        const useHearing = this._hearingAmount > 0.001
+        const rawGlobalData = this._rhythmBrainActive ? this._rhythmFrequencyData : this.frequencyData
+        let globalData = rawGlobalData
+        if (useHearing) {
+            const srcLen = rawGlobalData.length
+            if (!this._hearingLut || this._hearingLutFftSize !== srcLen) {
+                this._hearingLut = createIso226CompensationLut({
+                    size: Math.max(100, srcLen),
+                    phon: 60,
+                    minHz: FREQ_MIN_HZ,
+                    maxHz: FREQ_MAX_HZ,
+                    referenceHz: 1000,
+                })
+                this._hearingLutFftSize = srcLen
+            }
+            if (!this._hearingCorrectedFreq || this._hearingCorrectedFreq.length !== srcLen) {
+                this._hearingCorrectedFreq = new Uint8Array(srcLen)
+            }
+            const hAmount = this._hearingAmount
+            const sampleRate = this.ctx?.sampleRate ?? 44100
+            for (let i = 0; i < srcLen; i++) {
+                const hzAtBin = (i / srcLen) * sampleRate * 0.5
+                const dbOffset = sampleIso226CompensationDb(this._hearingLut, hzAtBin)
+                if (dbOffset < 0) {
+                    const linearFactor = Math.pow(10, (dbOffset * hAmount) / 20)
+                    this._hearingCorrectedFreq[i] = Math.round(Math.max(0, Math.min(255, rawGlobalData[i] * linearFactor)))
+                } else {
+                    this._hearingCorrectedFreq[i] = rawGlobalData[i]
+                }
+            }
+            globalData = this._hearingCorrectedFreq
+        }
+
+        const bc = globalData.length
         const sr = this.ctx?.sampleRate ?? 44100
         const nyq = sr / 2
         const hz = (b) => (b / bc) * nyq
 
         let bS = 0, bC = 0, mS = 0, mC = 0, hS = 0, hC = 0, peak = 0, pb = 0
         for (let i = 0; i < bc; i++) {
-            const v = this.frequencyData[i], f = hz(i)
+            const v = globalData[i], f = hz(i)
             if (f < 250) { bS += v; bC++ } else if (f < 4000) { mS += v; mC++ } else { hS += v; hC++ }
             if (v > peak) { peak = v; pb = i }
         }
@@ -549,7 +606,7 @@ export class AudioEngine {
 
         const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
         const needsCentroidFrame = this._calcUsage.needSpectralCentroid || this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness
-        const frameCentroidHz = needsCentroidFrame ? computeSpectralCentroid(this.frequencyData, sr) : 0
+        const frameCentroidHz = needsCentroidFrame ? computeSpectralCentroid(globalData, sr) : 0
         if (this._calcUsage.needSpectralCentroid) {
             this.spectralCentroidHz += (frameCentroidHz - this.spectralCentroidHz) * alpha
             this.spectralCentroid = normalizeCentroidHzToUnit(this.spectralCentroidHz, sr)
@@ -573,7 +630,7 @@ export class AudioEngine {
         }
 
         if (this._calcUsage.needSpectralFlatness) {
-            const flatnessNorm = computeSpectralFlatness(this.frequencyData)
+            const flatnessNorm = computeSpectralFlatness(globalData)
             this.spectralFlatnessRatio += (flatnessNorm - this.spectralFlatnessRatio) * alpha
             this.spectralFlatness = Math.max(0, Math.min(1, this.spectralFlatnessRatio))
         } else {
@@ -582,14 +639,14 @@ export class AudioEngine {
         }
 
         if (this._calcUsage.needInharmonicity) {
-            const inharmonicityNorm = computeInharmonicity(this.frequencyData, sr)
+            const inharmonicityNorm = computeInharmonicity(globalData, sr)
             this.inharmonicity += (inharmonicityNorm - this.inharmonicity) * alpha
         } else {
             this.inharmonicity = 0
         }
 
         if (this._calcUsage.needPeakAmplitude) {
-            this.peakAmplitude += (computePeakAmplitude(this.frequencyData) - this.peakAmplitude) * alpha
+            this.peakAmplitude += (computePeakAmplitude(globalData) - this.peakAmplitude) * alpha
         } else {
             this.peakAmplitude = 0
         }
@@ -601,17 +658,17 @@ export class AudioEngine {
         }
 
         if (this._calcUsage.needSpectralRolloff) {
-            this.spectralRolloff += (computeSpectralRolloff(this.frequencyData, sr, 0.85) - this.spectralRolloff) * alpha
+            this.spectralRolloff += (computeSpectralRolloff(globalData, sr, 0.85) - this.spectralRolloff) * alpha
         } else {
             this.spectralRolloff = 0
         }
 
         if (this._calcUsage.needSpectralSpread || this._calcUsage.needSpectralSkewness) {
-            const spread = computeSpectralSpread(this.frequencyData, sr, frameCentroidHz)
+            const spread = computeSpectralSpread(globalData, sr, frameCentroidHz)
             if (this._calcUsage.needSpectralSpread) this.spectralSpread += (spread - this.spectralSpread) * alpha
             else this.spectralSpread = 0
             if (this._calcUsage.needSpectralSkewness) {
-                const skew = computeSpectralSkewness(this.frequencyData, sr, frameCentroidHz, spread)
+                const skew = computeSpectralSkewness(globalData, sr, frameCentroidHz, spread)
                 this.spectralSkewness += (skew - this.spectralSkewness) * alpha
             } else {
                 this.spectralSkewness = 0
@@ -622,7 +679,7 @@ export class AudioEngine {
         }
 
         if (this._calcUsage.needChromagram) {
-            this.chromagram += (computeChromagram(this.frequencyData, sr) - this.chromagram) * alpha
+            this.chromagram += (computeChromagram(globalData, sr) - this.chromagram) * alpha
         } else {
             this.chromagram = 0
         }

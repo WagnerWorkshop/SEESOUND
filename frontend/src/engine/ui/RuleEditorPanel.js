@@ -15,40 +15,17 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     const panel = el('div', 'cp-menu-pane-inner')
     const wrapper = el('div', 'cp-rules-wrapper')
 
-    const stylesSection = el('section', 'cp-section cp-styles-section')
-    stylesSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.menu?.styles || UI_TEXT.menu?.rules || 'Styles' }))
-
-    const stylesActions = el('div', 'cp-button-grid cp-styles-actions')
-    const backgroundBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.background || 'Background' })
-    const cameraBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.camera || 'Camera' })
-    applyButtonIcon(backgroundBtn, BUTTON_ICON_MAP.duplicate || BUTTON_ICON_MAP.add, backgroundBtn.textContent)
-    applyButtonIcon(cameraBtn, BUTTON_ICON_MAP.fit || BUTTON_ICON_MAP.add, cameraBtn.textContent)
-    stylesActions.append(backgroundBtn, cameraBtn)
-    stylesSection.appendChild(stylesActions)
-
-    const entitySection = el('section', 'cp-section cp-styles-entities')
-    entitySection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.rules?.entities || 'Entities' }))
+    // Naked layer list — no cp-section wrapper
     const entityList = el('div', 'cp-styles-entity-list')
-    const entityActions = el('div', 'cp-button-grid')
-    const addEntityBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.addEntity || 'Add Element' })
-    applyButtonIcon(addEntityBtn, BUTTON_ICON_MAP.add, addEntityBtn.textContent)
-    entityActions.append(addEntityBtn)
-    entitySection.append(entityList, entityActions)
 
-    const popup = el('div', 'cp-rules-popup')
-    const popupPanel = el('div', 'cp-rules-popup-panel')
-    const popupHeader = el('div', 'cp-rules-popup-header')
-    const popupTitle = el('div', 'cp-rules-popup-title', { text: UI_TEXT.menu?.rules || 'Styles' })
-    const popupClose = el('button', 'cp-btn cp-btn-danger cp-rules-popup-close', { type: 'button' })
-    applyIconOnlyButton(popupClose, BUTTON_ICON_MAP.close || BUTTON_ICON_MAP.clear, UI_TEXT.rules?.close || 'Close')
-    popupHeader.append(popupTitle, popupClose)
-    const popupBody = el('div', 'cp-rules-popup-body')
+    // Inline rules popup — appears when a layer is selected
+    const popup = el('section', 'cp-section cp-rules-popup')
+    const popupBody = el('div', 'cp-rules-body')
     const popupMeta = el('div', 'cp-rules-popup-meta')
     popupBody.append(popupMeta, wrapper)
-    popupPanel.append(popupHeader, popupBody)
-    popup.appendChild(popupPanel)
+    popup.appendChild(popupBody)
 
-    panel.append(stylesSection, entitySection, popup)
+    panel.append(entityList, popup)
 
     const baseRowsByKey = new Map()
     const orderedRows = []
@@ -347,6 +324,76 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             })
 
             row.append(toggleCheck, typeBadge, nameBtn, editBtn, removeBtn)
+
+            // ── Right-click context menu: Rename / Duplicate / Delete ──
+            row.addEventListener('contextmenu', (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+
+                const existing = document.querySelector('.cp-layer-context-menu')
+                if (existing) existing.remove()
+
+                const menu = el('div', 'cp-layer-context-menu')
+                menu.style.position = 'fixed'
+                menu.style.left = `${event.clientX}px`
+                menu.style.top = `${event.clientY}px`
+
+                const renameItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Rename' })
+                const duplicateItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Duplicate' })
+                const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
+
+                renameItem.addEventListener('click', () => {
+                    menu.remove()
+                    const newName = prompt('Layer name:', entity.name || '')
+                    if (newName && newName.trim() && newName.trim() !== entity.name) {
+                        const nextEntities = getRuleEntities().map((entry) =>
+                            entry.id === entity.id ? { ...entry, name: newName.trim() } : entry
+                        )
+                        setRuleEntities(nextEntities)
+                        renderEntityList()
+                        if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+                            popupTitle.textContent = newName.trim()
+                            renderPopupMeta()
+                        }
+                    }
+                })
+
+                duplicateItem.addEventListener('click', () => {
+                    menu.remove()
+                    const newId = `entity-${Date.now()}`
+                    const baseName = entity.name || 'Layer'
+                    const nextEntities = [...getRuleEntities(), {
+                        ...entity,
+                        id: newId,
+                        name: `${baseName} (copy)`,
+                        order: getRuleEntities().length,
+                        rules: entity.rules ? JSON.parse(JSON.stringify(entity.rules)) : [],
+                        definitions: entity.definitions ? JSON.parse(JSON.stringify(entity.definitions)) : [],
+                    }]
+                    setRuleEntities(nextEntities)
+                    renderEntityList()
+                })
+
+                deleteItem.addEventListener('click', () => {
+                    menu.remove()
+                    const next = getRuleEntities().filter((entry) => entry.id !== entity.id)
+                    setRuleEntities(next)
+                    if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+                        activeOwner = { type: 'entity', id: next[0]?.id || null }
+                        if (popupOpen) renderPopupMeta()
+                    }
+                    renderEntityList()
+                })
+
+                menu.append(renameItem, duplicateItem, deleteItem)
+                document.body.appendChild(menu)
+
+                const closeMenu = (ev) => {
+                    if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) }
+                }
+                setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
+            })
+
             entityList.appendChild(row)
         })
     }
@@ -355,47 +402,17 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         popupMeta.innerHTML = ''
         if (!popupOpen) return
 
-        if (activeOwner.type === 'background' || activeOwner.type === 'camera') {
-            const label = activeOwner.type === 'background'
-                ? (UI_TEXT.rules?.background || 'Background')
-                : (UI_TEXT.rules?.camera || 'Camera')
-            popupTitle.textContent = label
-            popupMeta.appendChild(el('div', 'cp-styles-popup-note', { text: label }))
-            return
-        }
-
         const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
         if (!entity) return
-        popupTitle.textContent = entity.name || 'Entity'
 
-        const header = el('div', 'cp-styles-popup-header')
-        const nameInput = el('input', 'cp-input-text', { value: entity.name || '' })
-        nameInput.addEventListener('change', () => {
-            const nextName = String(nameInput.value || '').trim() || entity.name
-            const nextEntities = getRuleEntities().map((entry) => (entry.id === entity.id ? { ...entry, name: nextName } : entry))
-            setRuleEntities(nextEntities)
-            popupTitle.textContent = nextName
-            renderEntityList()
-        })
-        // Show a read-only badge for type/spacing
-        const infoLine = el('div', 'cp-styles-entity-info')
-        const shapeLabel = entity.entityShapeType || 'particle'
-        let infoText = `Type: ${shapeLabel}`
-        if (entity.entityShapeType === 'cloud') {
-            infoText += ` · Spacing: ${entity.spacingMode || 'coordinates'} · Shape: ${entity.cloudShape || 'cylindrical'}`
-        }
-        infoLine.textContent = infoText
-
-        header.append(
-            el('label', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Entity Name' }),
-            nameInput,
-            infoLine,
-        )
-        popupMeta.appendChild(header)
+        // Layer name as cp-section-title
+        const titleRow = el('div', 'cp-section-title-row')
+        const titleEl = el('h3', 'cp-section-title', { text: entity.name || 'Layer' })
+        const typeBadge = el('span', 'cp-styles-entity-badge', { text: entity.entityShapeType || 'particle' })
+        titleRow.append(titleEl, typeBadge)
+        popupMeta.appendChild(titleRow)
 
         const definitionsSection = el('div', 'cp-styles-definitions')
-        const definitionsHeader = el('div', 'cp-styles-definitions-header')
-        definitionsHeader.appendChild(el('h4', 'cp-section-title', { text: UI_TEXT.rules?.definitions || 'Definitions' }))
 
         const definitionsList = el('div', 'cp-styles-definition-list')
         const definitions = Array.isArray(entity.definitions) ? entity.definitions : []
@@ -460,8 +477,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             definitionsList.appendChild(defRow)
         })
 
-        const addDefinitionBtn = el('button', 'cp-btn', { text: UI_TEXT.rules?.addDefinition || 'Add Filter' })
-        applyButtonIcon(addDefinitionBtn, BUTTON_ICON_MAP.add, addDefinitionBtn.textContent)
+        const addDefinitionBtn = el('button', 'cp-btn cp-btn-icon', { type: 'button', title: UI_TEXT.rules?.addDefinition || 'Add Filter' })
+        applyIconOnlyButton(addDefinitionBtn, BUTTON_ICON_MAP.condition || BUTTON_ICON_MAP.add, UI_TEXT.rules?.addDefinition || 'Add Filter')
         addDefinitionBtn.addEventListener('click', () => {
             const baseName = UI_TEXT.rules?.newDefinitionPrompt || 'Filter'
             const existingNames = new Set(definitions.map((entry) => String(entry?.name || '').trim()).filter(Boolean))
@@ -477,7 +494,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             renderPopupMeta()
         })
 
-        definitionsSection.append(definitionsHeader, definitionsList, addDefinitionBtn)
+        definitionsSection.append(definitionsList, addDefinitionBtn)
         popupMeta.appendChild(definitionsSection)
     }
 
@@ -495,15 +512,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         }
     }
 
-    backgroundBtn.addEventListener('click', () => openPopupForOwner({ type: 'background' }))
-    cameraBtn.addEventListener('click', () => openPopupForOwner({ type: 'camera' }))
-    popupClose.addEventListener('click', () => closePopup())
-    popup.addEventListener('click', (event) => {
-        if (event.target === popup) closePopup()
-    })
-    addEntityBtn.addEventListener('click', () => {
-        openEntityCreationModal()
-    })
+    // (Background and Camera are now created as layer types)
 
     function openEntityCreationModal() {
         // Build a creation overlay
@@ -532,6 +541,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
             { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
             { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
+            { value: 'camera', label: UI_TEXT.rules?.shapeCamera || 'Camera' },
+            { value: 'background', label: UI_TEXT.rules?.shapeBackground || 'Background' },
         ], 'particle'))
         typeRow.append(typeLabel, typeSelect)
 
@@ -573,6 +584,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const nextType = typeSelect.value || 'particle'
             const nextSpacing = spacingSelect.value || 'coordinates'
             const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
+
+            // Only one camera and one background layer allowed
+            if (nextType === 'camera' || nextType === 'background') {
+                const alreadyExists = getRuleEntities().some((e) => e.entityShapeType === nextType)
+                if (alreadyExists) {
+                    alert(`Only one ${nextType} layer is allowed.`)
+                    return
+                }
+            }
+
             const nextEntities = [...getRuleEntities(), {
                 id: `entity-${Date.now()}`,
                 name: nextName,
@@ -1221,7 +1242,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
             for (const [sectionName, toggle] of sectionToggleByName.entries()) {
                 const enabled = isSectionEnabled(sectionName)
-                toggle.checked = enabled
+                if (toggle) toggle.checked = enabled
                 const sectionEl = sectionByName.get(sectionName)
                 if (sectionEl) sectionEl.classList.toggle('is-section-disabled', !enabled)
             }
@@ -1860,44 +1881,14 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             const sectionName = currentSection
             const sectionLabel = definition.sectionLabel || getRuleSectionLabel(definition)
             currentSubgroup = ''
-            const section = el('section', 'cp-rule-section')
-            const sectionHeader = el('div', 'cp-rule-section-header')
-            const titleBtn = el('button', 'cp-btn cp-rule-section-title cp-rule-section-toggle', {
-                type: 'button',
-                'aria-expanded': 'true',
-            })
-            const titleIcon = el('span', 'cp-btn-icon cp-rule-section-toggle-icon', { text: '▾' })
-            const titleLabel = el('span', 'cp-rule-section-toggle-label', { text: sectionLabel })
-            titleBtn.append(titleIcon, titleLabel)
-            const sectionEnable = el('input', 'cp-input-toggle cp-rule-section-enable', { type: 'checkbox' })
-            sectionEnable.checked = true
-            const sectionBody = el('div', 'cp-rule-section-body')
+            const sectionBody = el('div', 'cp-rule-section-body', { 'data-section-key': sectionName })
 
-            sectionToggleByName.set(sectionName, sectionEnable)
-            sectionByName.set(sectionName, section)
+            sectionToggleByName.set(sectionName, null)
+            sectionByName.set(sectionName, sectionBody)
             sectionBodyByName.set(sectionName, sectionBody)
             sectionRows.set(sectionName, [])
 
-            titleBtn.addEventListener('click', () => {
-                const expanded = !(sectionCollapseState.get(sectionName) === false)
-                const nextExpanded = !expanded
-                sectionCollapseState.set(sectionName, nextExpanded)
-                section.classList.toggle('is-collapsed', !nextExpanded)
-                titleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false')
-                titleIcon.textContent = nextExpanded ? '▾' : '▸'
-            })
-
-            sectionEnable.addEventListener('change', () => {
-                sectionEnabledState.set(sectionName, !!sectionEnable.checked)
-                section.classList.toggle('is-section-disabled', !sectionEnable.checked)
-                const rows = sectionRows.get(sectionName) || []
-                for (const row of rows) refreshRowCardState(row)
-                commitRuleBlocks()
-            })
-
-            sectionHeader.append(titleBtn, sectionEnable)
-            section.append(sectionHeader, sectionBody)
-            wrapper.appendChild(section)
+            wrapper.appendChild(sectionBody)
             currentSectionBody = sectionBody
         }
         const rowState = createRowState(definition, false)

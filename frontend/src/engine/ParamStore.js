@@ -55,7 +55,7 @@ function _coerceRuleEntity(raw, index) {
     const enabled = source.enabled !== false
     const order = Number.isFinite(source.order) ? Number(source.order) : index
     const definitionsMode = source.definitionsMode === 'special' ? 'special' : 'all'
-    const entityShapeType = (source.entityShapeType === 'cloud' || source.entityShapeType === 'line')
+    const entityShapeType = (source.entityShapeType === 'cloud' || source.entityShapeType === 'line' || source.entityShapeType === 'camera' || source.entityShapeType === 'background')
         ? source.entityShapeType
         : 'particle'
     const spacingMode = entityShapeType === 'cloud'

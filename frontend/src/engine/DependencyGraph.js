@@ -39,6 +39,8 @@ const AXIOMATIC_VARS = new Set([
     'pan',
     'binEnergy',
     'globalRmsEnergy',
+    'age',
+    'globalTransient',
 ])
 
 export { AXIOMATIC_VARS }
@@ -70,7 +72,8 @@ const MODE_GATED_VARS = new Map([
     ['entityAge', new Set(['cloud'])],
     ['streamId', new Set(['cloud'])],
     // isFundamental is legal in all modes (flagged at spawn/harmonic time)
-    ['globalTransient', new Set(['cloud'])],
+    // globalTransient is available in all modes
+    // ['globalTransient', new Set(['cloud'])],
     // Output variables gated by mode
     // Cloud aura mode outputs
     ['cloudSize', new Set(['cloud'])],

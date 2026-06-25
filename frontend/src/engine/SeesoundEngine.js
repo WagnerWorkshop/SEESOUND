@@ -425,11 +425,12 @@ export class SeesoundEngine {
     _syncParticleRules() {
         if (!this._ps) return
         // Derive engine mode from entity settings
-        // Only consider enabled entities for mode detection
+        // Only consider enabled render entities (skip camera/background layers)
         const entities = Array.isArray(params.ruleEntities) ? params.ruleEntities : []
         const enabledEntities = entities.filter((e) => e?.enabled !== false)
-        const hasCloud = enabledEntities.some((e) => e?.entityShapeType === 'cloud')
-        const hasNetwork = enabledEntities.some((e) => e?.spacingMode === 'network' && e?.entityShapeType === 'cloud')
+        const renderEntities = enabledEntities.filter((e) => e?.entityShapeType !== 'camera' && e?.entityShapeType !== 'background')
+        const hasCloud = renderEntities.some((e) => e?.entityShapeType === 'cloud')
+        const hasNetwork = renderEntities.some((e) => e?.spacingMode === 'network' && e?.entityShapeType === 'cloud')
 
         const derivedMode = hasCloud ? 'cloud' : 'particle'
         const derivedPositioning = hasNetwork ? 'network' : 'direct'
@@ -460,7 +461,12 @@ export class SeesoundEngine {
         const graph = resolveDependencyGraph(rules, this._mode, { cloudNetwork: this._cloudPositioning === 'network' })
         const byTarget = this._buildRequiredInputsByTarget(rules)
         this._ae?.setRuleInputUsage(byTarget)
-        const cr = this._ps.onRulesChanged({ ruleBlocks: rules, requiredInputsByTarget: byTarget })
+        // Pass entity structure directly so LayerManager can separate per-layer.
+        // compileRules in RuleCompiler handles both { ruleBlocks } and { ruleEntities } formats.
+        const entityPayload = params.ruleEngineEnabled !== false
+            ? { ruleEntities: entities, ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] } }
+            : { ruleEntities: [], ruleGlobalBlocks: { background: [], camera: [] } }
+        const cr = this._ps.onRulesChanged(entityPayload)
         if (cr) this._emit(EngineEvent.COMPILE_STATE, cr)
         this._emit(EngineEvent.GRAPH_UPDATED, { referencedInputs: [...graph.referencedInputs], mode: this._mode })
 
