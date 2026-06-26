@@ -295,6 +295,12 @@ const PARAMS_BASE = [
         min: 0, max: 1, step: 0.1, default: 0, unit: '',
         desc: 'ISO 226 equal-loudness compensation intensity. 0 = Off, 0.5 = moderate, 1.0 = full (60 phon).',
     },
+    {
+        key: 'stemSeparationEnabled', group: 'inputProcessing', label: 'Stem Separation',
+        min: 0, max: 1, step: 1, default: 1, unit: '',
+        desc: 'Enable neural stem separation (drums, bass, vocals, guitar, piano, other). Audio must finish preprocessing before playback starts.',
+        canDisable: false,
+    },
     normRangeParam({
         key: 'binMagnitudeNormMin',
         label: 'Volume Min',

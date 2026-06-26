@@ -25,5 +25,20 @@ export default defineConfig({
                 changeOrigin: true,
             },
         },
+        headers: {
+            // Ensure correct MIME type for WebAssembly (required by onnxruntime-web)
+            'X-Content-Type-Options': 'nosniff',
+        },
+    },
+    build: {
+        // Ensure WASM files are handled correctly
+        target: 'es2020',
+        // Increase chunk size warning limit for large model worker
+        chunkSizeWarningLimit: 4096,
+        rollupOptions: {
+        },
+    },
+    worker: {
+        format: 'es',
     },
 })

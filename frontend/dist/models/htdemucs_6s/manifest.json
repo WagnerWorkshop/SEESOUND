@@ -1,0 +1,21 @@
+{
+  "model": "htdemucs_6s",
+  "sources": [
+    "drums",
+    "bass",
+    "other",
+    "vocals",
+    "guitar",
+    "piano"
+  ],
+  "sampleRate": 44100,
+  "chunkSize": 343980,
+  "chunkDurationMs": 7800,
+  "variants": [
+    {
+      "filename": "htdemucs_6s_fp16weights.onnx",
+      "sizeMB": 136,
+      "description": "fp16-stored-weights model"
+    }
+  ]
+}
