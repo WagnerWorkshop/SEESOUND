@@ -29,10 +29,9 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
     // ── Available audio track IDs ─────────────────────────────────────────
     // Entities filter which audio stem they react to.
-    // 'full' = full mix. The stem splitter neural network (coming soon) will
-    // dynamically populate additional tracks such as 'vocals', 'drums', 'bass',
-    // 'other'. Additional models (e.g. piano, guitar) can push more IDs here.
-    const AVAILABLE_AUDIO_TRACKS = ['full', 'piano', 'guitar']
+    // 'full' = full mix. The stem splitter (coming soon) will add track IDs
+    // such as 'vocals', 'drums', 'bass', 'other' dynamically.
+    const AVAILABLE_AUDIO_TRACKS = ['full']
 
     const baseRowsByKey = new Map()
     const orderedRows = []
