@@ -243,7 +243,8 @@
                 "bloomThreshold": "Bloom Threshold",
                 "persistMode": "Persistence",
                 "originSignEnabled": "Origin Axes",
-                "coordinateGuidesEnabled": "Coordinate Guides"
+                "coordinateGuidesEnabled": "Coordinate Guides",
+                "componentDistinctness": "Component Distinctness"
             },
             "paramDescriptions": {
                 "inputGain": "Global input gain scaler applied before analysis and spawning.",
@@ -294,7 +295,8 @@
                 "bloomThreshold": "Luminance threshold before bloom is applied.",
                 "persistMode": "Momentary: canvas fades each frame. Painting: marks accumulate.",
                 "originSignEnabled": "Show/hide origin axes guide.",
-                "coordinateGuidesEnabled": "Show/hide coordinate guide grids."
+                "coordinateGuidesEnabled": "Show/hide coordinate guide grids.",
+                "componentDistinctness": "How aggressively the system separates sound sources. Low = blended, High = isolated components."
             }
         },
         "rules": {
@@ -831,6 +833,48 @@
             "label": "Band Instability",
             "technicalName": "bandInstability",
             "description": "Average phase deviation second derivative within the local band. High = organic/acoustic jitter, low = synthetic/steady."
+        },
+        {
+            "id": "componentId",
+            "group": "detail",
+            "label": "Component ID",
+            "technicalName": "componentId",
+            "description": "Index of the audio component this particle belongs to (0..N-1)."
+        },
+        {
+            "id": "componentCentroid",
+            "group": "detail",
+            "label": "Component Sharpness",
+            "technicalName": "componentCentroid",
+            "description": "Spectral centroid of the isolated audio component. High = bright instrument, low = dark/muffled."
+        },
+        {
+            "id": "componentFlatness",
+            "group": "detail",
+            "label": "Component Noisiness",
+            "technicalName": "componentFlatness",
+            "description": "Spectral flatness of the isolated audio component. High = noisy/breathy, low = pure tone."
+        },
+        {
+            "id": "componentFlux",
+            "group": "detail",
+            "label": "Component Activity",
+            "technicalName": "componentFlux",
+            "description": "Frame-to-frame spectral change rate of this audio component. High = rapid articulation or vibrato."
+        },
+        {
+            "id": "componentOnset",
+            "group": "detail",
+            "label": "Component Onset",
+            "technicalName": "componentOnset",
+            "description": "Onset/attack strength for this audio component. High = sharp transient, low = sustained."
+        },
+        {
+            "id": "componentCount",
+            "group": "overall",
+            "label": "Component Count",
+            "technicalName": "componentCount",
+            "description": "Total number of active audio components detected in the current frame."
         }
     ]
 }

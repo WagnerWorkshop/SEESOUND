@@ -55,12 +55,19 @@ const _INPUT_RANGES = Object.freeze({
     canvasWidth: [0, Number.POSITIVE_INFINITY],
     canvasHeight: [0, Number.POSITIVE_INFINITY],
     audioLengthSec: [0, Number.POSITIVE_INFINITY],
-    // Band (local texture) variables
+    // Band (local texture) variables — legacy, kept for backward compat
     bandFlatness: [0, 1],
     bandTransient: [0, 10],
     bandCentroid: [0, 1],
     bandFlux: [0, 1],
     bandInstability: [0, 1],
+    // Per-component analysis variables
+    componentId: [0, 15],
+    componentCentroid: [0, 1],
+    componentFlatness: [0, 1],
+    componentFlux: [0, 1],
+    componentOnset: [0, 1],
+    componentCount: [0, 16],
 })
 
 const _legacyInputAliases = [
@@ -114,6 +121,13 @@ const _INPUT_MODES = {
     bandCentroid: ['particle', 'cloud', 'tracing', 'lines'],
     bandFlux: ['particle', 'cloud', 'tracing', 'lines'],
     bandInstability: ['particle', 'cloud', 'tracing', 'lines'],
+    // Per-component analysis variables — available in all modes
+    componentId: ['particle', 'cloud', 'tracing', 'lines'],
+    componentCentroid: ['particle', 'cloud', 'tracing', 'lines'],
+    componentFlatness: ['particle', 'cloud', 'tracing', 'lines'],
+    componentFlux: ['particle', 'cloud', 'tracing', 'lines'],
+    componentOnset: ['particle', 'cloud', 'tracing', 'lines'],
+    componentCount: ['particle', 'cloud', 'tracing', 'lines'],
 }
 
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({

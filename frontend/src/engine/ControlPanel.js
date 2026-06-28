@@ -119,41 +119,14 @@ const SETTINGS_SLIDERS = Object.freeze([
         step: 1,
         tooltip: getSettingsTooltip('fluxWindowFrames', 'Flux Window Frames. Rolling frame window for activity averaging.'),
     },
-    // ── Local Texture Analysis bandwidth controls ───────────────────────────
+    // ── Per-Component Analysis ───────────────────────────────────────────
     {
-        key: 'bandFlatnessOctaves',
-        label: 'Local Noisiness Window (octave)',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12,
-        fractionBase: 12,
-        tooltip: 'Octave window for local spectral flatness. 4/12 = 1/3 octave, 12/12 = 1 octave.',
-    },
-    {
-        key: 'bandTransientOctaves',
-        label: 'Local Transient Window (octave)',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12,
-        fractionBase: 12,
-        tooltip: 'Octave window for local attack sharpness.',
-    },
-    {
-        key: 'bandCentroidOctaves',
-        label: 'Local Tilt Window (octave)',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12,
-        fractionBase: 12,
-        tooltip: 'Octave window for local spectral centroid.',
-    },
-    {
-        key: 'bandFluxOctaves',
-        label: 'Local Activity Window (octave)',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12,
-        fractionBase: 12,
-        tooltip: 'Octave window for local spectral flux.',
-    },
-    {
-        key: 'bandInstabilityOctaves',
-        label: 'Local Instability Window (octave)',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12,
-        fractionBase: 12,
-        tooltip: 'Octave window for local phase instability.',
+        key: 'componentDistinctness',
+        label: 'Component Distinctness',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        tooltip: 'How aggressively the system separates sound sources. Low = blended, High = isolated components.',
     },
     {
         key: 'foresight',

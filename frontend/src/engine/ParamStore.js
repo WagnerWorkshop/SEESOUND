@@ -488,6 +488,14 @@ const PARAMS_BASE = [
         canDisable: false,
     },
 
+    // ── Per-Component Analysis ──────────────────────────────────────────────
+    {
+        key: 'componentDistinctness', group: 'inputProcessing', label: 'Component Distinctness',
+        min: 0, max: 1, step: 0.01, default: 0.5, unit: '',
+        desc: 'How aggressively the system separates sound sources. Low = blended, High = isolated components.',
+        canDisable: false,
+    },
+
     // ── Geometry ────────────────────────────────────────────────────────────
     {
         key: 'defaultParticleSize', group: 'geometry', label: 'Size Multiplier',

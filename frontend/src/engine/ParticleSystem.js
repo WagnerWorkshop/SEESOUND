@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { compileRules } from './rules/RuleCompiler.js'
 import { ParticleArchive } from './ParticleArchive.js'
 import { createIso226CompensationLut, sampleIso226CompensationDb } from './audio/Iso226Lut.js'
+import { ComponentTracker } from './audio/ComponentTracker.js'
 
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
@@ -421,6 +422,12 @@ export class ParticleSystem {
         this._lastPersistMode = 0
         this._archive = new ParticleArchive()
         this._archive.updateOffloadBatch(this._N)
+        // ── Per-Component Analysis (ComponentTracker) ──
+        /** @type {ComponentTracker} */
+        this._componentTracker = new ComponentTracker({ maxComponents: 12 })
+        /** @type {number} Cached component distinctness */
+        this._lastDistinctness = -1
+
         // ── Band texture analysis: previous-frame storage ──
         /** @type {Float64Array|number[]} Bucket-band total energy from previous frame */
         this._bandPrevEnergy = []
@@ -1063,6 +1070,30 @@ export class ParticleSystem {
         }
         this._hearingAmount = hearingAmount
 
+        // ── Per-Component Analysis ─────────────────────────────────────
+        // Run ComponentTracker each frame to decompose the spectrogram into
+        // tracked sound components with extracted timbre metrics.
+        const componentDistinctness = Number(params.componentDistinctness ?? 0.5)
+        if (Math.abs(componentDistinctness - this._lastDistinctness) > 0.01) {
+            this._componentTracker.setDistinctness(componentDistinctness)
+            this._lastDistinctness = componentDistinctness
+        }
+        // Reset tracker when FFT size or audio context changes
+        const currentFftForTracker = ae.FFT_SIZE || 16384
+        if (this._trackerLastFftSize !== currentFftForTracker) {
+            if (this._trackerLastFftSize !== undefined) {
+                this._componentTracker.reset()
+            }
+            this._trackerLastFftSize = currentFftForTracker
+        }
+        this._componentTracker.processFrame({
+            freqData,
+            binMagArr,
+            fftSize: currentFftForTracker,
+            sampleRate,
+            gainMult,
+        })
+
         // Adjust Three.js blending mode
         if (!luminousMode) {
             if (this._mat.blending !== THREE.NormalBlending) {
@@ -1270,6 +1301,23 @@ export class ParticleSystem {
             lineDirtyMax = Math.max(lineDirtyMax, index)
         }
 
+        // ── Component metric lookup helper (shared by writeParticle and writeLine) ──
+        const _getComponentMetrics = (hz) => {
+            const _compIdx = this._componentTracker.getComponentAtHz(hz)
+            const _comps = this._componentTracker.components
+            const id = _compIdx >= 0 && _compIdx < _comps.length ? _comps[_compIdx].id : -1
+            const centroid = _compIdx >= 0 && _compIdx < _comps.length
+                ? clamp01(_comps[_compIdx].centroid / 16000) : undefined
+            const flatness = _compIdx >= 0 && _compIdx < _comps.length
+                ? clamp01(_comps[_compIdx].flatness) : undefined
+            const flux = _compIdx >= 0 && _compIdx < _comps.length
+                ? clamp01(_comps[_compIdx].flux) : undefined
+            const onset = _compIdx >= 0 && _compIdx < _comps.length
+                ? clamp01(_comps[_compIdx].onset) : undefined
+            const count = Math.max(0, this._componentTracker.componentCount)
+            return { compId: id, compCentroid: centroid, compFlatness: flatness, compFlux: flux, compOnset: onset, compCount: count }
+        }
+
         const writeParticle = (bucket, alphaBoost = 1, isFundamentalFlag = 1) => {
             if (activeParticleCapacity <= 0) return
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) return
@@ -1294,6 +1342,8 @@ export class ParticleSystem {
             const bandCentroidMetric = Number.isFinite(bucket.bandCentroid) ? bucket.bandCentroid : undefined
             const bandFluxMetric = Number.isFinite(bucket.bandFlux) ? bucket.bandFlux : undefined
             const bandInstabilityMetric = Number.isFinite(bucket.bandInstability) ? bucket.bandInstability : undefined
+            // Per-component metrics (shared helper)
+            const { compId, compCentroid, compFlatness, compFlux, compOnset, compCount } = _getComponentMetrics(hz)
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -1337,6 +1387,13 @@ export class ParticleSystem {
                         bandCentroid: bandCentroidMetric,
                         bandFlux: bandFluxMetric,
                         bandInstability: bandInstabilityMetric,
+                        // Per-component variables
+                        componentId: compId >= 0 ? compId : undefined,
+                        componentCentroid: compCentroid,
+                        componentFlatness: compFlatness,
+                        componentFlux: compFlux,
+                        componentOnset: compOnset,
+                        componentCount: compCount > 0 ? compCount : undefined,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1419,6 +1476,7 @@ export class ParticleSystem {
             const bandCentroidMetric = Number.isFinite(bucket.bandCentroid) ? bucket.bandCentroid : undefined
             const bandFluxMetric = Number.isFinite(bucket.bandFlux) ? bucket.bandFlux : undefined
             const bandInstabilityMetric = Number.isFinite(bucket.bandInstability) ? bucket.bandInstability : undefined
+            const { compId, compCentroid, compFlatness, compFlux, compOnset, compCount } = _getComponentMetrics(hz)
 
             const y = (freqNorm * 2 - 1) * hh
             const x = 0
@@ -1464,6 +1522,13 @@ export class ParticleSystem {
                         bandCentroid: bandCentroidMetric,
                         bandFlux: bandFluxMetric,
                         bandInstability: bandInstabilityMetric,
+                        // Per-component variables
+                        componentId: compId >= 0 ? compId : undefined,
+                        componentCentroid: compCentroid,
+                        componentFlatness: compFlatness,
+                        componentFlux: compFlux,
+                        componentOnset: compOnset,
+                        componentCount: compCount > 0 ? compCount : undefined,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1590,6 +1655,8 @@ export class ParticleSystem {
         // Expose globalTransient and age in frame rule base
         _frameRuleBase.globalTransient = frameBinInputs.globalTransient
         _frameRuleBase.age = 0
+        // Expose componentCount as overall variable
+        _frameRuleBase.componentCount = Math.max(0, this._componentTracker.componentCount)
 
         // ── Smart bucket count ───────────────────────────────────────────
         // If spawn/line rules don't reference any per-bin variable, every
@@ -1602,6 +1669,9 @@ export class ParticleSystem {
             'pan',
             'bandFlatness', 'bandTransient', 'bandCentroid', 'bandFlux', 'bandInstability',
             'isFundamental',
+            // Per-component variables
+            'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
+            'componentOnset', 'componentCount',
         ])
         const spawnInputs = this._compiledRules?.requiredInputsByTarget?.spawnedParticles ?? []
         const lineInputs = this._compiledRules?.requiredInputsByTarget?.lines ?? []
