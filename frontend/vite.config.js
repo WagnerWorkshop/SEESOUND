@@ -29,7 +29,7 @@ function serveOrtMjs() {
                 const ext = filePath.split('.').pop()
                 const mime = ext === 'mjs' ? 'application/javascript'
                     : ext === 'wasm' ? 'application/wasm'
-                        : 'application/octet-stream'
+                    : 'application/octet-stream'
                 // Cross-Origin-Resource-Policy: cross-origin satisfies require-corp
                 res.writeHead(200, {
                     'Content-Type': mime,
