@@ -48,6 +48,7 @@ import { ExportManager } from './engine/project/ExportManager.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
 import { AudioEngine, snapCqtDetailsPer10Octaves } from './engine/audio/AudioEngine.js'
 import { CameraController } from './engine/renderer/CameraController.js'
+import { StemSeparationEngine } from './engine/audio/StemSeparationEngine.js'
 import { showLoadingOverlay, hideLoadingOverlay } from './components/LoadingOverlay.js'
 import resetIcon from './icons/reset.svg?raw'
 import fitIcon from './icons/fit.svg?raw'
@@ -1018,10 +1019,11 @@ animate()
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── 7a  Audio Player (bottom overlay) ────────────────────────────────────────
-const playerEl = document.getElementById('audio-player')
-const { audioEl, loadFile } = initAudioPlayer(playerEl)
-ae.audioEl = audioEl   // give AudioEngine ref (used for currentTime/duration)
-let loadedAudioFile = null
+{
+    const playerEl = document.getElementById('audio-player')
+    const { audioEl, loadFile } = initAudioPlayer(playerEl)
+    ae.audioEl = audioEl   // give AudioEngine ref (used for currentTime/duration)
+    let loadedAudioFile = null
 
     // Keep render state aligned with true media playback state.
     audioEl.addEventListener('play', async () => {
@@ -1040,6 +1042,12 @@ let loadedAudioFile = null
         }
         // Take over play() so AudioContext is guaranteed resumed first
         e.preventDefault()
+
+        // Block play while stem preprocessing is running
+        if (_stemProcessingInProgress) {
+            console.log('[AudioEngine] Play blocked — stem separation in progress')
+            return
+        }
 
         try { await audioEl.play() }
         catch (err) { console.warn('[AudioEngine] play() failed:', err.message) }
@@ -1078,12 +1086,12 @@ let loadedAudioFile = null
         audioEl.playbackRate = Math.max(0.25, Math.min(4, next))
     })
 
-    // ── Stem Separation / Rolling real-time analysis ────────────────────
-    // This runs asynchronously in the background. Playback is NOT blocked.
-    let _rollingStemTimer = null
+    // ── Stem Separation / Preprocessing flag ────────────────────────────
+    /** While true, play button is blocked and overlay is shown. */
+    let _stemProcessingInProgress = false
 
-    // ── Player:fileloaded — kick off background init & rolling analysis ──
-    playerEl.addEventListener('player:fileloaded', (e) => {
+    // ── Player:fileloaded — triggers preprocessing if enabled ───────────
+    playerEl.addEventListener('player:fileloaded', async (e) => {
         const file = e?.detail?.file
         loadedAudioFile = file instanceof File ? file : null
         _currentAudioFileName = loadedAudioFile?.name || ''
@@ -1091,149 +1099,88 @@ let loadedAudioFile = null
             void _saveAudioFileToDb(loadedAudioFile)
         }
 
-        // If stem separation is enabled, lazily init the model in the background.
+        // If stem separation is enabled, run preprocessing now.
+        // Playback is blocked until stems are ready.
         if (loadedAudioFile && Number(params.stemSeparationEnabled ?? 1) >= 0.5) {
-            (async () => {
-                try {
-                    showLoadingOverlay('🧬', 'Starting stem separation...', '')
-                    const engine = await _getStemEngine()
+            _stemProcessingInProgress = true
+            showLoadingOverlay('🧬', 'Analysing instruments...', 'Separating drums, bass, vocals, guitar, piano & other')
 
-                    // Show phase updates from the worker during loading
-                    const statusHandler = (evt) => {
-                        const msg = evt.detail?.message || ''
-                        if (msg) showLoadingOverlay('🧬', msg, '')
-                    }
-                    engine.addEventListener('status', statusHandler)
-
-                    await engine.initialize()
-
-                    engine.removeEventListener('status', statusHandler)
-                    console.log('[StemSeparation] Model ready')
-                    showLoadingOverlay('🧬', 'Stem separation ready', 'Stems will appear in Audio Track selector')
-                    setTimeout(hideLoadingOverlay, 3000)
-                } catch (err) {
-                    console.warn('[StemSeparation] Init failed:', err.message)
-                    showLoadingOverlay('⚠️', 'Stem separation unavailable', err.message?.split('\n')[0] || 'Unknown error')
-                    setTimeout(hideLoadingOverlay, 10000)
+            try {
+                // Ensure engine is initialized (loads ONNX model)
+                if (!stemSepEngine.initialized) {
+                    showLoadingOverlay('🧬', 'Loading stem separation model...', 'This may take a moment on first run')
+                    await ensureEngineInitialized()
                 }
-            })()
+                if (!stemSepEngine.initialized) {
+                    console.warn('[StemSeparation] Engine not available, skipping preprocessing')
+                    _stemProcessingInProgress = false
+                    hideLoadingOverlay()
+                    _scheduleLocalProjectDraftSave()
+                    return
+                }
+
+                // Run separation (will emit progress events that update the overlay)
+                showLoadingOverlay('🧬', 'Analysing instruments...', 'Separating drums, bass, vocals, guitar, piano & other')
+                const stemProgressHandler = (pctEvt) => {
+                    const pct = pctEvt.detail?.percent ?? 0
+                    if (pct > 0 && pct < 100) {
+                        showLoadingOverlay('🧬', 'Analysing instruments...', `Separating stems: ${pct}%`)
+                    }
+                }
+                stemSepEngine.addEventListener('progress', stemProgressHandler)
+                try {
+                    await stemSepEngine.separate(loadedAudioFile)
+                } finally {
+                    stemSepEngine.removeEventListener('progress', stemProgressHandler)
+                }
+            } catch (err) {
+                console.warn('[StemSeparation] Preprocessing failed:', err.message)
+                // Continue with normal playback — stems just won't be available
+            } finally {
+                _stemProcessingInProgress = false
+                hideLoadingOverlay()
+            }
         }
 
         _scheduleLocalProjectDraftSave()
     })
 
-    // Rolling chunk analysis: periodically grab PCM from the audio element
-    // and send chunks to the stem engine. Runs during playback.
-    const CHUNK_LEN = 343980 // 7.8s at 44.1 kHz (matches model)
-    const CHUNK_STEP = 86000 // ~2s step between chunks (rolling window)
-
-    // ── Stem Separation — lazy-loaded engine ───────────────────────────
-    /** @type {import('./engine/audio/StemSeparationEngine.js').StemSeparationEngine|null} */
-    let _stemEngine = null
-    let _stemEnginePromise = null
-
-    async function _getStemEngine() {
-        if (_stemEngine) return _stemEngine
-        if (_stemEnginePromise) return _stemEnginePromise
-        _stemEnginePromise = (async () => {
-            try {
-                const { StemSeparationEngine } = await import('./engine/audio/StemSeparationEngine.js')
-                _stemEngine = new StemSeparationEngine({
-                    modelPath: '/models/htdemucs_6s/htdemucs_6s_fp16weights.onnx',
-                })
-                return _stemEngine
-            } catch (err) {
-                _stemEnginePromise = null // allow retry
-                throw err
-            }
-        })()
-        return _stemEnginePromise
-    }
+    // ── Stem Separation (neural source separation) ──────────────────────
+    // Initialize the engine lazily on first user interaction.
+    // Model downloads from HuggingFace on first use (~136 MB fp16 weights).
+    const stemSepEngine = new StemSeparationEngine({
+        modelPath: '/models/htdemucs_6s/htdemucs_6s_fp16weights.onnx',
+    })
 
     // Register the initial audio track set as a shared global.
+    // The RuleEditorPanel reads this array to populate layer track selectors.
     window.__seesoundAvailableAudioTracks = ['full']
 
-    function _startRollingAnalysis() {
-        if (_rollingStemTimer) return
-        if (!loadedAudioFile) return
+    // When stem separation completes, register the new track IDs globally
+    stemSepEngine.addEventListener('trackIdsChanged', (e) => {
+        const trackIds = e.detail?.trackIds || []
+        const current = window.__seesoundAvailableAudioTracks || ['full']
+        const hasFull = current.includes('full')
+        const newTracks = [...(hasFull ? ['full'] : []), ...trackIds]
+        window.__seesoundAvailableAudioTracks = newTracks
 
-        let chunkIndex = 0
-        let decodedPcm = null
-        let engine = null
-
-        // Decode the full audio file once (background), then feed chunks
-        _getStemEngine().then(e => {
-            engine = e
-            if (!engine.initialized) return
-            return engine._decodeAudioFile(loadedAudioFile)
-        }).then((pcm) => {
-            if (!pcm) return
-            decodedPcm = pcm
-            console.log(`[StemSeparation] Decoded ${(pcm.length/2/44100).toFixed(1)}s audio — starting rolling analysis`)
-            _processNextChunk()
-        }).catch((err) => {
-            console.warn('[StemSeparation] Setup failed:', err.message)
-        })
-
-        function _processNextChunk() {
-            if (!decodedPcm || !engine) return
-            if (!engine.initialized) return
-            if (!audioEl || audioEl.paused) {
-                _rollingStemTimer = setTimeout(_processNextChunk, 1000)
-                return
-            }
-
-            const totalFrames = decodedPcm.length / 2
-            const offset = chunkIndex * CHUNK_STEP
-            if (offset >= totalFrames) {
-                chunkIndex = 0
-                _rollingStemTimer = setTimeout(_processNextChunk, 100)
-                return
-            }
-
-            const framesAvail = Math.min(CHUNK_LEN, totalFrames - offset)
-            const chunk = new Float32Array(2 * CHUNK_LEN)
-            for (let i = 0; i < framesAvail; i++) {
-                const src = (offset + i) * 2
-                chunk[i * 2] = decodedPcm[src] || 0
-                chunk[i * 2 + 1] = decodedPcm[src + 1] || 0
-            }
-
-            engine.processChunk(chunk).then(() => {
-                chunkIndex++
-                _rollingStemTimer = setTimeout(_processNextChunk, 2000)
-            }).catch((err) => {
-                if (err.name === 'AbortError') return
-                console.warn('[StemSeparation] Chunk failed:', err.message)
-                _rollingStemTimer = setTimeout(_processNextChunk, 5000)
-            })
-        }
-    }
-
-    // Listen for model ready + play to start rolling analysis
-    _getStemEngine().then(e => {
-        e.addEventListener('initialized', () => {
-            if (isPlaying) _startRollingAnalysis()
-        })
-        // When stem separation completes, register the new track IDs globally
-        e.addEventListener('trackIdsChanged', (evt) => {
-            const trackIds = evt.detail?.trackIds || []
-            const current = window.__seesoundAvailableAudioTracks || ['full']
-            const hasFull = current.includes('full')
-            const newTracks = [...(hasFull ? ['full'] : []), ...trackIds]
-            window.__seesoundAvailableAudioTracks = newTracks
-            window.dispatchEvent(new CustomEvent('seesound:audio-tracks-changed', {
-                detail: { trackIds: newTracks },
-            }))
-        })
-    }).catch(() => {})
-
-    // Also start rolling when user presses play (if model is ready)
-    playerEl.addEventListener('player:play', () => {
-        _getStemEngine().then(e => {
-            if (e.initialized) _startRollingAnalysis()
-        }).catch(() => {})
+        // Notify UI components (RuleEditorPanel) that available stems changed
+        window.dispatchEvent(new CustomEvent('seesound:audio-tracks-changed', {
+            detail: { trackIds: newTracks },
+        }))
     })
+
+    // Lazy-init the engine (loads the ONNX model) on first user gesture
+    let engineInitPromise = null
+    async function ensureEngineInitialized() {
+        if (stemSepEngine.initialized) return
+        if (engineInitPromise) return engineInitPromise
+        engineInitPromise = stemSepEngine.initialize().catch((err) => {
+            console.warn('[StemSeparation] Engine init failed:', err.message)
+            engineInitPromise = null // allow retry
+        })
+        return engineInitPromise
+    }
 
     emitMuteState(playerEl, monitorMuted)
 
@@ -2041,6 +1988,7 @@ let loadedAudioFile = null
             localStorage.setItem(LOCAL_PROJECT_DRAFT_KEY, JSON.stringify(draft))
         } catch { /* best-effort */ }
     })
+}
 
 // ── 7b  Canvas Resizer ────────────────────────────────────────────────────────
 let _resizer = null
@@ -2141,6 +2089,9 @@ applyCanvasScaleFromParams()
     emitCanvasSize(s.w, s.h)
 }
 
+/** @type {string|null} Track entity IDs to detect order-only changes */
+let _lastEntityIdSet = null
+
 subscribe((_, key, value) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
     if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
@@ -2195,17 +2146,27 @@ subscribe((_, key, value) => {
         ae._warmupFrameCount = next
     }
     if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
-        // Always use reorderEntities which preserves existing particle state.
-        // It handles add, remove, reorder, and rule changes without wiping.
-        ps.reorderEntities(params.ruleEntities ?? [])
-
-        // Only rebuild fully when global blocks change (background/camera rules)
-        if (key === 'ruleGlobalBlocks') {
-            ps.rebuild({
-                ruleEntities: params.ruleEntities ?? [],
-                ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
-            })
+        // Detect pure order changes — skip full rebuild, just reorder layers
+        if (key === 'ruleEntities') {
+            const newEntities = value || params.ruleEntities || []
+            const oldIds = (_lastEntityIdSet ? _lastEntityIdSet.split(',') : [])
+            const newIds = newEntities.map((e) => e.id).sort()
+            const onlyOrderChanged = oldIds.length === newIds.length &&
+                oldIds.every((id, i) => id === newIds[i])
+            if (onlyOrderChanged && _lastEntityIdSet) {
+                // Only order changed — use lightweight reorder
+                ps.reorderEntities(newEntities)
+                _lastEntityIdSet = newIds.join(',')
+                return
+            }
+            _lastEntityIdSet = newIds.join(',')
         }
+
+        // Full rebuild (entities added/removed or globals changed)
+        ps.rebuild({
+            ruleEntities: params.ruleEntities ?? [],
+            ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+        })
         const state = ps.getRuleCompileState()
         window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))
         if (RULE_DEBUG_FLAGS.logCompilerStatus) {
@@ -2225,7 +2186,7 @@ window.addEventListener('seesound:view-fit-camera', fitViewToCanvas)
 window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
 
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
-try { initControlPanel(document.getElementById('control-panel')) } catch (err) { console.warn('[main] ControlPanel error:', err) }
+initControlPanel(document.getElementById('control-panel'))
 
 const startupEntityCount = Array.isArray(params.ruleEntities) ? params.ruleEntities.length : 0
 const startupTotalRules = (Array.isArray(params.ruleEntities) ? params.ruleEntities : []).reduce((sum, e) => sum + (Array.isArray(e?.rules) ? e.rules.length : 0), 0)

@@ -264,6 +264,18 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const entities = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
         entityList.innerHTML = ''
 
+        // ── Layer list header with New Layer button ──
+        const listHeader = el('div', 'cp-styles-entity-list-header')
+        const listTitle = el('span', 'cp-styles-entity-list-title', { text: UI_TEXT.rules?.layers || 'Layers' })
+        const addLayerBtn = el('button', 'cp-btn cp-btn-icon cp-styles-add-layer', {
+            type: 'button',
+            title: 'New Layer',
+            'aria-label': 'New Layer',
+        })
+        applyIconOnlyButton(addLayerBtn, BUTTON_ICON_MAP.add, 'New Layer')
+        addLayerBtn.addEventListener('click', () => openEntityCreationModal())
+        listHeader.append(listTitle, addLayerBtn)
+        entityList.appendChild(listHeader)
         entities.forEach((entity, index) => {
             const row = el('div', 'cp-styles-entity-row')
             row.draggable = true
@@ -628,8 +640,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const layerTypeLabel = el('span', 'cp-setting-label', { text: 'Layer Type' })
         const layerTypeSelect = el('select', 'cp-input-select')
         layerTypeSelect.appendChild(createSelectOptions([
-            { value: 'generator', label: 'Generator' },
-            { value: 'modifier', label: 'Modifier' },
+            { value: 'generator', label: 'Generator — spawns shapes on canvas' },
+            { value: 'modifier', label: 'Modifier — overlays on top of lower layers' },
         ], 'generator'))
         layerTypeRow.append(layerTypeLabel, layerTypeSelect)
 
@@ -2010,29 +2022,5 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     })
 
     refreshAllRowOutputs()
-
-    // ── Add New Layer button to the menu pane header ──
-    // Deferred via setTimeout so DOM is attached and closest() works.
-    setTimeout(() => {
-        const pane = panel.closest('.cp-menu-pane')
-        if (!pane) return
-        const actions = pane.querySelector('.cp-menu-pane-actions')
-        if (!actions) return
-        if (actions.querySelector('.cp-styles-add-layer-pane')) return
-        const addBtn = el('button', 'cp-btn cp-btn-icon cp-styles-add-layer-pane', {
-            type: 'button',
-            title: 'New Layer',
-            'aria-label': 'New Layer',
-        })
-        applyIconOnlyButton(addBtn, BUTTON_ICON_MAP.add, 'New Layer')
-        addBtn.addEventListener('click', () => openEntityCreationModal())
-        const closeBtn = actions.querySelector('.cp-menu-collapse')
-        if (closeBtn) {
-            actions.insertBefore(addBtn, closeBtn)
-        } else {
-            actions.appendChild(addBtn)
-        }
-    }, 0)
-
     body.appendChild(panel)
 }

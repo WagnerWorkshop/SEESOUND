@@ -176,21 +176,6 @@ async function main() {
 
     console.log('\n── Download complete ──')
 
-    // Validate downloaded files — reject files smaller than 1 MB (likely truncated/Git LFS pointer)
-    for (const variant of selected) {
-        const dest = join(ROOT, variant.filename)
-        if (existsSync(dest)) {
-            const bytes = statSync(dest).size
-            const minBytes = variant.sizeMB * 1024 * 1024 * 0.5  // at least 50% of expected
-            if (bytes < minBytes) {
-                console.error(`  ✗ ${variant.filename} is only ${(bytes / 1024 / 1024).toFixed(1)} MB (expected ~${variant.sizeMB} MB). File may be corrupted or is a Git LFS pointer.`)
-                console.error(`    Delete ${dest} and re-run this script.`)
-            } else {
-                console.log(`  ✓ ${variant.filename}: ${(bytes / 1024 / 1024).toFixed(1)} MB — OK`)
-            }
-        }
-    }
-
     // Write a manifest so the app knows which models are available
     const manifest = {
         model: 'htdemucs_6s',
