@@ -124,63 +124,6 @@ export class LayerManager {
      * Compile background and camera rules from global blocks.
      */
     /**
-     * Reorder existing layers without destroying particle state.
-     * Called when only the order of entities changes (move up/down, drag-drop).
-     * @param {object[]} reorderedEntities - Entities in the new order
-     */
-    reorderEntities(reorderedEntities) {
-        const newOrder = [...reorderedEntities]
-            .filter((e) => e && typeof e === 'object')
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-
-        // Rebuild _layers array preserving existing ParticleSystem instances
-        const oldLayers = this._layers
-        this._layers = []
-
-        // Remove all meshes from scene first (will re-add in order)
-        for (const layer of oldLayers) {
-            this._scene.remove(layer.ps._mesh)
-            this._scene.remove(layer.ps._lineMesh)
-        }
-
-        for (const entity of newOrder) {
-            const existing = oldLayers.find((l) => l.entity?.id === entity.id)
-            if (existing) {
-                // Preserve existing ParticleSystem — just update the entity ref
-                this._layers.push({ entity, ps: existing.ps })
-                // Re-add meshes to scene in new order
-                this._scene.add(existing.ps._mesh)
-                if (existing.ps._lineMesh) this._scene.add(existing.ps._lineMesh)
-            } else {
-                // New entity (shouldn't happen in pure reorder, but handle gracefully)
-                const ps = new ParticleSystem(this._scene, {
-                    maxParticles: this._maxParticles,
-                    isModifier: entity.layerType === 'modifier',
-                })
-                const entityRules = {
-                    ruleEntities: [entity],
-                    ruleGlobalBlocks: { background: [], camera: [] },
-                }
-                ps.onRulesChanged(entityRules)
-                this._layers.push({ entity, ps })
-            }
-        }
-
-        // Dispose any old layers that are no longer in the new order
-        for (const layer of oldLayers) {
-            if (!newOrder.find((e) => e.id === layer.entity?.id)) {
-                // Entity removed — meshes already removed, ParticleSystem will GC
-            }
-        }
-
-        // Update hash so rebuild() doesn't redo work
-        this._lastEntityHash = JSON.stringify({
-            entities: reorderedEntities,
-            globals: this._globalBgRules || { background: [], camera: [] },
-        })
-    }
-
-    /**
      * Compat alias — calls rebuild(). Accepts { ruleBlocks, ruleEntities, ruleGlobalBlocks }.
      */
     onRulesChanged(rules) {

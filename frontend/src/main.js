@@ -48,8 +48,6 @@ import { ExportManager } from './engine/project/ExportManager.js'
 import { UI_TEXT } from './engine/ui/UiText.js'
 import { AudioEngine, snapCqtDetailsPer10Octaves } from './engine/audio/AudioEngine.js'
 import { CameraController } from './engine/renderer/CameraController.js'
-import { StemSeparationEngine } from './engine/audio/StemSeparationEngine.js'
-import { showLoadingOverlay, hideLoadingOverlay } from './components/LoadingOverlay.js'
 import resetIcon from './icons/reset.svg?raw'
 import fitIcon from './icons/fit.svg?raw'
 import clearIcon from './icons/clear.svg?raw'
@@ -1042,13 +1040,6 @@ animate()
         }
         // Take over play() so AudioContext is guaranteed resumed first
         e.preventDefault()
-
-        // Block play while stem preprocessing is running
-        if (_stemProcessingInProgress) {
-            console.log('[AudioEngine] Play blocked — stem separation in progress')
-            return
-        }
-
         try { await audioEl.play() }
         catch (err) { console.warn('[AudioEngine] play() failed:', err.message) }
     })
@@ -1085,103 +1076,15 @@ animate()
         if (!Number.isFinite(next)) return
         audioEl.playbackRate = Math.max(0.25, Math.min(4, next))
     })
-
-    // ── Stem Separation / Preprocessing flag ────────────────────────────
-    /** While true, play button is blocked and overlay is shown. */
-    let _stemProcessingInProgress = false
-
-    // ── Player:fileloaded — triggers preprocessing if enabled ───────────
-    playerEl.addEventListener('player:fileloaded', async (e) => {
+    playerEl.addEventListener('player:fileloaded', (e) => {
         const file = e?.detail?.file
         loadedAudioFile = file instanceof File ? file : null
         _currentAudioFileName = loadedAudioFile?.name || ''
         if (loadedAudioFile) {
             void _saveAudioFileToDb(loadedAudioFile)
         }
-
-        // If stem separation is enabled, run preprocessing now.
-        // Playback is blocked until stems are ready.
-        if (loadedAudioFile && Number(params.stemSeparationEnabled ?? 1) >= 0.5) {
-            _stemProcessingInProgress = true
-            showLoadingOverlay('🧬', 'Analysing instruments...', 'Separating drums, bass, vocals, guitar, piano & other')
-
-            try {
-                // Ensure engine is initialized (loads ONNX model)
-                if (!stemSepEngine.initialized) {
-                    showLoadingOverlay('🧬', 'Loading stem separation model...', 'This may take a moment on first run')
-                    await ensureEngineInitialized()
-                }
-                if (!stemSepEngine.initialized) {
-                    console.warn('[StemSeparation] Engine not available, skipping preprocessing')
-                    _stemProcessingInProgress = false
-                    hideLoadingOverlay()
-                    _scheduleLocalProjectDraftSave()
-                    return
-                }
-
-                // Run separation (will emit progress events that update the overlay)
-                showLoadingOverlay('🧬', 'Analysing instruments...', 'Separating drums, bass, vocals, guitar, piano & other')
-                const stemProgressHandler = (pctEvt) => {
-                    const pct = pctEvt.detail?.percent ?? 0
-                    if (pct > 0 && pct < 100) {
-                        showLoadingOverlay('🧬', 'Analysing instruments...', `Separating stems: ${pct}%`)
-                    }
-                }
-                stemSepEngine.addEventListener('progress', stemProgressHandler)
-                try {
-                    await stemSepEngine.separate(loadedAudioFile)
-                } finally {
-                    stemSepEngine.removeEventListener('progress', stemProgressHandler)
-                }
-            } catch (err) {
-                console.warn('[StemSeparation] Preprocessing failed:', err.message)
-                // Continue with normal playback — stems just won't be available
-            } finally {
-                _stemProcessingInProgress = false
-                hideLoadingOverlay()
-            }
-        }
-
         _scheduleLocalProjectDraftSave()
     })
-
-    // ── Stem Separation (neural source separation) ──────────────────────
-    // Initialize the engine lazily on first user interaction.
-    // Model downloads from HuggingFace on first use (~136 MB fp16 weights).
-    const stemSepEngine = new StemSeparationEngine({
-        modelPath: '/models/htdemucs_6s/htdemucs_6s_fp16weights.onnx',
-    })
-
-    // Register the initial audio track set as a shared global.
-    // The RuleEditorPanel reads this array to populate layer track selectors.
-    window.__seesoundAvailableAudioTracks = ['full']
-
-    // When stem separation completes, register the new track IDs globally
-    stemSepEngine.addEventListener('trackIdsChanged', (e) => {
-        const trackIds = e.detail?.trackIds || []
-        const current = window.__seesoundAvailableAudioTracks || ['full']
-        const hasFull = current.includes('full')
-        const newTracks = [...(hasFull ? ['full'] : []), ...trackIds]
-        window.__seesoundAvailableAudioTracks = newTracks
-
-        // Notify UI components (RuleEditorPanel) that available stems changed
-        window.dispatchEvent(new CustomEvent('seesound:audio-tracks-changed', {
-            detail: { trackIds: newTracks },
-        }))
-    })
-
-    // Lazy-init the engine (loads the ONNX model) on first user gesture
-    let engineInitPromise = null
-    async function ensureEngineInitialized() {
-        if (stemSepEngine.initialized) return
-        if (engineInitPromise) return engineInitPromise
-        engineInitPromise = stemSepEngine.initialize().catch((err) => {
-            console.warn('[StemSeparation] Engine init failed:', err.message)
-            engineInitPromise = null // allow retry
-        })
-        return engineInitPromise
-    }
-
     emitMuteState(playerEl, monitorMuted)
 
     let projectFileHandle = null
@@ -2088,11 +1991,7 @@ applyCanvasScaleFromParams()
     }
     emitCanvasSize(s.w, s.h)
 }
-
-/** @type {string|null} Track entity IDs to detect order-only changes */
-let _lastEntityIdSet = null
-
-subscribe((_, key, value) => {
+subscribe((_, key) => {
     if (key === 'cameraProjection') applyProjectionFromParams()
     if (key === 'cameraProjection' || key === 'cameraAxoPreset') applyAxoPresetFromParams()
     if (
@@ -2146,23 +2045,7 @@ subscribe((_, key, value) => {
         ae._warmupFrameCount = next
     }
     if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
-        // Detect pure order changes — skip full rebuild, just reorder layers
-        if (key === 'ruleEntities') {
-            const newEntities = value || params.ruleEntities || []
-            const oldIds = (_lastEntityIdSet ? _lastEntityIdSet.split(',') : [])
-            const newIds = newEntities.map((e) => e.id).sort()
-            const onlyOrderChanged = oldIds.length === newIds.length &&
-                oldIds.every((id, i) => id === newIds[i])
-            if (onlyOrderChanged && _lastEntityIdSet) {
-                // Only order changed — use lightweight reorder
-                ps.reorderEntities(newEntities)
-                _lastEntityIdSet = newIds.join(',')
-                return
-            }
-            _lastEntityIdSet = newIds.join(',')
-        }
-
-        // Full rebuild (entities added/removed or globals changed)
+        // Rebuild all layers from current entity definitions
         ps.rebuild({
             ruleEntities: params.ruleEntities ?? [],
             ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },

@@ -27,25 +27,6 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
             || 'ISO 226 equal-loudness compensation. 0 = Off, 0.5 = moderate, 1.0 = full.',
     }, syncRegistry, deps))
 
-    // ── Stem Separation toggle ──
-    const stemSepRow = el('label', 'cp-toggle-row')
-    const stemSepCheckbox = el('input', 'cp-input-toggle', { type: 'checkbox' })
-    stemSepCheckbox.checked = Number(params.stemSeparationEnabled ?? 1) >= 0.5
-    stemSepCheckbox.addEventListener('change', () => {
-        set('stemSeparationEnabled', stemSepCheckbox.checked ? 1 : 0)
-    })
-    stemSepRow.append(stemSepCheckbox, el('span', 'cp-setting-label', {
-        text: UI_TEXT.settings?.stemSeparation || 'Stem Separation',
-        title: UI_TEXT.settings?.tooltips?.stemSeparation
-            || 'Neural source separation (drums, bass, vocals, guitar, piano, other). If enabled, audio preprocessing must complete before playback starts.',
-    }))
-    const stemSepSync = () => {
-        stemSepCheckbox.checked = Number(params.stemSeparationEnabled ?? 1) >= 0.5
-    }
-    registerSync(syncRegistry, stemSepSync, ['stemSeparationEnabled'])
-    stemSepSync()
-    sliderSection.appendChild(stemSepRow)
-
     const resetButton = el('button', 'cp-btn cp-btn-wide', { text: UI_TEXT.settings.resetDefaults })
     applyButtonIcon(resetButton, BUTTON_ICON_MAP.reset, UI_TEXT.settings.resetDefaults)
     resetButton.addEventListener('click', () => {

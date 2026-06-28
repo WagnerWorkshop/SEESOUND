@@ -29,15 +29,9 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
     // ── Available audio track IDs ─────────────────────────────────────────
     // Entities filter which audio stem they react to.
-    // 'full' = full mix. The stem splitter populates
-    // window.__seesoundAvailableAudioTracks with additional IDs such as
-    // 'vocals', 'drums', 'bass', 'other', 'guitar', 'piano' dynamically.
-    function _getAvailableAudioTracks() {
-        if (Array.isArray(window.__seesoundAvailableAudioTracks) && window.__seesoundAvailableAudioTracks.length > 0) {
-            return window.__seesoundAvailableAudioTracks
-        }
-        return ['full']
-    }
+    // 'full' = full mix. The stem splitter (coming soon) will add track IDs
+    // such as 'vocals', 'drums', 'bass', 'other' dynamically.
+    const AVAILABLE_AUDIO_TRACKS = ['full']
 
     const baseRowsByKey = new Map()
     const orderedRows = []
@@ -263,19 +257,6 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function renderEntityList() {
         const entities = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
         entityList.innerHTML = ''
-
-        // ── Layer list header with New Layer button ──
-        const listHeader = el('div', 'cp-styles-entity-list-header')
-        const listTitle = el('span', 'cp-styles-entity-list-title', { text: UI_TEXT.rules?.layers || 'Layers' })
-        const addLayerBtn = el('button', 'cp-btn cp-btn-icon cp-styles-add-layer', {
-            type: 'button',
-            title: 'New Layer',
-            'aria-label': 'New Layer',
-        })
-        applyIconOnlyButton(addLayerBtn, BUTTON_ICON_MAP.add, 'New Layer')
-        addLayerBtn.addEventListener('click', () => openEntityCreationModal())
-        listHeader.append(listTitle, addLayerBtn)
-        entityList.appendChild(listHeader)
         entities.forEach((entity, index) => {
             const row = el('div', 'cp-styles-entity-row')
             row.draggable = true
@@ -420,20 +401,12 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 const moveUpItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Up' })
                 const moveDownItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Down' })
                 const editItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Edit' })
-                const newLayerItem = el('button', 'cp-layer-context-item cp-layer-context-item--new', { type: 'button', text: '+ New Layer' })
-                const separator1 = el('div', 'cp-layer-context-separator')
                 const renameItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Rename' })
                 const duplicateItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Duplicate' })
-                const separator2 = el('div', 'cp-layer-context-separator')
                 const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
 
                 if (index === 0) moveUpItem.disabled = true
                 if (index >= entities.length - 1) moveDownItem.disabled = true
-
-                newLayerItem.addEventListener('click', () => {
-                    menu.remove()
-                    openEntityCreationModal()
-                })
 
                 moveUpItem.addEventListener('click', () => {
                     menu.remove()
@@ -510,7 +483,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                     renderEntityList()
                 })
 
-                menu.append(moveUpItem, moveDownItem, editItem, separator1, newLayerItem, separator2, renameItem, duplicateItem, deleteItem)
+                menu.append(renameItem, duplicateItem, deleteItem)
                 document.body.appendChild(menu)
 
                 const closeMenu = (ev) => {
@@ -524,11 +497,6 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     function renderPopupMeta() {
-        // Clean up previous track listener before clearing DOM
-        if (typeof popupMeta._cleanupTracksListener === 'function') {
-            popupMeta._cleanupTracksListener()
-            popupMeta._cleanupTracksListener = null
-        }
         popupMeta.innerHTML = ''
         if (!popupOpen) return
 
@@ -549,17 +517,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
         const trackSelect = el('select', 'cp-input-select')
         const currentTrack = entity.audioTrackId || 'full'
-        function _refreshTrackOptions() {
-            const tracks = _getAvailableAudioTracks()
-            const currentVal = trackSelect.value
-            trackSelect.innerHTML = ''
-            const opts = tracks.map((id) => ({
-                value: id,
-                label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
-            }))
-            trackSelect.appendChild(createSelectOptions(opts, tracks.includes(currentVal) ? currentVal : 'full'))
-        }
-        _refreshTrackOptions()
+        const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
+            value: id,
+            label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
+        }))
+        trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
         trackSelect.addEventListener('change', () => {
             const nextTrack = trackSelect.value
             const nextEntities = getRuleEntities().map((entry) =>
@@ -567,22 +529,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             )
             setRuleEntities(nextEntities)
         })
-        // Listen for stem track changes from the stem splitter
-        const _tracksChangedHandler = (e) => {
-            const newTracks = e.detail?.trackIds
-            if (Array.isArray(newTracks)) {
-                _refreshTrackOptions()
-            }
-        }
-        window.addEventListener('seesound:audio-tracks-changed', _tracksChangedHandler)
-        // Clean up the listener when the popup meta is replaced
-        const _origCleanup = popupMeta._cleanupTracksListener
-        popupMeta._cleanupTracksListener = () => {
-            if (typeof _origCleanup === 'function') _origCleanup()
-            window.removeEventListener('seesound:audio-tracks-changed', _tracksChangedHandler)
-        }
         trackRow.append(trackLabel, trackSelect)
-        const trackHint = el('div', 'cp-styles-entity-info', { text: 'Select which audio stem this layer reacts to. Additional stems appear after running Stem Separation.' })
+        const trackHint = el('div', 'cp-styles-entity-info', { text: 'Select which audio stem this layer reacts to. Additional stems will appear when the stem splitter is active.' })
         trackSection.append(trackRow, trackHint)
         popupMeta.appendChild(trackSection)
     }

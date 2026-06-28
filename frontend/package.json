@@ -6,16 +6,13 @@
     "scripts": {
         "dev": "vite",
         "generate:templates": "node scripts/generate-template-manifest.mjs",
-        "postinstall": "node scripts/copy-ort-wasm.mjs",
-        "download:model": "node scripts/download-stem-model.mjs",
-        "prebuild": "pnpm run generate:templates && node scripts/copy-ort-wasm.mjs",
+        "prebuild": "pnpm run generate:templates",
         "build": "vite build",
         "preview": "vite preview"
     },
     "dependencies": {
         "jszip": "^3.10.1",
         "nouislider": "^15.8.1",
-        "onnxruntime-web": "^1.27.0",
         "three": "^0.171.0"
     },
     "devDependencies": {
