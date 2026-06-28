@@ -473,91 +473,91 @@
         {
             "id": "binMagnitude",
             "group": "detail",
-            "label": "Detail Volume",
+            "label": "Frequency Volume",
             "technicalName": "binMagnitude",
-            "description": "Per-frequency volume of the current bin."
+            "description": "Instantaneous volume level of the specific frequency bin."
         },
         {
             "id": "binRMSEnergy",
             "group": "detail",
-            "label": "Detail Energy",
+            "label": "Frequency Energy",
             "technicalName": "binRMSEnergy",
-            "description": "Per-frequency RMS energy for the current bin."
+            "description": "Average continuous power (RMS) of the specific frequency bin."
         },
         {
             "id": "frequencyHz",
             "group": "detail",
-            "label": "Frequency Hz",
+            "label": "Frequency (Hz)",
             "technicalName": "frequencyHz",
-            "description": "Physical frequency measured in Hz."
+            "description": "Exact physical pitch measured in Hertz."
         },
         {
             "id": "normFreq",
             "group": "detail",
-            "label": "Frequency Normalized",
+            "label": "Normalized Frequency",
             "technicalName": "normFreq",
-            "description": "Physical frequency normalized into a 0-1 range."
+            "description": "Frequency scaled to a proportional value between 0.0 and 1.0."
         },
         {
             "id": "notePitchClass",
             "group": "detail",
             "label": "Musical Note",
             "technicalName": "notePitchClass",
-            "description": "High value means a higher note within the chromatic scale."
+            "description": "Musical note value (e.g., C, C#, D) independent of its octave."
         },
         {
             "id": "pan",
             "group": "detail",
-            "label": "Pan",
+            "label": "Stereo Pan",
             "technicalName": "pan",
-            "description": "Left-to-right stereo value."
+            "description": "Horizontal position of the frequency in the stereo field, from left (-1) to right (+1)."
         },
         {
             "id": "octave",
             "group": "detail",
             "label": "Octave",
             "technicalName": "octave",
-            "description": "High value means a higher register."
+            "description": "The musical octave bracket that the frequency occupies. 1-10"
         },
         {
             "id": "binAttackTime",
             "group": "detail",
-            "label": "Attack Sharpness",
+            "label": "Snappiness",
             "technicalName": "binAttackTime",
-            "description": "High value means a very fast, snappy start to the sound."
+            "description": "Duration of the sound's onset. Mathematically, a shorter time indicates a faster, snappier start."
         },
         {
             "id": "binEnvelope",
             "group": "detail",
-            "label": "Envelope",
+            "label": "Swell",
             "technicalName": "binEnvelope",
-            "description": "High value means the sound is currently at its loudest point in its cycle."
+            "description": "Current amplitude level as shaped by the frequency's ADSR lifecycle."
         },
         {
             "id": "binEnvelopeState",
             "group": "detail",
-            "label": "Envelope State",
+            "label": "Wave State",
             "technicalName": "binEnvelopeState",
-            "description": "Current ADSR phase of a specific frequency bin."
+            "description": "Current stage of the lifecycle for this frequency (Attack, Decay, Sustain, or Release)."
         },
         {
             "id": "binFlux",
             "group": "detail",
             "label": "Activity",
             "technicalName": "binFlux",
-            "description": "High value means the sound or tone is changing rapidly."
+            "description": "Rate of volume change for this specific frequency compared to the previous frame."
         },
         {
             "id": "binPhase",
             "group": "detail",
-            "label": "Phase",
+            "label": "Wave Phase",
             "technicalName": "binPhase",
-            "description": "High value means the wave is at the top of its cycle."
+            "description": "Current position within the individual waveform cycle (0 to 360 degrees)."
         },
         {
             "id": "binPhaseDeviation",
             "group": "detail",
-            "label": "Instability",
+            "label": "Jitter",
             "technicalName": "binPhaseDeviation",
             "description": "High value means phase is shifting unpredictably."
         },
@@ -599,7 +599,7 @@
         {
             "id": "peakFreq",
             "group": "overall",
-            "label": "Peak Frequency",
+            "label": "Loudest Frequency",
             "technicalName": "peakFreq",
             "description": "How high the loudest detected frequency is."
         },
@@ -655,7 +655,7 @@
         {
             "id": "spectralFlux",
             "group": "overall",
-            "label": "Activity",
+            "label": "Overall Activity",
             "technicalName": "spectralFlux",
             "description": "High value means sound is changing rapidly."
         },
@@ -798,41 +798,6 @@
             "label": "Particle Age",
             "technicalName": "age",
             "description": "Frames elapsed since this particle was spawned."
-        },
-        {
-            "id": "bandFlatness",
-            "group": "detail",
-            "label": "Band Noisiness",
-            "technicalName": "bandFlatness",
-            "description": "Wiener entropy (geometric/arithmetic mean ratio) within the particle's local frequency band. High = noisy/breathy, low = pure tone."
-        },
-        {
-            "id": "bandTransient",
-            "group": "detail",
-            "label": "Band Transient",
-            "technicalName": "bandTransient",
-            "description": "Rate of energy increase of the entire band's RMS. High = sharp attack in this octave."
-        },
-        {
-            "id": "bandCentroid",
-            "group": "detail",
-            "label": "Band Tilt",
-            "technicalName": "bandCentroid",
-            "description": "Spectral centre-of-mass within the local band. High = bright/buzzy instrument occupying this octave."
-        },
-        {
-            "id": "bandFlux",
-            "group": "detail",
-            "label": "Band Activity",
-            "technicalName": "bandFlux",
-            "description": "Rate of spectral change within the local band from previous frame. High = rapid articulation or vibrato in this octave."
-        },
-        {
-            "id": "bandInstability",
-            "group": "detail",
-            "label": "Band Instability",
-            "technicalName": "bandInstability",
-            "description": "Average phase deviation second derivative within the local band. High = organic/acoustic jitter, low = synthetic/steady."
         },
         {
             "id": "componentId",

@@ -279,12 +279,6 @@ const PARAMS_BASE = [
         ],
     },
     {
-        key: 'warmupFrames', group: 'inputProcessing', label: 'Warmup Frames',
-        min: 0, max: 60, step: 1, default: 5, unit: 'frames',
-        desc: 'Number of initial frames to mute during analysis warmup. Prevents first-frame impulse on play.',
-        canDisable: false,
-    },
-    {
         key: 'fluxWindowFrames', group: 'inputProcessing', label: 'Activity Interval',
         min: 1, max: 64, step: 1, default: 10, unit: 'frames',
         desc: 'Rolling frame window used to smooth activity detection.',
@@ -456,37 +450,6 @@ const PARAMS_BASE = [
         desc: 'Normalization upper bound for spectral noisiness.',
     }),
 
-    // ── Band Texture Analysis ──────────────────────────────────────────────
-    {
-        key: 'bandFlatnessOctaves', group: 'inputProcessing', label: 'Band Noisiness Octave Window',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12, default: 4 / 12, unit: 'oct',
-        desc: 'Frequency bandwidth (in octaves) for local spectral flatness calculation. 1/12 octave steps.',
-        canDisable: false,
-    },
-    {
-        key: 'bandTransientOctaves', group: 'inputProcessing', label: 'Band Transient Octave Window',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12, default: 4 / 12, unit: 'oct',
-        desc: 'Frequency bandwidth (in octaves) for local attack sharpness calculation. 1/12 octave steps.',
-        canDisable: false,
-    },
-    {
-        key: 'bandCentroidOctaves', group: 'inputProcessing', label: 'Band Tilt Octave Window',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12, default: 4 / 12, unit: 'oct',
-        desc: 'Frequency bandwidth (in octaves) for local spectral centroid calculation. 1/12 octave steps.',
-        canDisable: false,
-    },
-    {
-        key: 'bandFluxOctaves', group: 'inputProcessing', label: 'Band Activity Octave Window',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12, default: 4 / 12, unit: 'oct',
-        desc: 'Frequency bandwidth (in octaves) for local spectral flux calculation. 1/12 octave steps.',
-        canDisable: false,
-    },
-    {
-        key: 'bandInstabilityOctaves', group: 'inputProcessing', label: 'Band Instability Octave Window',
-        min: 1 / 12, max: 24 / 12, step: 1 / 12, default: 4 / 12, unit: 'oct',
-        desc: 'Frequency bandwidth (in octaves) for local phase instability calculation. 1/12 octave steps.',
-        canDisable: false,
-    },
 
     // ── Per-Component Analysis ──────────────────────────────────────────────
     {

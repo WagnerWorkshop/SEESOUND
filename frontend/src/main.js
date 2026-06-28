@@ -410,30 +410,8 @@ cameraController = new CameraController({
 cameraController.bindEvents()
 syncOrbitFromCamera()
 
-/** @type {object|null} Previous camera rule output — used to suppress redundant updates */
-let _prevCameraOutput = null
-
 function applyRuleCameraOutput(output) {
-    if (!output) { _prevCameraOutput = null; return }
-    // Skip if nothing changed since last frame (within epsilon) — prevents flickering
-    const EPS = 0.01
-    const prev = _prevCameraOutput
-    if (prev) {
-        const eq = (a, b) => {
-            const va = Number.isFinite(a) ? a : null
-            const vb = Number.isFinite(b) ? b : null
-            if (va === null && vb === null) return true
-            if (va === null || vb === null) return false
-            return Math.abs(va - vb) < EPS
-        }
-        if (eq(output.x, prev.x) && eq(output.y, prev.y) && eq(output.z, prev.z) &&
-            eq(output.targetX, prev.targetX) && eq(output.targetY, prev.targetY) && eq(output.targetZ, prev.targetZ) &&
-            eq(output.zoom, prev.zoom) && eq(output.angleOfView, prev.angleOfView)) {
-            return
-        }
-    }
-    _prevCameraOutput = { ...output }
-
+    if (!output) return
     let posChanged = false
     if (Number.isFinite(output.x)) {
         camera.position.x = output.x
@@ -650,7 +628,6 @@ const ae = new AudioEngine({
 ae.setFluxWindowFrames(params.fluxWindowFrames)
 ae.setCqtDetailsPer10Octaves(params.cqtDetailsPer10Octaves)
 ae.setFftSizes(Number(params.frequencyFftSize) || 16384, Number(params.rhythmFftSize) || 1024)
-ae._warmupFrameCount = Math.max(0, Math.min(60, Math.round(Number(params.warmupFrames) || 5)))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 4  STATUS (BROWSER-ONLY MODE)
@@ -2039,10 +2016,6 @@ subscribe((_, key) => {
         const freq = Math.max(1024, Math.min(32768, Math.round(Number(params.frequencyFftSize) || 16384)))
         const rhythm = Math.max(256, Math.min(4096, Math.round(Number(params.rhythmFftSize) || 1024)))
         ae.setFftSizes(freq, rhythm)
-    }
-    if (key === 'warmupFrames') {
-        const next = Math.max(0, Math.min(60, Math.round(Number(params.warmupFrames) || 5)))
-        ae._warmupFrameCount = next
     }
     if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
         // Rebuild all layers from current entity definitions

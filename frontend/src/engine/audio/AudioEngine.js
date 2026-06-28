@@ -185,15 +185,13 @@ export class AudioEngine {
         /** @type {number} Last FFT size used to build LUT */
         this._hearingLutFftSize = 0
 
-        // Warmup frame counter — prevents first-frame impulse
-        this._warmupFrames = 0
-        this._warmupFrameCount = 5
-
-        // Lookahead buffer size auto-calculated from FFT sizes
-        this._lookaheadFrames = 0
-
         // Max bins for buffer sizing
         this._maxBins = Math.max(this.FFT_SIZE / 2, this.RHYTHM_FFT_SIZE / 2)
+
+        // ── Fade gain: ramps audio in/out to prevent transient artifacts ──
+        this._fadeGain = null
+        /** Fade ramp duration in seconds (30ms — short enough to be inaudible) */
+        this._fadeRampSeconds = 0.03
     }
 
     _createBinAnalysisNode() {
@@ -268,11 +266,10 @@ export class AudioEngine {
 
     _connectSourceToWorklet() {
         if (!this.binAnalysisNode) return false
-        const srcNode = this.source || this.streamSource
-        if (!srcNode) return false
+        if (!this._fadeGain) return false
         if (this._workletConnected) return true
         try {
-            srcNode.connect(this.binAnalysisNode)
+            this._fadeGain.connect(this.binAnalysisNode)
             this._workletConnected = true
             return true
         } catch {
@@ -355,23 +352,12 @@ export class AudioEngine {
         this._prevRhythmData = new Uint8Array(this.RHYTHM_FFT_SIZE / 2)
         if (this.analyser) this.analyser.fftSize = this.FFT_SIZE
         if (this._rhythmAnalyser) this._rhythmAnalyser.fftSize = this.RHYTHM_FFT_SIZE
-        this._computeLookahead()
-        this._warmupFrames = 0
     }
 
     static _snapFftSize(value, min, max) {
         let v = Math.max(min, Math.min(max, Math.round(Number(value) || min)))
         // Round to nearest power of 2
         return Math.max(min, Math.min(max, 1 << Math.round(Math.log2(v))))
-    }
-
-    _computeLookahead() {
-        // Lookahead = how many frames it takes for the FFT to stabilize
-        // Roughly 1.5x the FFT size / sampleRate in frames at 60fps
-        const sr = this.ctx?.sampleRate ?? 44100
-        const freqFrames = Math.ceil((this.FFT_SIZE / sr) * 60 * 1.5)
-        const rhythmFrames = Math.ceil((this.RHYTHM_FFT_SIZE / sr) * 60 * 1.5)
-        this._lookaheadFrames = Math.max(freqFrames, rhythmFrames, this._warmupFrameCount)
     }
 
     init(el) {
@@ -390,6 +376,9 @@ export class AudioEngine {
             this.outputGain.gain.value = this.monitorMuted ? 0 : 1
             this.analyser.connect(this.outputGain)
             this.outputGain.connect(this.ctx.destination)
+            // Fade gain: starts at 0 to suppress initial transient; ramped up on play
+            this._fadeGain = this.ctx.createGain()
+            this._fadeGain.gain.value = 0
             this._ensureWorkletLoaded()
         }
         // If already connected to this audio element, skip reconnection
@@ -410,15 +399,17 @@ export class AudioEngine {
 
             try {
                 this.source = this.ctx.createMediaElementSource(el)
-                this.source.connect(this.analyser)
-                this.source.connect(this._rhythmAnalyser)
+                this.source.connect(this._fadeGain)
+                this._fadeGain.connect(this.analyser)
+                this._fadeGain.connect(this._rhythmAnalyser)
             } catch {
                 const stream = (el.captureStream?.() || el.mozCaptureStream?.())
                 if (stream) {
                     this.streamNode = stream
                     this.streamSource = this.ctx.createMediaStreamSource(stream)
-                    this.streamSource.connect(this.analyser)
-                    this.streamSource.connect(this._rhythmAnalyser)
+                    this.streamSource.connect(this._fadeGain)
+                    this._fadeGain.connect(this.analyser)
+                    this._fadeGain.connect(this._rhythmAnalyser)
                 }
             }
             try {
@@ -430,7 +421,7 @@ export class AudioEngine {
                     a.minDecibels = -140
                 }
                 const srcNode = this.source || this.streamSource
-                srcNode?.connect(this.splitter)
+                if (srcNode) this._fadeGain.connect(this.splitter)
                 this.splitter.connect(this.analyserL, 0)
                 this.splitter.connect(this.analyserR, 1)
                 this._connectSourceToWorklet()
@@ -441,10 +432,16 @@ export class AudioEngine {
         if (this.ctx.state === 'suspended') this.ctx.resume()
         this.ctxState = this.ctx.state
 
-        // Reset warmup counter on fresh init (new audio source)
-        this._warmupFrames = 0
-        this._warmupFrameCount = 5
-        this._computeLookahead()
+        // ── Attach fade envelope to audio element events ────────────────
+        // Remove old listeners to avoid duplicates on re-init
+        this._onAudioPlay = () => this.fadeIn()
+        this._onAudioPause = () => this.fadeOut()
+        this._onAudioSeeking = () => this.fadeOut()
+        this._onAudioSeeked = () => { if (!el.paused) this.fadeIn() }
+        el.addEventListener('play', this._onAudioPlay)
+        el.addEventListener('pause', this._onAudioPause)
+        el.addEventListener('seeking', this._onAudioSeeking)
+        el.addEventListener('seeked', this._onAudioSeeked)
     }
 
     setMonitorMuted(muted) {
@@ -458,6 +455,52 @@ export class AudioEngine {
         }
     }
 
+    // ── Fade in/out envelope ────────────────────────────────────────────
+
+    /**
+     * Ramp the fade gain from its current value up to 1 over the fade window.
+     * Call this when audio playback starts or resumes.
+     */
+    fadeIn() {
+        if (!this._fadeGain || !this.ctx) return
+        const now = this.ctx.currentTime
+        const ramp = this._fadeRampSeconds
+        try {
+            this._fadeGain.gain.setValueAtTime(this._fadeGain.gain.value || 0, now)
+            this._fadeGain.gain.linearRampToValueAtTime(1, now + ramp)
+        } catch {
+            this._fadeGain.gain.value = 1
+        }
+    }
+
+    /**
+     * Ramp the fade gain from its current value down to 0 over the fade window.
+     * Call this when audio playback pauses or stops.
+     */
+    fadeOut() {
+        if (!this._fadeGain || !this.ctx) return
+        const now = this.ctx.currentTime
+        const ramp = this._fadeRampSeconds
+        try {
+            this._fadeGain.gain.setValueAtTime(this._fadeGain.gain.value, now)
+            this._fadeGain.gain.linearRampToValueAtTime(0, now + ramp)
+        } catch {
+            this._fadeGain.gain.value = 0
+        }
+        // Reset previous-frame buffers so the flux/transient computation
+        // starts from a clean slate when fadeIn() restores audio.
+        // Without this, stale pre-pause data causes a transient spike on resume.
+        this._prevRhythmData.fill(0)
+        this._prevFrequencyDataBins.fill(0)
+        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
+        // Zero transient accumulators
+        this._rhythmTransient = 0
+        this._rhythmEnergy = 0
+        this.globalTransient = 0
+        this.spectralFluxAU = 0
+        this.spectralFlux = 0
+    }
+
     update() {
         if (!this.analyser) return
         if (this.ctx?.state === 'suspended' && this.audioEl && !this.audioEl.paused) {
@@ -465,86 +508,77 @@ export class AudioEngine {
         }
         this.ctxState = this.ctx?.state ?? 'none'
 
-        // Warmup: fill buffers with real data but zero out outputs
-        const isWarmup = this._warmupFrames < this._warmupFrameCount
-        if (isWarmup) {
-            // Read real FFT data to fill history buffers
-            this.analyser.getByteFrequencyData(this.frequencyData)
-            this.analyser.getByteTimeDomainData(this.timeDomainData)
-            if (this._rhythmAnalyser) {
-                this._rhythmAnalyser.getByteFrequencyData(this._rhythmFrequencyData)
-                this._prevRhythmData.set(this._rhythmFrequencyData)
-            }
-            this._prevFrequencyDataBins.set(this.frequencyData)
-            // Zero out derived features during warmup
-            this.bass = 0; this.mid = 0; this.high = 0
-            this.peakFreq = 0; this.peakByte = 0; this.amplitude = 0
-            this.rmsDbfs = -96; this.pan = 0
-            this.spectralCentroidHz = 0; this.spectralCentroid = 0
-            this.spectralFluxAU = 0; this.spectralFlux = 0
-            this.spectralFlatnessRatio = 0; this.spectralFlatness = 0
-            this.inharmonicity = 0; this.peakAmplitude = 0
-            this.zeroCrossingRate = 0; this.spectralRolloff = 0
-            this.spectralSpread = 0; this.spectralSkewness = 0
-            this.chromagram = 0
-            this._rhythmTransient = 0; this._rhythmEnergy = 0
-            this.globalTransient = 0
-            this.frequencyData.fill(0)
-            this._warmupFrames++
-            return
-        }
-
         this.analyser.getByteFrequencyData(this.frequencyData)
         this.analyser.getByteTimeDomainData(this.timeDomainData)
+
+        // ── Fade-gate check: suppress transient/flux computations while
+        //     the fade gain is actively ramping or at zero. This prevents
+        //     cold-start and pause/resume transient spikes from reaching
+        //     downstream features (spectral flux, rhythm transient, etc.).
+        const fadeGainValue = this._fadeGain ? this._fadeGain.gain.value : 1
+        const fadeRamping = fadeGainValue < 0.99
 
         // Read rhythm analyser (1024-FFT) for transient detection
         if (this._rhythmAnalyser) {
             this._rhythmAnalyser.getByteFrequencyData(this._rhythmFrequencyData)
-            // Compute transient metric: spectral flux on the rhythm FFT
-            let fluxSum = 0
-            const len = this._rhythmFrequencyData.length
-            for (let i = 0; i < len; i++) {
-                const diff = Math.abs(this._rhythmFrequencyData[i] - this._prevRhythmData[i])
-                fluxSum += diff
-            }
-            this._prevRhythmData.set(this._rhythmFrequencyData)
-            const transientNorm = fluxSum / (len * 255)
-            const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
-            this._rhythmTransient += (transientNorm - this._rhythmTransient) * alpha
-            this.globalTransient = this._rhythmTransient
-            // Rhythm energy = average magnitude of the 1024-FFT
-            let eSum = 0
-            for (let i = 0; i < len; i++) eSum += this._rhythmFrequencyData[i]
-            this._rhythmEnergy = eSum / (len * 255)
 
-            // ── Rhythm brain per-bin arrays (computed from low FFT) ──
-            // These provide the data for binFlux, binPhaseDeviation, binAttackTime,
-            // binEnvelope when the rhythm brain is active.
-            const rLen = this._rhythmFrequencyData.length
-            if (!this._rhythmBinFlux || this._rhythmBinFlux.length !== rLen) {
-                this._rhythmBinFlux = new Float32Array(rLen)
-                this._rhythmBinPhaseDeviation = new Float32Array(rLen)
-                this._rhythmBinAttackTime = new Float32Array(rLen)
-                this._rhythmBinEnvelope = new Float32Array(rLen)
-                this._rhythmBinPrevMag = new Float32Array(rLen)
-                this._rhythmBinPrevPhase = new Float32Array(rLen)
-            }
-            this._rhythmBrainActive = true
-            const rNorm = 1 / 255
-            for (let i = 0; i < rLen; i++) {
-                const curr = this._rhythmFrequencyData[i] * rNorm
-                const prev = this._rhythmBinPrevMag[i] || 0
-                // Flux: absolute positive change from previous frame
-                this._rhythmBinFlux[i] = Math.max(0, curr - prev)
-                // Phase deviation: simulated from frame-to-frame variance
-                const phaseShift = (curr - prev) / Math.max(0.01, curr + prev)
-                this._rhythmBinPhaseDeviation[i] = Math.max(0, Math.min(1, Math.abs(phaseShift)))
-                // Envelope: smoothed magnitude
-                this._rhythmBinEnvelope[i] = prev + (curr - prev) * alpha
-                // Attack time: rapid rise trigger (value rises quickly)
-                const rise = curr - prev
-                this._rhythmBinAttackTime[i] = Math.max(0, Math.min(1, rise * 5))
-                this._rhythmBinPrevMag[i] = curr
+            if (fadeRamping) {
+                // While fade gain is ramping, suppress transient computation.
+                // Keep prev buffers in sync (read data but don't let flux through)
+                // so when the ramp completes the flux delta is near-zero.
+                this._prevRhythmData.set(this._rhythmFrequencyData)
+                this._rhythmTransient = 0
+                this._rhythmEnergy = 0
+                this.globalTransient = 0
+                // Skip per-bin rhythm brain arrays during ramp
+                this._rhythmBrainActive = false
+            } else {
+                // Compute transient metric: spectral flux on the rhythm FFT
+                let fluxSum = 0
+                const len = this._rhythmFrequencyData.length
+                for (let i = 0; i < len; i++) {
+                    const diff = Math.abs(this._rhythmFrequencyData[i] - this._prevRhythmData[i])
+                    fluxSum += diff
+                }
+                this._prevRhythmData.set(this._rhythmFrequencyData)
+                const transientNorm = fluxSum / (len * 255)
+                const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
+                this._rhythmTransient += (transientNorm - this._rhythmTransient) * alpha
+                this.globalTransient = this._rhythmTransient
+                // Rhythm energy = average magnitude of the 1024-FFT
+                let eSum = 0
+                for (let i = 0; i < len; i++) eSum += this._rhythmFrequencyData[i]
+                this._rhythmEnergy = eSum / (len * 255)
+
+                // ── Rhythm brain per-bin arrays (computed from low FFT) ──
+                // These provide the data for binFlux, binPhaseDeviation, binAttackTime,
+                // binEnvelope when the rhythm brain is active.
+                const rLen = this._rhythmFrequencyData.length
+                if (!this._rhythmBinFlux || this._rhythmBinFlux.length !== rLen) {
+                    this._rhythmBinFlux = new Float32Array(rLen)
+                    this._rhythmBinPhaseDeviation = new Float32Array(rLen)
+                    this._rhythmBinAttackTime = new Float32Array(rLen)
+                    this._rhythmBinEnvelope = new Float32Array(rLen)
+                    this._rhythmBinPrevMag = new Float32Array(rLen)
+                    this._rhythmBinPrevPhase = new Float32Array(rLen)
+                }
+                this._rhythmBrainActive = true
+                const rNorm = 1 / 255
+                for (let i = 0; i < rLen; i++) {
+                    const curr = this._rhythmFrequencyData[i] * rNorm
+                    const prev = this._rhythmBinPrevMag[i] || 0
+                    // Flux: absolute positive change from previous frame
+                    this._rhythmBinFlux[i] = Math.max(0, curr - prev)
+                    // Phase deviation: simulated from frame-to-frame variance
+                    const phaseShift = (curr - prev) / Math.max(0.01, curr + prev)
+                    this._rhythmBinPhaseDeviation[i] = Math.max(0, Math.min(1, Math.abs(phaseShift)))
+                    // Envelope: smoothed magnitude
+                    this._rhythmBinEnvelope[i] = prev + (curr - prev) * alpha
+                    // Attack time: rapid rise trigger (value rises quickly)
+                    const rise = curr - prev
+                    this._rhythmBinAttackTime[i] = Math.max(0, Math.min(1, rise * 5))
+                    this._rhythmBinPrevMag[i] = curr
+                }
             }
         } else {
             this._rhythmBrainActive = false
@@ -616,14 +650,22 @@ export class AudioEngine {
         }
 
         if (this._calcUsage.needGlobalSpectralFlux || this._rhythmBrainActive) {
-            // When rhythm brain is active, spectralFlux is computed from the low FFT
-            // for faster transient response. Otherwise use the high FFT.
-            const fluxSrc = this._rhythmBrainActive ? this._rhythmFrequencyData : this.frequencyData
-            const fluxPrev = this._rhythmBrainActive ? this._prevRhythmData : this._prevFrequencyDataBins
-            const fluxNorm = computeSpectralFlux(fluxSrc, fluxPrev)
-            const fluxAu = fluxNorm * 100
-            this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
-            this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
+            if (fadeRamping) {
+                // Suppress spectral flux while fade gain is ramping
+                this.spectralFluxAU = 0
+                this.spectralFlux = 0
+                // Still keep prev data in sync
+                this._prevFrequencyDataBins.set(this.frequencyData)
+            } else {
+                // When rhythm brain is active, spectralFlux is computed from the low FFT
+                // for faster transient response. Otherwise use the high FFT.
+                const fluxSrc = this._rhythmBrainActive ? this._rhythmFrequencyData : this.frequencyData
+                const fluxPrev = this._rhythmBrainActive ? this._prevRhythmData : this._prevFrequencyDataBins
+                const fluxNorm = computeSpectralFlux(fluxSrc, fluxPrev)
+                const fluxAu = fluxNorm * 100
+                this.spectralFluxAU += (fluxAu - this.spectralFluxAU) * alpha
+                this.spectralFlux = Math.max(0, Math.min(1, this.spectralFluxAU / 100))
+            }
         } else {
             this.spectralFluxAU = 0
             this.spectralFlux = 0

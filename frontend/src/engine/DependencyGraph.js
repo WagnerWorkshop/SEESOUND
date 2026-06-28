@@ -92,7 +92,7 @@ const MODE_GATED_VARS = new Map([
 const BRAIN_TRIGGERS = {
     pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote']),
     textureBrain: new Set(['entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume']),
-    rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'bandTransient', 'bandFlux', 'bandInstability']),
+    rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState']),
     trackerBrain: new Set(['entityAge', 'streamId']),
 }
 

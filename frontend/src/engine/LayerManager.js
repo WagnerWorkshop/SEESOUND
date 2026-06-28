@@ -68,47 +68,65 @@ export class LayerManager {
         if (hash === this._lastEntityHash) return
         this._lastEntityHash = hash
 
-        // Remove all existing layer meshes from the scene
+        // Index existing layers by entity id/name for reuse — preserves particles
+        const oldLayers = new Map()
         for (const layer of this._layers) {
-            this._scene.remove(layer.ps._mesh)
-            this._scene.remove(layer.ps._lineMesh)
+            const key = layer.entity?.id ?? layer.entity?.name ?? null
+            if (key !== null) oldLayers.set(key, layer)
         }
-        this._layers = []
 
         // Sort entities by order
         const sorted = [...ruleEntities]
             .filter((e) => e && typeof e === 'object')
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
-        // Create a layer for each enabled entity.
-        // The FIRST enabled layer also receives the global background/camera rules
-        // so its ParticleSystem handles them natively in ps.update().
+        const newLayers = []
         let primaryAssigned = false
-        for (const entity of sorted) {
-            const isDisabled = entity.enabled === false
-            const isModifier = entity.layerType === 'modifier'
-            const ps = new ParticleSystem(this._scene, {
-                maxParticles: this._maxParticles,
-                isModifier,
-            })
 
-            // Compile rules for this entity
+        for (const entity of sorted) {
+            const key = entity.id ?? entity.name ?? null
+            let layer = key !== null ? oldLayers.get(key) : null
+            oldLayers.delete(key) // don't dispose, we keep it
+
+            if (!layer) {
+                // New entity — create a fresh ParticleSystem
+                const isModifier = entity.layerType === 'modifier'
+                const ps = new ParticleSystem(this._scene, {
+                    maxParticles: this._maxParticles,
+                    isModifier,
+                })
+                this._scene.add(ps._mesh)
+                this._scene.add(ps._lineMesh)
+                layer = { entity, ps }
+            }
+
+            // Recompile rules on the (existing or new) layer
+            const isDisabled = entity.enabled === false
             const entityRules = {
                 ruleEntities: [entity],
-                // First enabled layer gets global blocks so camera/background rules compile in
                 ruleGlobalBlocks: (!isDisabled && !primaryAssigned)
                     ? (ruleGlobalBlocks || { background: [], camera: [] })
                     : { background: [], camera: [] },
             }
-            const compiled = ps.onRulesChanged(entityRules)
+            const compiled = layer.ps.onRulesChanged(entityRules)
+            // Update stored entity ref (rules may have changed on same entity)
+            layer.entity = entity
 
-            this._layers.push({ entity, ps })
+            newLayers.push(layer)
 
             if (!isDisabled && !primaryAssigned) {
                 primaryAssigned = true
                 this._lastCompileState = compiled
             }
         }
+
+        // Dispose orphaned layers (entities that were removed)
+        for (const [key, layer] of oldLayers) {
+            this._scene.remove(layer.ps._mesh)
+            this._scene.remove(layer.ps._lineMesh)
+        }
+
+        this._layers = newLayers
 
         if (!this._lastCompileState) {
             this._lastCompileState = { compileStatus: 'compiled', spawnRuleCount: 0, livingRuleCount: 0, lineRuleCount: 0, backgroundRuleCount: 0, cameraRuleCount: 0 }
