@@ -124,58 +124,63 @@ export class LayerManager {
      * Compile background and camera rules from global blocks.
      */
     /**
-     * Reorder existing layers without destroying particle state.
-     * Called when only the order of entities changes (move up/down, drag-drop).
-     * @param {object[]} reorderedEntities - Entities in the new order
+     * Reorder/update layers without destroying particle state.
+     * Handles add, remove, reorder, and rule changes while preserving
+     * existing ParticleSystem instances (and their particle data).
+     * @param {object[]} newEntities - Entities in the new order
      */
-    reorderEntities(reorderedEntities) {
-        const newOrder = [...reorderedEntities]
+    reorderEntities(newEntities) {
+        const newOrder = [...newEntities]
             .filter((e) => e && typeof e === 'object')
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
-        // Rebuild _layers array preserving existing ParticleSystem instances
         const oldLayers = this._layers
-        this._layers = []
-
-        // Remove all meshes from scene first (will re-add in order)
-        for (const layer of oldLayers) {
-            this._scene.remove(layer.ps._mesh)
-            this._scene.remove(layer.ps._lineMesh)
-        }
+        const newLayers = []
 
         for (const entity of newOrder) {
             const existing = oldLayers.find((l) => l.entity?.id === entity.id)
             if (existing) {
-                // Preserve existing ParticleSystem — just update the entity ref
-                this._layers.push({ entity, ps: existing.ps })
-                // Re-add meshes to scene in new order
-                this._scene.add(existing.ps._mesh)
-                if (existing.ps._lineMesh) this._scene.add(existing.ps._lineMesh)
-            } else {
-                // New entity (shouldn't happen in pure reorder, but handle gracefully)
-                const ps = new ParticleSystem(this._scene, {
-                    maxParticles: this._maxParticles,
-                    isModifier: entity.layerType === 'modifier',
-                })
-                const entityRules = {
-                    ruleEntities: [entity],
-                    ruleGlobalBlocks: { background: [], camera: [] },
+                // Recompile rules if the entity's rules changed
+                const oldRules = JSON.stringify(existing.entity?.rules || [])
+                const newRules = JSON.stringify(entity.rules || [])
+                if (oldRules !== newRules) {
+                    existing.ps.onRulesChanged({
+                        ruleEntities: [entity],
+                        ruleGlobalBlocks: { background: [], camera: [] },
+                    })
                 }
-                ps.onRulesChanged(entityRules)
-                this._layers.push({ entity, ps })
+                newLayers.push({ entity, ps: existing.ps })
             }
         }
 
-        // Dispose any old layers that are no longer in the new order
+        // Add new entities that weren't in oldLayers
+        for (const entity of newOrder) {
+            const exists = newLayers.find((l) => l.entity?.id === entity.id)
+            if (exists) continue
+            const ps = new ParticleSystem(this._scene, {
+                maxParticles: this._maxParticles,
+                isModifier: entity.layerType === 'modifier',
+            })
+            ps.onRulesChanged({
+                ruleEntities: [entity],
+                ruleGlobalBlocks: { background: [], camera: [] },
+            })
+            newLayers.push({ entity, ps })
+        }
+
+        this._layers = newLayers
+
+        // Dispose old layers no longer in the new order
         for (const layer of oldLayers) {
             if (!newOrder.find((e) => e.id === layer.entity?.id)) {
-                // Entity removed — meshes already removed, ParticleSystem will GC
+                this._scene.remove(layer.ps._mesh)
+                this._scene.remove(layer.ps._lineMesh)
             }
         }
 
-        // Update hash so rebuild() doesn't redo work
+        // Update hash
         this._lastEntityHash = JSON.stringify({
-            entities: reorderedEntities,
+            entities: newEntities,
             globals: this._globalBgRules || { background: [], camera: [] },
         })
     }

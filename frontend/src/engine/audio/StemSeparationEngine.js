@@ -3,25 +3,21 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * Main-thread manager for HT-Demucs 6-stem audio source separation.
  *
- * Responsibilities:
- *   1. Create and manage a Web Worker running onnxruntime-web.
- *   2. Decode uploaded audio files to raw PCM Float32Array.
- *   3. Chunk long audio with overlap-add (50% overlapping Hann windows).
- *   4. Send chunks to the worker, collect results, reconstruct stems.
- *   5. Convert each stem to an AudioBuffer → playable Blob URL.
- *   6. Emit events so the rest of the app (UI, layers) can react.
+ * Two modes:
+ *   1. FULL ANALYSIS — decode entire file, process all chunks, reconstruct
+ *      full-length stems. Best for pre-processing before playback.
+ *   2. ROLLING (real-time) — process individual PCM chunks as they arrive
+ *      from a playing audio element. Each chunk covers ~7.8 seconds.
+ *      No overlap-add, no full-song decode. Emits stem chunks immediately.
  *
- * Usage:
+ * Usage (rolling):
  *   const sse = new StemSeparationEngine()
  *   await sse.initialize()
- *   const stems = await sse.separate(audioFile)  // File or Blob
- *   // stems = { drums, bass, other, vocals, guitar, piano }
- *   // each stem is an object: { audioBuffer, blobUrl, duration }
+ *   const stems = await sse.processChunk(pcmFloat32Array)
+ *   // stems = { drums: Float32Array, bass: Float32Array, ... }
  *
  * Events (on the StemSeparationEngine instance):
  *   'initialized'     — Model loaded, ready to process
- *   'progress'        — { percent, segment, total } during separation
- *   'complete'        — { stems, duration } all stems ready
  *   'error'           — { error } something went wrong
  *   'trackIdsChanged' — { trackIds: string[] } available stems updated
  *
@@ -114,6 +110,12 @@ export class StemSeparationEngine extends EventTarget {
 
         /** @type {Map<string, { audioBuffer: AudioBuffer, blobUrl: string, duration: number }>|null} */
         this._lastStems = null
+
+        /** @type {Map<string, Float32Array>|null} Latest rolling stem chunks */
+        this._latestChunks = null
+
+        /** @type {boolean} Whether trackIdsChanged was already emitted */
+        this._emittedTrackIds = false
     }
 
     // ── Public accessors ──────────────────────────────────────────────────
@@ -140,6 +142,7 @@ export class StemSeparationEngine extends EventTarget {
     /**
      * Create the Web Worker and load the ONNX model.
      * Call once before any separate() calls.
+     * Throws with a clear message if loading exceeds 50 seconds.
      */
     async initialize() {
         if (this._initialized) return
@@ -152,18 +155,36 @@ export class StemSeparationEngine extends EventTarget {
 
         this._worker.onmessage = (event) => this._handleWorkerMessage(event)
         this._worker.onerror = (event) => {
-            console.error('[StemSeparation] Worker error:', event)
+            console.error('[StemSeparation] Worker error:', event.message || 'Worker error')
             this.dispatchEvent(new CustomEvent('error', {
                 detail: { error: event.message || 'Worker error' },
             }))
+            // Reject ALL pending jobs so nothing hangs forever
+            for (const [jid, pending] of this._pendingJobs) {
+                pending.reject(new Error(event.message || 'Worker error'))
+            }
+            this._pendingJobs.clear()
         }
 
-        // Send init message and wait for response
-        const initResult = await this._sendMessage({
+        // Race: init vs timeout. With tracked download + Cache Storage, the
+        // first load downloads 130 MB which may take minutes on slow connections.
+        // Subsequent loads from cache take < 1 second.
+        const initPromise = this._sendMessage({
             type: 'init',
             modelPath: this._modelPath,
             providers: this._providers,
         })
+        const initResult = await Promise.race([
+            initPromise,
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(
+                    'Model loading timed out.\n' +
+                    'The 130 MB neural network download may be too slow.\n' +
+                    'Check your network speed. Once downloaded, it is cached and loads instantly.\n' +
+                    'Try disabling Stem Separation in Settings, or use Chrome/Edge with WebGPU enabled.'
+                )), 180000) // 3 minutes for first download
+            ),
+        ])
 
         this._initialized = true
         this._executionProvider = initResult.executionProvider || 'unknown'
@@ -203,6 +224,9 @@ export class StemSeparationEngine extends EventTarget {
     async separate(audioFile, options = {}) {
         if (!this._initialized) {
             await this.initialize()
+            if (!this._initialized) {
+                throw new Error('Stem separation engine failed to initialize. Check console for details.')
+            }
         }
         if (this._processing) {
             throw new Error('A separation is already in progress.')
@@ -273,6 +297,9 @@ export class StemSeparationEngine extends EventTarget {
                 detail: { trackIds: this._availableSources },
             }))
 
+            // Gracefully release the worker (sends cleanup → waits for session.release())
+            await this._releaseWorker()
+
             return resultMap
         } catch (err) {
             if (err.name === 'AbortError') {
@@ -290,7 +317,68 @@ export class StemSeparationEngine extends EventTarget {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    //  § 6  AUDIO DECODING
+    //  § 6  ROLLING REAL-TIME: process a single PCM chunk
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Process a single 7.8-second chunk of interleaved stereo PCM audio
+     * and return stem data. Does NOT decode files or reconstruct stems
+     * across multiple chunks — use this for rolling real-time analysis.
+     *
+     * The audio MUST be at 44.1 kHz. If shorter than CHUNK_LENGTH samples,
+     * it will be zero-padded automatically.
+     *
+     * @param {Float32Array} interleavedPcm - Stereo PCM data [-1, 1].
+     * @returns {Promise<Object<string, Float32Array>>} Stem name → mono Float32Array.
+     */
+    async processChunk(interleavedPcm) {
+        if (!this._initialized) {
+            await this.initialize()
+            if (!this._initialized) {
+                throw new Error('Stem separation engine failed to initialize.')
+            }
+        }
+
+        // Build a segment (zero-pad if needed)
+        const totalSamples = interleavedPcm.length / 2
+        const seg = new Float32Array(2 * CHUNK_LENGTH)
+        for (let i = 0; i < Math.min(totalSamples, CHUNK_LENGTH); i++) {
+            seg[i * 2] = interleavedPcm[i * 2] || 0
+            seg[i * 2 + 1] = interleavedPcm[i * 2 + 1] || 0
+        }
+
+        // Send to worker
+        const result = await this._sendMessage({
+            type: 'process',
+            jobId: `chunk-${Date.now()}`,
+            audio: seg,
+        })
+
+        // Extract stem data
+        const stems = {}
+        for (const stemId of SOURCE_IDS) {
+            stems[stemId] = result.stems[stemId] || new Float32Array(0)
+        }
+
+        // Store as latest chunks
+        this._latestChunks = stems
+
+        // Emit track IDs on first successful chunk
+        if (!this._emittedTrackIds) {
+            this._emittedTrackIds = true
+            this.dispatchEvent(new CustomEvent('trackIdsChanged', {
+                detail: { trackIds: this._availableSources },
+            }))
+        }
+
+        return stems
+    }
+
+    /** @returns {Object<string, Float32Array>|null} Latest rolling stem chunk data. */
+    get latestChunks() { return this._latestChunks }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  § 7  AUDIO DECODING
     // ──────────────────────────────────────────────────────────────────────
 
     /**
@@ -612,8 +700,14 @@ export class StemSeparationEngine extends EventTarget {
 
         switch (type) {
             case 'initialized':
-                // Resolve the init promise
                 this._resolveJob(jobId, msg)
+                break
+
+            case 'status':
+                // Forward worker status updates as events (no jobId needed)
+                this.dispatchEvent(new CustomEvent('status', {
+                    detail: { phase: msg.phase, message: msg.message },
+                }))
                 break
 
             case 'result':
@@ -629,6 +723,10 @@ export class StemSeparationEngine extends EventTarget {
                     results: msg.results,
                     totalInferenceTimeMs: msg.totalInferenceTimeMs,
                 })
+                break
+
+            case 'cleaned':
+                this._resolveJob(jobId, msg)
                 break
 
             case 'error':
@@ -687,14 +785,42 @@ export class StemSeparationEngine extends EventTarget {
     // ──────────────────────────────────────────────────────────────────────
 
     /**
+     * Gracefully release the worker: send cleanup → wait for session.release()
+     * → then terminate. This ensures GPU VRAM / WASM heap is freed.
+     * The worker will be re-created on the next initialize() call.
+     */
+    async _releaseWorker() {
+        if (this._worker) {
+            try {
+                // Ask the worker to release the ONNX session (frees GPU/WASM memory).
+                // Add a 5s timeout so we don't hang if the worker is unresponsive.
+                const cleanupPromise = this._sendMessage({ type: 'cleanup' })
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Cleanup timeout')), 5000)
+                )
+                await Promise.race([cleanupPromise, timeoutPromise])
+            } catch (err) {
+                console.warn('[StemSeparation] Cleanup signal failed:', err.message)
+            }
+            this._worker.terminate()
+            this._worker = null
+        }
+        this._initialized = false
+        this._pendingJobs.clear()
+        this._jobCounter = 0
+        console.log('[StemSeparation] Worker released — GPU/WASM memory freed')
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  § 13  CLEANUP
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
      * Terminate the worker and release all resources.
      * Call when the engine is no longer needed.
      */
     dispose() {
-        if (this._worker) {
-            this._worker.terminate()
-            this._worker = null
-        }
+        this._releaseWorker()
 
         // Revoke any blob URLs from last stems
         if (this._lastStems) {
@@ -704,9 +830,7 @@ export class StemSeparationEngine extends EventTarget {
             this._lastStems = null
         }
 
-        this._initialized = false
         this._processing = false
-        this._pendingJobs.clear()
 
         console.log('[StemSeparation] Disposed')
     }

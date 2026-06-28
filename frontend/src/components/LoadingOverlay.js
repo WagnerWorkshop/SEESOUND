@@ -44,17 +44,10 @@ function _buildBar() {
         align-items: center;
         justify-content: center;
         gap: 8px;
-        background: rgba(12, 18, 16, 0.92);
-        backdrop-filter: blur(6px);
-        border-bottom: 1px solid rgba(74, 222, 128, 0.2);
         font-family: 'Quicksand', 'Roboto', system-ui, sans-serif;
         font-size: 13px;
-        font-weight: 500;
-        color: rgba(255, 255, 255, 0.85);
         transition: opacity 0.25s ease;
         opacity: 0;
-        pointer-events: none;
-        user-select: none;
     `
 
     const icon = document.createElement('span')

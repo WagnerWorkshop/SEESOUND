@@ -1,8 +1,12 @@
 /**
  * copy-ort-wasm.mjs
  * ═══════════════════════════════════════════════════════════════════════════
- * Copies onnxruntime-web WASM files from node_modules to the public/ort
- * directory so they can be served as static assets.
+ * Copies onnxruntime-web WASM + .mjs glue files from node_modules to the
+ * public/ort directory so they can be served as static assets.
+ *
+ * Copies ALL .wasm and .mjs files from the ort dist directory to give
+ * onnxruntime-web full freedom to select the best variant at runtime
+ * (threaded, SIMD, basic, with/without jsep).
  *
  * Usage: node scripts/copy-ort-wasm.mjs
  */
@@ -17,14 +21,6 @@ const ROOT = join(__dirname, '..')
 const ORT_DIST = join(ROOT, 'node_modules', 'onnxruntime-web', 'dist')
 const ORT_PUBLIC = join(ROOT, 'public', 'ort')
 
-const WASM_PATTERNS = [
-    'ort-wasm-simd-threaded.wasm',
-    'ort-wasm-simd-threaded.jsep.wasm',
-    'ort-wasm-simd-threaded.asyncify.wasm',
-    'ort-wasm-simd.wasm',
-    'ort-wasm.wasm',
-]
-
 if (!existsSync(ORT_DIST)) {
     console.error(`onnxruntime-web dist not found at ${ORT_DIST}`)
     console.error('Run "pnpm install" first.')
@@ -35,12 +31,12 @@ if (!existsSync(ORT_PUBLIC)) {
     mkdirSync(ORT_PUBLIC, { recursive: true })
 }
 
-// Copy .wasm files matching our patterns
+// Copy ALL .wasm and their .mjs glue files from ORT dist
 const allFiles = readdirSync(ORT_DIST)
 let copied = 0
 
 for (const file of allFiles) {
-    if (file.endsWith('.wasm') && WASM_PATTERNS.some((p) => file === p || file.startsWith(p.replace('.wasm', '')))) {
+    if (file.endsWith('.wasm') || file.endsWith('.mjs')) {
         const src = join(ORT_DIST, file)
         const dest = join(ORT_PUBLIC, file)
         copyFileSync(src, dest)

@@ -8,7 +8,8 @@
         "generate:templates": "node scripts/generate-template-manifest.mjs",
         "postinstall": "node scripts/copy-ort-wasm.mjs",
         "download:model": "node scripts/download-stem-model.mjs",
-        "prebuild": "pnpm run generate:templates && node scripts/copy-ort-wasm.mjs",
+        "validatemodel": "node -e \"import('node:fs').then(f=>{const s=f.statSync('public/models/htdemucs_6s/htdemucs_6s_fp16weights.onnx');const mb=s.size/1024/1024;if(mb<50){console.error('ERROR: Model file is only '+mb.toFixed(1)+'MB — expected ~136MB. Likely a Git LFS pointer. Run: pnpm run download:model -- --small-only --local <path>');process.exit(1)}else{console.log('Model OK: '+mb.toFixed(1)+' MB')}}).catch(e=>{console.error('No model file found. Run download:model or copy manually.');process.exit(0)})\"",
+        "prebuild": "pnpm run generate:templates && node scripts/copy-ort-wasm.mjs && pnpm run validatemodel",
         "build": "vite build",
         "preview": "vite preview"
     },
