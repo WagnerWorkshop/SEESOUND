@@ -279,6 +279,12 @@ export class ComponentTracker {
         /** @type {Map<number, Component>} Stream ID → component lookup */
         this._streamMap = new Map()
 
+        /** @type {boolean} Cold-start flag — first frame suppresses onset */
+        this._coldStart = true
+
+        /** @type {number} Play state tracking — reset onset buffers on play */
+        this._wasPlaying = false
+
         // ── Public readout (updated each frame) ──
         /** @type {Component[]} Live component array — read by ParticleSystem */
         this.components = []
@@ -333,6 +339,28 @@ export class ComponentTracker {
         this.components = []
         this.componentCount = 0
         this.binAssignment.fill(-1)
+        this._coldStart = true
+        this._wasPlaying = false
+    }
+
+    /**
+     * Notify the tracker of playback state changes.
+     * Call this when audio pauses, resumes, or seeks to prevent
+     * transient hallucination artifacts from silence→signal transitions.
+     * @param {boolean} isPlaying — Whether audio is currently playing
+     */
+    notePlayStateChange(isPlaying) {
+        if (isPlaying && !this._wasPlaying) {
+            // Transitioned from paused/stopped to playing — reset onset buffers
+            // to prevent the silence→signal boundary from registering as a
+            // false transient.
+            this._coldStart = true
+            for (const comp of this._components) {
+                if (comp._onsetRing) comp._onsetRing.length = 0
+            }
+            this._onsetBuffer = []
+        }
+        this._wasPlaying = isPlaying
     }
 
     /**
@@ -359,7 +387,12 @@ export class ComponentTracker {
         }
 
         // ── 3. Build flux frame ──
-        const fluxFrame = this._prevLogFrame
+        // Cold-start: initialise prevLogFrame with zeros so the first real frame
+        // doesn't register a hallucinated transient from null→signal.
+        if (!this._prevLogFrame) {
+            this._prevLogFrame = new Float64Array(CQT_BINS)
+        }
+        const fluxFrame = this._frameCount > 0
             ? buildFluxFrame(logFrame, this._prevLogFrame)
             : new Float64Array(CQT_BINS)
         this._prevLogFrame = logFrame
@@ -374,7 +407,20 @@ export class ComponentTracker {
         this._computeTimbreMetrics()
 
         // ── 7. Compute onset strengths ──
-        this._computeOnsets(fluxFrame, sampleRate)
+        // Suppress onset during cold-start to prevent silence→signal
+        // transient hallucination. The transient detection uses frequency-
+        // adaptive windows (3 frames for high freqs, 8 for low freqs), so
+        // we suppress for at least 10 frames to cover the worst case.
+        if (this._coldStart && this._frameCount < 10) {
+            for (const comp of this._components) {
+                comp.onset = 0
+            }
+        } else {
+            this._computeOnsets(fluxFrame, sampleRate)
+        }
+        if (this._coldStart && this._frameCount >= 12) {
+            this._coldStart = false
+        }
 
         // ── 8. Update public readout ──
         this._updatePublicReadout()
@@ -396,14 +442,19 @@ export class ComponentTracker {
         const lambda = this._sparsity
         const maxComp = this._maxComponents
 
-        // If we have fewer than 2 CQT frames, initialise with a trivial
-        // single-component decomposition
-        if (this._frameCount < 2) {
-            // On the very first frame, create one component that's a copy
-            // of the log-magnitude frame
+        // If we have fewer than 2 CQT frames, or no previous components exist,
+        // initialise with a component built from the log-magnitude frame.
+        // Normalise the template so it can match future frames reliably.
+        if (this._frameCount < 2 || this._prevComponents.length === 0) {
             const comp = createComponent(0)
+            let templateNorm = 0
             for (let i = 0; i < CQT_BINS; i++) {
-                comp.template[i] = Math.max(0, logFrame[i] || 0)
+                comp.template[i] = Math.max(EPS, logFrame[i] || EPS)
+                templateNorm += comp.template[i] * comp.template[i]
+            }
+            if (templateNorm > EPS) {
+                const invNorm = 1 / Math.sqrt(templateNorm)
+                for (let i = 0; i < CQT_BINS; i++) comp.template[i] *= invNorm
             }
             comp.activation = 1.0
             this._components = [comp]
@@ -430,11 +481,36 @@ export class ComponentTracker {
         // Determine max iterations based on available energy
         const totalEnergy = residual.reduce((s, v) => s + v, 0)
         if (totalEnergy < EPS) {
-            this._components = []
+            // No energy this frame — keep the previous frame's component(s)
+            // so per-component variables never go undefined for downstream rules.
+            // If there are no previous components either, create one silent dummy.
+            if (this._prevComponents.length > 0) {
+                this._components = this._prevComponents.map((c) => {
+                    const copy = createComponent(c.id)
+                    for (let i = 0; i < CQT_BINS; i++) copy.template[i] = c.template[i]
+                    copy.activation = 0
+                    copy.centroid = c.centroid
+                    copy.flatness = c.flatness
+                    copy.flux = 0
+                    copy.onset = 0
+                    copy.age = c.age + 1
+                    copy.streamId = c.streamId
+                    copy.energy = 0
+                    return copy
+                })
+            } else {
+                // No previous components — create a trivial fallback
+                const comp = createComponent(0)
+                for (let i = 0; i < CQT_BINS; i++) {
+                    comp.template[i] = 1 / Math.sqrt(CQT_BINS)
+                }
+                comp.activation = EPS
+                this._components = [comp]
+            }
             return
         }
 
-        const energyThreshold = totalEnergy * 0.02 // stop when 98% explained
+        const energyThreshold = totalEnergy * 0.005 // stop when 99.5% explained
         let remainingEnergy = totalEnergy
 
         // Limit iterations to maxComponents to avoid runaway
@@ -471,8 +547,11 @@ export class ComponentTracker {
 
             // Apply sparsity penalty: if meanScore * (1 - lambda) beats the
             // best previous match, start a new component
+            // Also start a new component if the best previous match would be
+            // killed by soft threshold — this prevents silent frames from
+            // producing zero components.
             const sparsityDiscount = 1 - lambda
-            if (meanScore * sparsityDiscount > bestScore && iter < maxComp - 1) {
+            if ((meanScore * sparsityDiscount > bestScore || bestScore < lambda) && iter < maxComp - 1) {
                 // Create a new template from the residual
                 const newTemplate = new Float64Array(CQT_BINS)
                 for (let i = 0; i < CQT_BINS; i++) {
@@ -492,22 +571,23 @@ export class ComponentTracker {
                     activation += residual[i] * newTemplate[i]
                 }
                 activation = softThreshold(activation, lambda * 0.5)
+                // Always produce at least a minimal activation so the extraction
+                // loop never stalls on quiet frames.
+                if (activation <= EPS) activation = EPS
 
-                if (activation > EPS) {
-                    const newComp = createComponent(iter)
-                    for (let i = 0; i < CQT_BINS; i++) {
-                        newComp.template[i] = newTemplate[i]
-                    }
-                    newComp.activation = activation
-                    extracted.push(newComp)
-
-                    // Subtract explained energy from residual
-                    for (let i = 0; i < CQT_BINS; i++) {
-                        residual[i] = Math.max(EPS, residual[i] - activation * newTemplate[i])
-                    }
-                    remainingEnergy = residual.reduce((s, v) => s + v, 0)
-                    continue
+                const newComp = createComponent(iter)
+                for (let i = 0; i < CQT_BINS; i++) {
+                    newComp.template[i] = newTemplate[i]
                 }
+                newComp.activation = activation
+                extracted.push(newComp)
+
+                // Subtract explained energy from residual
+                for (let i = 0; i < CQT_BINS; i++) {
+                    residual[i] = Math.max(EPS, residual[i] - activation * newTemplate[i])
+                }
+                remainingEnergy = residual.reduce((s, v) => s + v, 0)
+                continue
             }
 
             // Use best-matching previous component
@@ -523,11 +603,10 @@ export class ComponentTracker {
                 activation += residual[i] * template[i]
             }
             activation = softThreshold(activation, lambda)
-
-            if (activation <= EPS) {
-                // Component no longer active — skip
-                continue
-            }
+            // Always produce at least a minimal activation so the extraction
+            // loop never stalls. Each iteration MUST produce a component to
+            // guarantee componentCount > 0 for downstream rules.
+            if (activation <= EPS) activation = EPS
 
             // Slightly adapt the template to the current frame (online learning)
             const learnRate = 0.3
@@ -562,6 +641,27 @@ export class ComponentTracker {
 
         // Sort extracted components by activation descending
         extracted.sort((a, b) => b.activation - a.activation)
+
+        // ── Fallback: ensure at least one non-degenerate component ──
+        // When audio is very quiet or during fade-in ramps, the matching-
+        // pursuit loop may fail to extract any component (all activations
+        // zero from softThreshold). Produce a single component from the
+        // log-magnitude frame so downstream consumers never see an empty set.
+        if (extracted.length === 0) {
+            const fallback = createComponent(0)
+            let fbNorm = 0
+            for (let i = 0; i < CQT_BINS; i++) {
+                fallback.template[i] = Math.max(EPS, logFrame[i] || EPS)
+                fbNorm += fallback.template[i] * fallback.template[i]
+            }
+            if (fbNorm > EPS) {
+                const invFn = 1 / Math.sqrt(fbNorm)
+                for (let i = 0; i < CQT_BINS; i++) fallback.template[i] *= invFn
+            }
+            fallback.activation = Math.sqrt(fbNorm)
+            if (fallback.activation < EPS) fallback.activation = EPS
+            extracted.push(fallback)
+        }
 
         // Re-assign IDs based on sorted order
         for (let i = 0; i < extracted.length; i++) {

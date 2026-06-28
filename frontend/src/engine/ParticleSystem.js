@@ -626,7 +626,7 @@ export class ParticleSystem {
     // were removed in v2.0. All call sites replaced with _frameRuleBase + Object.assign.
 
     getVisibleBounds() {
-        const n = Math.max(0, this._visibleCount)
+        const n = Math.max(0, this._visible_count)
         if (n === 0) {
             return {
                 empty: true,
@@ -983,6 +983,10 @@ export class ParticleSystem {
             }
             this._trackerLastFftSize = currentFftForTracker
         }
+        // Notify tracker of play-state changes to prevent transient hallucination
+        // on pause→resume transitions where silence→signal would look like an onset.
+        const audioPlaying = ae.audioEl ? !ae.audioEl.paused : false
+        this._componentTracker.notePlayStateChange(audioPlaying)
         this._componentTracker.processFrame({
             freqData,
             binMagArr,
@@ -1198,21 +1202,43 @@ export class ParticleSystem {
             lineDirtyMax = Math.max(lineDirtyMax, index)
         }
 
-        // ── Component metric lookup helper (shared by writeParticle and writeLine) ──
-        const _getComponentMetrics = (hz) => {
-            const _compIdx = this._componentTracker.getComponentAtHz(hz)
+        // ── Component metric lookup helpers ──
+        /** Get metrics for a specific component (used for per-component particle emission). */
+        const _getCompMetricsByIndex = (compIdx) => {
             const _comps = this._componentTracker.components
-            const id = _compIdx >= 0 && _compIdx < _comps.length ? _comps[_compIdx].id : -1
-            const centroid = _compIdx >= 0 && _compIdx < _comps.length
-                ? clamp01(_comps[_compIdx].centroid / 16000) : undefined
-            const flatness = _compIdx >= 0 && _compIdx < _comps.length
-                ? clamp01(_comps[_compIdx].flatness) : undefined
-            const flux = _compIdx >= 0 && _compIdx < _comps.length
-                ? clamp01(_comps[_compIdx].flux) : undefined
-            const onset = _compIdx >= 0 && _compIdx < _comps.length
-                ? clamp01(_comps[_compIdx].onset) : undefined
-            const count = Math.max(0, this._componentTracker.componentCount)
-            return { compId: id, compCentroid: centroid, compFlatness: flatness, compFlux: flux, compOnset: onset, compCount: count }
+            if (compIdx < 0 || compIdx >= _comps.length) {
+                return { compId: -1, compCentroid: undefined, compFlatness: undefined, compFlux: undefined, compOnset: undefined, compCount: Math.max(0, this._componentTracker.componentCount) }
+            }
+            const comp = _comps[compIdx]
+            return {
+                compId: comp.id,
+                compCentroid: clamp01(comp.centroid / 16000),
+                compFlatness: clamp01(comp.flatness),
+                compFlux: clamp01(comp.flux),
+                compOnset: clamp01(comp.onset),
+                compCount: Math.max(0, this._componentTracker.componentCount),
+            }
+        }
+        /**
+         * Check if a component has non-zero template energy at or near a given Hz.
+         * Uses a small 3-bin neighborhood to handle CQT/FFT bin boundary misalignment.
+         */
+        const _componentHasEnergyAtHz = (compIdx, hz) => {
+            const _comps = this._componentTracker.components
+            if (compIdx < 0 || compIdx >= _comps.length) return false
+            const comp = _comps[compIdx]
+            if (!comp.template || comp.template.length === 0) return false
+            const clampedHz = Math.max(40, Math.min(16000, hz))
+            const logMin = Math.log2(40), logMax = Math.log2(16000)
+            const norm = (Math.log2(clampedHz) - logMin) / (logMax - logMin)
+            const bin = Math.round(norm * (comp.template.length - 1))
+            // Check a 3-bin window around the target to handle frequency alignment
+            const lo = Math.max(0, bin - 2)
+            const hi = Math.min(comp.template.length - 1, bin + 2)
+            for (let b = lo; b <= hi; b++) {
+                if ((comp.template[b] || 0) > 1e-12) return true
+            }
+            return false
         }
 
         const writeParticle = (bucket, alphaBoost = 1, isFundamentalFlag = 1) => {
@@ -1233,8 +1259,15 @@ export class ParticleSystem {
             const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
             const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
             const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
-            // Per-component metrics (shared helper)
-            const { compId, compCentroid, compFlatness, compFlux, compOnset, compCount } = _getComponentMetrics(hz)
+            // Per-component metrics (passed through bucket from outer loop)
+            const compId = Number.isFinite(bucket.compId) ? bucket.compId : -1
+            const compCentroid = Number.isFinite(bucket.compCentroid) ? bucket.compCentroid : undefined
+            const compFlatness = Number.isFinite(bucket.compFlatness) ? bucket.compFlatness : undefined
+            const compFlux = Number.isFinite(bucket.compFlux) ? bucket.compFlux : undefined
+            const compOnset = Number.isFinite(bucket.compOnset) ? bucket.compOnset : undefined
+            const compCount = Number.isFinite(bucket.compCount) ? bucket.compCount : undefined
+            // Per-component bin energy — from component's own spectrum
+            const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -1279,6 +1312,8 @@ export class ParticleSystem {
                         componentFlux: compFlux,
                         componentOnset: compOnset,
                         componentCount: compCount > 0 ? compCount : undefined,
+                        // Per-component bin energy — from component's own spectrum
+                        componentBinEnergy: compBinEnergy,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1306,12 +1341,13 @@ export class ParticleSystem {
             let outB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : brightness) : brightness
             const outAlpha = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
 
-            // Dedup: skip if a particle with the same position was already written this frame.
+            // Dedup: skip if a particle with the same position AND component was already written this frame.
             // When rules use only global inputs (e.g. spectralCentroid for x/y/z), every
             // bucket spawns a particle at the same location — one is enough.
             // In painting mode (persistMode=1) all buckets are kept to accumulate trails.
+            // Component ID is included to allow overlapping components at the same frequency.
             if (_particleDedup) {
-                const posKey = `${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)}`
+                const posKey = `${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)}|c${compId}`
                 if (_particleDedup.has(posKey)) { dedupedCount++; return }
                 _particleDedup.set(posKey, true)
             }
@@ -1355,7 +1391,15 @@ export class ParticleSystem {
             const binAttackTimeMetric = Number.isFinite(bucket.binAttackTime) ? bucket.binAttackTime : undefined
             const binEnvelopeMetric = Number.isFinite(bucket.binEnvelope) ? bucket.binEnvelope : undefined
             const binRmsMetric = Number.isFinite(bucket.binRMSEnergy) ? bucket.binRMSEnergy : undefined
-            const { compId, compCentroid, compFlatness, compFlux, compOnset, compCount } = _getComponentMetrics(hz)
+            // Per-component metrics (passed through bucket from outer loop)
+            const compId = Number.isFinite(bucket.compId) ? bucket.compId : -1
+            const compCentroid = Number.isFinite(bucket.compCentroid) ? bucket.compCentroid : undefined
+            const compFlatness = Number.isFinite(bucket.compFlatness) ? bucket.compFlatness : undefined
+            const compFlux = Number.isFinite(bucket.compFlux) ? bucket.compFlux : undefined
+            const compOnset = Number.isFinite(bucket.compOnset) ? bucket.compOnset : undefined
+            const compCount = Number.isFinite(bucket.compCount) ? bucket.compCount : undefined
+            // Per-component bin energy — from component's own spectrum
+            const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
 
             const y = (freqNorm * 2 - 1) * hh
             const x = 0
@@ -1402,6 +1446,8 @@ export class ParticleSystem {
                         componentFlux: compFlux,
                         componentOnset: compOnset,
                         componentCount: compCount > 0 ? compCount : undefined,
+                        // Per-component bin energy — from component's own spectrum
+                        componentBinEnergy: compBinEnergy,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1440,9 +1486,9 @@ export class ParticleSystem {
             const axisRaw = typeof line.direction === 'string' ? line.direction.trim().toLowerCase() : ''
             const axis = (axisRaw === 'x' || axisRaw === 'y' || axisRaw === 'z') ? axisRaw : 'y'
 
-            // Line dedup: skip lines with identical center + direction + length
+            // Line dedup: skip lines with identical center + direction + length + component
             if (_lineDedup) {
-                const lineKey = `${centerX.toFixed(2)},${centerY.toFixed(2)},${centerZ.toFixed(2)},${axis},${lineLength.toFixed(1)}`
+                const lineKey = `${centerX.toFixed(2)},${centerY.toFixed(2)},${centerZ.toFixed(2)},${axis},${lineLength.toFixed(1)},c${compId}`
                 if (_lineDedup.has(lineKey)) { dedupedLineCount++; return }
                 _lineDedup.set(lineKey, true)
             }
@@ -1544,13 +1590,14 @@ export class ParticleSystem {
             'isFundamental',
             // Per-component variables
             'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
-            'componentOnset', 'componentCount',
+            'componentOnset', 'componentCount', 'componentBinEnergy',
         ])
         const spawnInputs = this._compiledRules?.requiredInputsByTarget?.spawnedParticles ?? []
         const lineInputs = this._compiledRules?.requiredInputsByTarget?.lines ?? []
         const spawnNeedsBins = spawnInputs.some((id) => PER_BIN_VARS.has(id))
         const lineNeedsBins = lineInputs.some((id) => PER_BIN_VARS.has(id))
-        const needsFullBucketLoop = (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
+        const needsFullBucketLoop = this._componentTracker.componentCount > 0
+            || (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
         let effectiveBucketCount = needsFullBucketLoop ? logBucketCount : 1
         // In painting mode always use full buckets to accumulate trails
         if (persistMode === 1) effectiveBucketCount = logBucketCount
@@ -1727,7 +1774,15 @@ export class ParticleSystem {
                 const avgRaw = sumRawEnergy / count
                 const bucketEnergy = avgRaw * gainMult
 
-                writeParticle({
+                // ── Per-component particle emission ──────────────────────
+                // For each bucket frequency, iterate over all tracked components.
+                // Components with significant energy at this frequency each get
+                // their own particle + line, carrying their componentId and
+                // per-component timbre metrics (centroid, flatness, flux, onset).
+                // This ensures overlapping harmonics from different instruments
+                // produce distinct particles even at the same frequency.
+                const activeComps = this._componentTracker.components || []
+                const bucketBase = {
                     hz: hzCenter,
                     byte: peakByteBucket,
                     energy: bucketEnergy,
@@ -1739,20 +1794,61 @@ export class ParticleSystem {
                     binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
                     binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
                     binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-                }, 1, isFund)
-                writeLine({
-                    hz: hzCenter,
-                    byte: peakByteBucket,
-                    energy: bucketEnergy,
-                    binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
-                    binRMSEnergy: clamp01(avgRaw),
-                    binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,
-                    binPhase: needBinPhase ? (sumBinPhase / count) : undefined,
-                    binFlux: needBinFlux ? (sumBinFlux / count) : undefined,
-                    binPhaseDeviation: needBinPhaseDev ? (sumBinPhaseDev / count) : undefined,
-                    binAttackTime: needBinAttackTime ? (sumBinAttackTime / count) : undefined,
-                    binEnvelope: needBinEnvelope ? (sumBinEnvelope / count) : undefined,
-                })
+                }
+
+                // Determine whether the per-component loop is needed.
+                // Run whenever there are active tracked components — this ensures
+                // every spawned particle carries its componentId and per-component
+                // timbre metrics (centroid, flatness, flux, onset, binEnergy).
+                // Even if no spawn/line rules are active, the component data is
+                // stored on every particle for potential living-rule use.
+                const compsNeedEmission = activeComps.length > 0
+
+                if (compsNeedEmission) {
+                    // Emit one particle per component — no gate, every active
+                    // component gets a particle at every bucket frequency.
+                    const compCount = Math.max(0, this._componentTracker.componentCount)
+                    for (let ci = 0; ci < activeComps.length; ci++) {
+                        const cm = _getCompMetricsByIndex(ci)
+
+                        // Per-component bin energy: sample the component's
+                        // normalised template at the bucket's Hz centre.
+                        const compTemplate = activeComps[ci].template
+                        let compBinEnergy = 0
+                        if (compTemplate && compTemplate.length > 1) {
+                            const hzForComp = Math.max(40, Math.min(16000, hzCenter))
+                            const logMin = Math.log2(40), logMax = Math.log2(16000)
+                            const norm = (Math.log2(hzForComp) - logMin) / (logMax - logMin)
+                            const pos = norm * (compTemplate.length - 1)
+                            const i0 = Math.max(0, Math.min(compTemplate.length - 1, Math.floor(pos)))
+                            const i1 = Math.max(0, Math.min(compTemplate.length - 1, i0 + 1))
+                            const frac = pos - i0
+                            const v0 = Number(compTemplate[i0]) || 0
+                            const v1 = Number(compTemplate[i1]) || 0
+                            compBinEnergy = clamp01(v0 + (v1 - v0) * frac)
+                        }
+
+                        const particleBucket = {
+                            ...bucketBase,
+                            compId: cm.compId,
+                            compCentroid: cm.compCentroid,
+                            compFlatness: cm.compFlatness,
+                            compFlux: cm.compFlux,
+                            compOnset: cm.compOnset,
+                            compCount: compCount,
+                            // Per-component bin-level variable — replaces the
+                            // aggregate binRMSEnergy for this component.
+                            compBinEnergy,
+                        }
+                        writeParticle(particleBucket, 1, isFund)
+                        writeLine(particleBucket)
+                        if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
+                    }
+                } else {
+                    // No components (or only global-level rules) — emit default particle
+                    writeParticle(bucketBase, 1, isFund)
+                    writeLine(bucketBase)
+                }
                 hzStart = hzEnd
                 if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
             }

@@ -190,9 +190,18 @@ export class AudioEngine {
 
         // ── Fade gain: ramps audio in/out to prevent transient artifacts ──
         this._fadeGain = null
-        /** Fade ramp duration in seconds (30ms — short enough to be inaudible) */
-        this._fadeRampSeconds = 0.03
+        /** Fade ramp duration in seconds (50ms — longer for low-frequency settling) */
+        this._fadeRampSeconds = 0.05
+        /** Frames to ignore worklet transient messages after fade-in/out */
+        this._workletTransientSuppress = 0
+        /** Tracks whether we just exited a fade ramp — next non-ramp frame syncs prev */
+        this._fadeRampWasActive = false
+        /** Tracks cumulative suppressed transient from cold-start (cleared gradually) */
+        this._coldStartSuppressFrames = 0
     }
+
+    /** Number of frames to suppress worklet transient after fade events */
+    static get TRANSIENT_SUPPRESS_FRAMES() { return 12 }
 
     _createBinAnalysisNode() {
         if (!this.ctx) return null
@@ -228,7 +237,12 @@ export class AudioEngine {
                 this.entityFlatness = Number(msg.entityFlatness) || 0
                 this.entityInharmonicity = Number(msg.entityInharmonicity) || 0
                 this.entityVolume = Number(msg.entityVolume) || 0
-                this.globalTransient = Number(msg.globalTransient) || 0
+                // Suppress worklet transient during fade ramping — the
+                // main-thread transient (globalTransient) is more reliable
+                // because it respects the fade-gate.
+                if (this._workletTransientSuppress <= 0) {
+                    this.globalTransient = Number(msg.globalTransient) || 0
+                }
                 this.entityAge = Number(msg.entityAge) || 0
                 this.streamId = Number(msg.streamId) || 0
             }
@@ -471,6 +485,13 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 1
         }
+        // Mark that a fade ramp just started so the next non-ramp frame
+        // will sync prev buffers to current data before computing flux.
+        this._fadeRampWasActive = true
+        // Suppress cold-start transient for several frames (50ms ramp + settling)
+        this._coldStartSuppressFrames = 6
+        // Suppress worklet transient while fade completes
+        this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
 
     /**
@@ -499,6 +520,8 @@ export class AudioEngine {
         this.globalTransient = 0
         this.spectralFluxAU = 0
         this.spectralFlux = 0
+        // Suppress worklet transient for a few frames while reconnecting
+        this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
 
     update() {
@@ -507,6 +530,9 @@ export class AudioEngine {
             this.ctx.resume()
         }
         this.ctxState = this.ctx?.state ?? 'none'
+
+        // Decrement worklet transient suppression counter
+        if (this._workletTransientSuppress > 0) this._workletTransientSuppress--
 
         this.analyser.getByteFrequencyData(this.frequencyData)
         this.analyser.getByteTimeDomainData(this.timeDomainData)
@@ -532,23 +558,45 @@ export class AudioEngine {
                 this.globalTransient = 0
                 // Skip per-bin rhythm brain arrays during ramp
                 this._rhythmBrainActive = false
+                this._fadeRampWasActive = true
             } else {
-                // Compute transient metric: spectral flux on the rhythm FFT
-                let fluxSum = 0
-                const len = this._rhythmFrequencyData.length
-                for (let i = 0; i < len; i++) {
-                    const diff = Math.abs(this._rhythmFrequencyData[i] - this._prevRhythmData[i])
-                    fluxSum += diff
+                // ── Transition: first non-ramp frame after a ramp period ──
+                // Sync prev to current so the flux delta is zero. This prevents
+                // the silence→signal boundary from registering as a transient,
+                // which is the root cause of cold-start and pause/restart spikes.
+                if (this._fadeRampWasActive) {
+                    this._fadeRampWasActive = false
+                    this._prevRhythmData.set(this._rhythmFrequencyData)
+                    // Also sync the high-FFT prev buffer (used by spectralFlux)
+                    this._prevFrequencyDataBins.set(this.frequencyData)
                 }
-                this._prevRhythmData.set(this._rhythmFrequencyData)
-                const transientNorm = fluxSum / (len * 255)
+
+                // ── Cold-start transient suppression ──
+                // Force transient to zero for a few frames after fade-in completes
+                // so the ring buffers in ComponentTracker have time to fill.
                 const alpha = Math.max(0, Math.min(1, this.featureSmoothingAlpha))
-                this._rhythmTransient += (transientNorm - this._rhythmTransient) * alpha
-                this.globalTransient = this._rhythmTransient
+                const rhythmLen = this._rhythmFrequencyData.length
+                if (this._coldStartSuppressFrames > 0) {
+                    this._coldStartSuppressFrames--
+                    this._rhythmTransient = 0
+                    this.globalTransient = 0
+                } else {
+                    // Compute transient metric: spectral flux on the rhythm FFT
+                    let fluxSum = 0
+                    for (let i = 0; i < rhythmLen; i++) {
+                        const diff = Math.abs(this._rhythmFrequencyData[i] - this._prevRhythmData[i])
+                        fluxSum += diff
+                    }
+                    this._prevRhythmData.set(this._rhythmFrequencyData)
+                    const transientNorm = fluxSum / (rhythmLen * 255)
+                    this._rhythmTransient += (transientNorm - this._rhythmTransient) * alpha
+                    this.globalTransient = this._rhythmTransient
+                }
+
                 // Rhythm energy = average magnitude of the 1024-FFT
                 let eSum = 0
-                for (let i = 0; i < len; i++) eSum += this._rhythmFrequencyData[i]
-                this._rhythmEnergy = eSum / (len * 255)
+                for (let i = 0; i < rhythmLen; i++) eSum += this._rhythmFrequencyData[i]
+                this._rhythmEnergy = eSum / (rhythmLen * 255)
 
                 // ── Rhythm brain per-bin arrays (computed from low FFT) ──
                 // These provide the data for binFlux, binPhaseDeviation, binAttackTime,
@@ -656,6 +704,10 @@ export class AudioEngine {
                 this.spectralFlux = 0
                 // Still keep prev data in sync
                 this._prevFrequencyDataBins.set(this.frequencyData)
+            } else if (this._coldStartSuppressFrames > 0) {
+                // Cold-start: suppress spectral flux for a few frames
+                this.spectralFluxAU = 0
+                this.spectralFlux = 0
             } else {
                 // When rhythm brain is active, spectralFlux is computed from the low FFT
                 // for faster transient response. Otherwise use the high FFT.

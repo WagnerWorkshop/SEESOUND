@@ -62,6 +62,7 @@ const _INPUT_RANGES = Object.freeze({
     componentFlux: [0, 1],
     componentOnset: [0, 1],
     componentCount: [0, 16],
+    componentBinEnergy: [0, 1],
 })
 
 const _legacyInputAliases = [
@@ -116,6 +117,7 @@ const _INPUT_MODES = {
     componentFlux: ['particle', 'cloud', 'tracing', 'lines'],
     componentOnset: ['particle', 'cloud', 'tracing', 'lines'],
     componentCount: ['particle', 'cloud', 'tracing', 'lines'],
+    componentBinEnergy: ['particle', 'cloud', 'tracing', 'lines'],
 }
 
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({

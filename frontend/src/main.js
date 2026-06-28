@@ -410,41 +410,84 @@ cameraController = new CameraController({
 cameraController.bindEvents()
 syncOrbitFromCamera()
 
+// ── Camera rule state (persistent across frames for smoothing) ──────────
+let _cameraRuleTarget = { x: null, y: null, z: null, zoom: null, targetX: null, targetY: null, targetZ: null, angleOfView: null }
 function applyRuleCameraOutput(output) {
-    if (!output) return
+    if (!output) {
+        // Clear targets when no camera rules are active
+        _cameraRuleTarget = { x: null, y: null, z: null, zoom: null, targetX: null, targetY: null, targetZ: null, angleOfView: null }
+        return
+    }
+    // Store target values (clamped where appropriate)
+    if (Number.isFinite(output.x)) _cameraRuleTarget.x = output.x
+    else _cameraRuleTarget.x = null
+    if (Number.isFinite(output.y)) _cameraRuleTarget.y = output.y
+    else _cameraRuleTarget.y = null
+    if (Number.isFinite(output.z)) _cameraRuleTarget.z = output.z
+    else _cameraRuleTarget.z = null
+    if (Number.isFinite(output.zoom)) _cameraRuleTarget.zoom = Math.max(0.05, Math.min(64, output.zoom))
+    else _cameraRuleTarget.zoom = null
+    if (Number.isFinite(output.targetX)) _cameraRuleTarget.targetX = output.targetX
+    else _cameraRuleTarget.targetX = null
+    if (Number.isFinite(output.targetY)) _cameraRuleTarget.targetY = output.targetY
+    else _cameraRuleTarget.targetY = null
+    if (Number.isFinite(output.targetZ)) _cameraRuleTarget.targetZ = output.targetZ
+    else _cameraRuleTarget.targetZ = null
+    if (Number.isFinite(output.angleOfView)) _cameraRuleTarget.angleOfView = Math.max(10, Math.min(160, output.angleOfView))
+    else _cameraRuleTarget.angleOfView = null
+}
+
+/** Apply instant camera movement toward rule target — called each frame */
+function tickCameraRules() {
+    const t = _cameraRuleTarget
+    const hasTarget = t.x !== null || t.y !== null || t.z !== null ||
+        t.targetX !== null || t.targetY !== null || t.targetZ !== null ||
+        t.zoom !== null || t.angleOfView !== null
+    if (!hasTarget) return
+
     let posChanged = false
-    if (Number.isFinite(output.x)) {
-        camera.position.x = output.x
+    const EPS = 0.001
+
+    // Instant position assignment (no lerp — reactive to rule output)
+    if (t.x !== null && Math.abs(camera.position.x - t.x) > EPS) {
+        camera.position.x = t.x
         posChanged = true
     }
-    if (Number.isFinite(output.y)) {
-        camera.position.y = output.y
+    if (t.y !== null && Math.abs(camera.position.y - t.y) > EPS) {
+        camera.position.y = t.y
         posChanged = true
     }
-    if (Number.isFinite(output.z)) {
-        camera.position.z = output.z
+    if (t.z !== null && Math.abs(camera.position.z - t.z) > EPS) {
+        camera.position.z = t.z
         posChanged = true
     }
-    // Apply target (look-at point) from camera rules
-    if (Number.isFinite(output.targetX)) {
-        orbitTarget.x = output.targetX
+    // Instant orbit target
+    if (t.targetX !== null && Math.abs(orbitTarget.x - t.targetX) > EPS) {
+        orbitTarget.x = t.targetX
         posChanged = true
     }
-    if (Number.isFinite(output.targetY)) {
-        orbitTarget.y = output.targetY
+    if (t.targetY !== null && Math.abs(orbitTarget.y - t.targetY) > EPS) {
+        orbitTarget.y = t.targetY
         posChanged = true
     }
-    if (Number.isFinite(output.targetZ)) {
-        orbitTarget.z = output.targetZ
+    if (t.targetZ !== null && Math.abs(orbitTarget.z - t.targetZ) > EPS) {
+        orbitTarget.z = t.targetZ
         posChanged = true
     }
+
     if (posChanged) {
         camera.lookAt(orbitTarget)
         syncOrbitFromCamera()
     }
-    if (Number.isFinite(output.zoom)) {
-        camera.zoom = Math.max(0.05, Math.min(64, output.zoom))
+    // Zoom and FOV are applied instantly
+    if (t.zoom !== null && Math.abs(camera.zoom - t.zoom) > EPS) {
+        camera.zoom = t.zoom
         camera.updateProjectionMatrix()
+    }
+    const aov = t.angleOfView
+    if (aov !== null && camera.isPerspectiveCamera && Math.abs(camera.fov - aov) > 0.5) {
+        cameraPerspective.fov = aov
+        cameraPerspective.updateProjectionMatrix()
     }
 }
 
@@ -918,6 +961,7 @@ function animate() {
     // On release, the camera snaps back to rule-driven position next frame.
     if (!pointerState.active) {
         applyRuleCameraOutput(ps.getCameraOutput())
+        tickCameraRules()
     }
 
     // Sync live camera state for View menu display every frame
