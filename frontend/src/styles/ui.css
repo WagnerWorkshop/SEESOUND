@@ -92,7 +92,7 @@
     --gap-l: 13.5px;
     --border-soft: 1px solid var(--color-border-soft);
     --border-default: 1px solid var(--color-border);
-    --border-strong: 1px solid var(--color-border-strong);
+    --border-strong: 3px solid var(--brand-5);
     --border-bright: 1px solid var(--brand-5);
     --box-shadow: 0 -1px 3px hsla(0, 0%, 100%, 0.1) inset;
     --box-shadow-glow: 0 0 10px var(--brand-3);
@@ -725,7 +725,7 @@ input[type=number]::-webkit-inner-spin-button {
     border: var(--border-bright);
     corner-shape: squircle;
     border-radius: var(--radius-m);
-    background: none;
+    background: var(--gradient);
     box-shadow: none;
     padding: var(--padding-s);
     display: flex;
@@ -736,7 +736,7 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 .cp-rule-card {
-    background: var(--gradient);
+    border: var(--border-default);
 }
 
 .cp-rule-card.has-active-parameter-hint {
@@ -2246,7 +2246,7 @@ input[type=number]::-webkit-inner-spin-button {
     border-radius: var(--radius-s);
     corner-shape: squircle;
     background: var(--gradient);
-    border: var(--border-soft);
+    border: var(--border-bright);
 }
 
 .cp-styles-definition-row {
@@ -2286,45 +2286,81 @@ input[type=number]::-webkit-inner-spin-button {
     min-width: 120px;
 }
 
-.cp-rules-popup {
-    display: none;
-    flex-direction: column;
-}
-
-.cp-rules-popup.is-open {
-    display: flex;
-}
-
-.cp-rules-popup .cp-rules-body {
+.cp-rules-wrapper {
     display: flex;
     flex-direction: column;
     gap: var(--gap-m);
 }
 
-.cp-rules-popup.is-display-none {
-    display: none !important;
+/* ── Layer rules body (inline expand/contract) ── */
+.cp-layer-expand-btn {
+    background: none;
+    box-shadow: none;
 }
 
-.cp-menu-pane[data-menu-id="rules"]:not(.is-active) .cp-rules-popup {
-    display: none !important;
+.cp-layer-rules-body {
+    display: none;
+    flex-direction: column;
+    gap: var(--gap-m);
+    width: 100%;
+    padding: var(--padding-s) 0 0 0;
 }
 
-.cp-styles-add-layer-row {
+.cp-layer-rules-body.is-expanded {
     display: flex;
-    justify-content: center;
-    padding: var(--padding-s) 0;
+}
+
+.cp-layer-rules-meta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-s);
+}
+
+/* ── Layer row when expanded ── */
+.cp-styles-layer-row {
+    flex-wrap: wrap;
+}
+
+.cp-styles-layer-row.is-expanded {
+    border-color: var(--color-accent);
+}
+
+/* ── Special layers (background / camera) ── */
+.cp-styles-layer-row.is-special {
+    opacity: 0.85;
+    background: var(--gradient);
+    padding-bottom: 0;
+    padding-top: 0;
+}
+
+/* ── Inline name input ── */
+.cp-styles-layer-name-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    font-size: var(--fs-body);
+    padding: 2px 4px;
+    border-radius: var(--radius-s);
+    outline: none;
+}
+
+.cp-styles-layer-name-input:focus {
+    background: var(--color-bg);
+    border: var(--border-soft);
+}
+
+.cp-styles-layer-name-input.is-special {
+    pointer-events: none;
+    opacity: 0.85;
 }
 
 .cp-rules-body {
     display: flex;
     flex-direction: column;
     gap: var(--gap-m);
-}
-
-.cp-rules-popup-meta {
-    display: flex;
-    flex-direction: column;
-    gap: var(--gap-s);
 }
 
 /* ── Add Layer button row ── */
@@ -2345,33 +2381,7 @@ input[type=number]::-webkit-inner-spin-button {
     margin-bottom: var(--gap-m);
 }
 
-/* ── Global section (Background / Camera owners) ── */
-.cp-styles-global-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--gap-xs);
-    margin-bottom: var(--gap-s);
-}
-
-.cp-styles-global-row {
-    cursor: pointer;
-    justify-content: center;
-    font-weight: 600;
-    opacity: 0.8;
-    transition: opacity 0.15s;
-    background: var(--gradient);
-    border: var(--border-soft);
-    border-radius: var(--radius-s);
-    corner-shape: squircle;
-    padding: var(--padding-s);
-    display: flex;
-    align-items: center;
-    gap: var(--gap-xs);
-}
-
-.cp-styles-global-row:hover {
-    opacity: 1;
-}
+/* ── Global section removed — bg/camera now render as uniform rows in the layer list ── */
 
 .cp-styles-popup-header {
     display: grid;
@@ -2557,7 +2567,7 @@ input[type=number]::-webkit-inner-spin-button {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: 300;
 }
 
 .cp-layer-creation-panel {

@@ -15,36 +15,19 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     const panel = el('div', 'cp-menu-pane-inner')
     const wrapper = el('div', 'cp-rules-wrapper')
 
-    // Naked layer list — no cp-section wrapper
+    // Layer list — each row can expand inline to show its rules
     const layerList = el('div', 'cp-styles-layer-list')
 
-    // Inline rules popup — appears when a layer is selected
-    const popup = el('section', 'cp-section cp-rules-popup')
-    const popupBody = el('div', 'cp-rules-body')
-    const popupMeta = el('div', 'cp-rules-popup-meta')
-    popupBody.append(popupMeta, wrapper)
-    popup.appendChild(popupBody)
-
-    panel.append(layerList, popup)
+    // Layer list comes first, then the rules wrapper (moved inline when expanded)
+    panel.append(layerList, wrapper)
 
     // ── Layer list footer with layer actions ──
     const layerListFooter = el('div', 'cp-styles-layer-list-footer')
-    const addLayerBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: '+ Layer' })
-    applyButtonIcon(addLayerBtn, BUTTON_ICON_MAP.add, '+ Layer')
+    const addLayerBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: 'Layer' })
+    applyButtonIcon(addLayerBtn, BUTTON_ICON_MAP.add, 'Layer')
     addLayerBtn.addEventListener('click', () => openLayerCreationModal())
     layerListFooter.appendChild(addLayerBtn)
     panel.append(layerListFooter)
-
-    // ── Global section owners (background / camera) ──
-    const globalSection = el('div', 'cp-styles-global-section')
-    const bgRow = el('button', 'cp-styles-layer-row cp-styles-global-row', { type: 'button' })
-    bgRow.textContent = UI_TEXT.rules?.backgroundTitle || 'Background'
-    bgRow.addEventListener('click', () => openPopupForOwner({ type: 'background' }))
-    const camRow = el('button', 'cp-styles-layer-row cp-styles-global-row', { type: 'button' })
-    camRow.textContent = UI_TEXT.rules?.cameraTitle || 'Camera'
-    camRow.addEventListener('click', () => openPopupForOwner({ type: 'camera' }))
-    globalSection.append(bgRow, camRow)
-    panel.append(globalSection)
 
     // ── Available audio track IDs ─────────────────────────────────────────
     // Layers filter which audio stem they react to.
@@ -256,301 +239,384 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         setRuleLayers(nextEntities)
     }
 
-    function openPopupForOwner(owner) {
-        activeOwner = owner
-        popupOpen = true
-        popup.classList.remove('is-display-none')
-        popup.classList.add('is-open')
-        renderPopupMeta()
-        updateOwnerSectionVisibility()
-        applyRowsFromRuleBlocks(getActiveRules())
+    function toggleOwnerExpanded(owner) {
+        const layerId = owner.type === 'background' ? '__background__'
+            : owner.type === 'camera' ? '__camera__'
+                : owner.id
+        const targetRow = document.querySelector(`.cp-styles-layer-row[data-layer-id="${CSS.escape(layerId)}"]`)
+        if (!targetRow) return
+        const alreadyExpanded = targetRow.classList.contains('is-expanded')
+        if (alreadyExpanded) {
+            // Collapse
+            targetRow.classList.remove('is-expanded')
+            const body = targetRow.querySelector('.cp-layer-rules-body')
+            if (body) body.classList.remove('is-expanded')
+            const editBtn = targetRow.querySelector('.cp-layer-expand-btn')
+            if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+            popupOpen = false
+            return
+        }
+        openActiveRulesForOwner(owner)
     }
 
-    function closePopup() {
+    function openActiveRulesForOwner(owner) {
+        // Collapse all previously expanded rows
+        document.querySelectorAll('.cp-styles-layer-row.is-expanded').forEach((r) => {
+            r.classList.remove('is-expanded')
+            const body = r.querySelector('.cp-layer-rules-body')
+            if (body) body.classList.remove('is-expanded')
+            const editBtn = r.querySelector('.cp-layer-expand-btn')
+            if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+        })
+        // Update active owner and re-apply rules
+        activeOwner = owner
+        popupOpen = true
+        renderInlineMeta()
+        updateOwnerSectionVisibility()
+        applyRowsFromRuleBlocks(getActiveRules())
+        // Expand the active row's rules body
+        const layerId = owner.type === 'background' ? '__background__'
+            : owner.type === 'camera' ? '__camera__'
+                : owner.id
+        const targetRow = document.querySelector(`.cp-styles-layer-row[data-layer-id="${CSS.escape(layerId)}"]`)
+        if (!targetRow) return
+        targetRow.classList.add('is-expanded')
+        const targetBody = targetRow.querySelector(`.cp-layer-rules-body`)
+        if (targetBody) {
+            targetBody.classList.add('is-expanded')
+            // Move wrapper into the expanded body
+            if (wrapper.parentElement !== targetBody) {
+                targetBody.appendChild(wrapper)
+            }
+        }
+        const editBtn = targetRow.querySelector('.cp-layer-expand-btn')
+        if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.close, UI_TEXT.rules?.closeLayer || 'Close')
+    }
+
+    function closeActiveRules() {
         popupOpen = false
-        popup.classList.remove('is-open')
-        popup.classList.add('is-display-none')
+        document.querySelectorAll('.cp-styles-layer-row.is-expanded').forEach((r) => {
+            r.classList.remove('is-expanded')
+            const body = r.querySelector('.cp-layer-rules-body')
+            if (body) body.classList.remove('is-expanded')
+            const editBtn = r.querySelector('.cp-layer-expand-btn')
+            if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+        })
+    }
+
+    function getLayerDisplayName(layer) {
+        return layer.name || 'Layer'
     }
 
     function renderLayerList() {
-        const layers = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        // Build synthetic entries for background and camera from globals
+        const globals = getRuleGlobals()
+        const specialEntries = [
+            { id: '__background__', name: UI_TEXT.rules?.backgroundTitle || 'Background', layerShapeType: 'background', enabled: true, isSpecial: true, audioTrackId: 'full', rules: globals.background },
+            { id: '__camera__', name: UI_TEXT.rules?.cameraTitle || 'Camera', layerShapeType: 'camera', enabled: true, isSpecial: true, audioTrackId: 'full', rules: globals.camera },
+        ]
+        const regularLayers = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        const allEntries = [...specialEntries, ...regularLayers]
         layerList.innerHTML = ''
-        layers.forEach((layer, index) => {
-            const row = el('div', 'cp-styles-layer-row')
-            row.draggable = true
-            row.dataset.layerId = layer.id
-            if (layer.enabled === false) row.classList.add('is-disabled')
+        // Detach wrapper from DOM before rebuilding to avoid flicker
+        wrapper.remove()
+        allEntries.forEach((entry, index) => {
+            const isSpecial = !!entry.isSpecial
+            const actualIndex = isSpecial ? -1 : regularLayers.indexOf(entry)
+            const layerId = entry.id
+            const layerName = getLayerDisplayName(entry)
 
-            // Enable/disable toggle (checkbox styled as cp-input-toggle)
+            const row = el('div', 'cp-styles-layer-row')
+            row.dataset.layerId = layerId
+            if (isSpecial) row.classList.add('is-special')
+            if (entry.enabled === false) row.classList.add('is-disabled')
+
+            // Check if this row should be expanded
+            const isActive = (activeOwner.type === 'layer' && !isSpecial && activeOwner.id === entry.id)
+                || (isSpecial && activeOwner.type === (entry.layerShapeType === 'background' ? 'background' : 'camera'))
+            if (isActive && popupOpen) row.classList.add('is-expanded')
+
+            // Enable/disable toggle
             const toggleCheck = el('input', 'cp-input-toggle', {
                 type: 'checkbox',
-                checked: layer.enabled !== false ? 'checked' : undefined,
-                title: layer.enabled === false ? 'Enable element' : 'Disable element',
+                checked: entry.enabled !== false ? 'checked' : undefined,
+                title: entry.enabled === false ? 'Enable' : 'Disable',
             })
-            toggleCheck.checked = layer.enabled !== false
+            toggleCheck.checked = entry.enabled !== false
             toggleCheck.addEventListener('change', (e) => {
                 e.stopPropagation()
-                const nextEnabled = toggleCheck.checked
-                const nextEntities = getRuleLayers().map((entry) =>
-                    entry.id === layer.id ? { ...entry, enabled: nextEnabled } : entry
-                )
-                setRuleLayers(nextEntities)
-                renderLayerList()
+                if (!isSpecial) {
+                    const nextEnabled = toggleCheck.checked
+                    setRuleLayers(getRuleLayers().map((l) =>
+                        l.id === entry.id ? { ...l, enabled: nextEnabled } : l
+                    ))
+                }
+                // For special entries, toggle is cosmetic only (always enabled)
             })
 
-            // Badge: layer type + shape type
+            // Badge — hidden for special layers
             const typeBadge = el('span', 'cp-styles-layer-badge')
-            const isModifier = layer.layerType === 'modifier'
-            // Modifier badge is distinct
-            if (isModifier) {
-                typeBadge.classList.add('is-modifier')
-                typeBadge.textContent = 'mod'
-            } else {
-                let badgeText = layer.layerShapeType || 'particle'
-                if (layer.layerShapeType === 'cloud' && layer.spacingMode === 'network') {
-                    badgeText = 'cloud·net'
-                } else if (layer.layerShapeType === 'cloud') {
-                    badgeText = `cloud·${layer.cloudShape || 'cyl'}`
-                }
-                typeBadge.textContent = badgeText
+            let badgeText = entry.layerShapeType || 'particle'
+            if (entry.layerShapeType === 'cloud' && entry.spacingMode === 'network') {
+                badgeText = 'cloud·net'
+            } else if (entry.layerShapeType === 'cloud') {
+                badgeText = `cloud·${entry.cloudShape || 'cyl'}`
+            } else if (entry.layerShapeType === 'modifier' || entry.layerType === 'modifier') {
+                badgeText = 'mod'
             }
+            typeBadge.textContent = badgeText
+            if (isSpecial) typeBadge.style.display = 'none'
 
-            const nameBtn = el('button', 'cp-btn cp-styles-layer-name', { text: layer.name || `Layer ${index + 1}` })
-            const editBtn = el('button', 'cp-btn', { type: 'button' })
-            applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
-
-            // Move Up / Move Down buttons
+            // Move Up / Down — hidden for special
             const moveUpBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
-                type: 'button',
-                title: 'Move up',
-                text: '▲',
-                disabled: index === 0 ? 'disabled' : undefined,
+                type: 'button', title: 'Move up', text: '▲',
+                disabled: isSpecial || actualIndex === 0 ? 'disabled' : undefined,
             })
             const moveDownBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
-                type: 'button',
-                title: 'Move down',
-                text: '▼',
-                disabled: index >= layers.length - 1 ? 'disabled' : undefined,
+                type: 'button', title: 'Move down', text: '▼',
+                disabled: isSpecial || actualIndex >= regularLayers.length - 1 ? 'disabled' : undefined,
+            })
+            if (isSpecial) { moveUpBtn.style.display = 'none'; moveDownBtn.style.display = 'none' }
+
+            // Name — input for regular layers, plain readonly for special
+            const ownerType = isSpecial ? (entry.layerShapeType === 'background' ? 'background' : 'camera') : 'layer'
+            const ownerRef = isSpecial ? { type: ownerType } : { type: 'layer', id: entry.id }
+            const nameInput = el('input', 'cp-styles-layer-name-input', {
+                type: 'text',
+                value: layerName,
+                readonly: isSpecial ? 'readonly' : undefined,
+            })
+            if (isSpecial) nameInput.classList.add('is-special')
+            if (!isSpecial) {
+                nameInput.addEventListener('blur', () => {
+                    const val = nameInput.value.trim()
+                    if (val && val !== entry.name) {
+                        setRuleLayers(getRuleLayers().map((l) =>
+                            l.id === entry.id ? { ...l, name: val } : l
+                        ))
+                    } else {
+                        nameInput.value = entry.name || ''
+                    }
+                })
+                nameInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') nameInput.blur()
+                    if (e.key === 'Escape') { nameInput.value = entry.name || ''; nameInput.blur() }
+                })
+                // Stop row click from interfering with input focus
+                nameInput.addEventListener('mousedown', (e) => e.stopPropagation())
+            }
+
+            // Edit/expand button — toggles between edit and close icons
+            const expandBtn = el('button', 'cp-btn cp-layer-expand-btn', { type: 'button' })
+            const isExpanded = row.classList.contains('is-expanded')
+            if (isExpanded) {
+                applyIconOnlyButton(expandBtn, BUTTON_ICON_MAP.close, UI_TEXT.rules?.closeLayer || 'Close')
+            } else {
+                applyIconOnlyButton(expandBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+            }
+            expandBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                toggleOwnerExpanded(ownerRef)
             })
 
+            // Remove button — hidden for special
             const removeBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button' })
             applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, UI_TEXT.rules?.removeLayer || 'Remove')
-            nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'layer', id: layer.id }))
-            editBtn.addEventListener('click', () => openPopupForOwner({ type: 'layer', id: layer.id }))
+            if (isSpecial) removeBtn.style.display = 'none'
 
-            // Move up: swap order with previous
-            moveUpBtn.addEventListener('click', (e) => {
-                e.stopPropagation()
-                if (index === 0) return
-                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
-                if (fromIndex < 1) return
-                const temp = ordered[fromIndex]
-                ordered[fromIndex] = ordered[fromIndex - 1]
-                ordered[fromIndex - 1] = temp
-                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleLayers(normalized)
-                renderLayerList()
-            })
-
-            // Move down: swap order with next
-            moveDownBtn.addEventListener('click', (e) => {
-                e.stopPropagation()
-                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
-                if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
-                const temp = ordered[fromIndex]
-                ordered[fromIndex] = ordered[fromIndex + 1]
-                ordered[fromIndex + 1] = temp
-                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleLayers(normalized)
-                renderLayerList()
-            })
-
-            removeBtn.addEventListener('click', () => {
-                const next = getRuleLayers().filter((entry) => entry.id !== layer.id)
-                setRuleLayers(next)
-                if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
-                    activeOwner = { type: 'layer', id: next[0]?.id || null }
-                    if (popupOpen) renderPopupMeta()
+            // ── Expandable rules body (nested INSIDE row) ──
+            const rulesBody = el('div', 'cp-layer-rules-body', { 'data-layer-id': layerId })
+            if (isActive && popupOpen) {
+                rulesBody.classList.add('is-expanded')
+                if (wrapper.parentElement !== rulesBody) {
+                    rulesBody.appendChild(wrapper)
                 }
-            })
+            }
 
-            row.addEventListener('dragstart', () => {
-                draggingLayerId = layer.id
-                row.classList.add('is-dragging')
-            })
-            row.addEventListener('dragend', () => {
-                draggingLayerId = null
-                row.classList.remove('is-dragging')
-            })
-            row.addEventListener('dragover', (event) => {
-                event.preventDefault()
-            })
-            row.addEventListener('drop', (event) => {
-                event.preventDefault()
-                if (!draggingLayerId || draggingLayerId === layer.id) return
-                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === draggingLayerId)
-                const toIndex = ordered.findIndex((entry) => entry.id === layer.id)
-                if (fromIndex < 0 || toIndex < 0) return
-                const moved = ordered.splice(fromIndex, 1)[0]
-                ordered.splice(toIndex, 0, moved)
-                const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleLayers(normalized)
-                renderLayerList()
-            })
-
-            row.append(toggleCheck, typeBadge, moveUpBtn, moveDownBtn, nameBtn, editBtn, removeBtn)
-
-            // ── Right-click context menu: Move Up / Move Down / Edit / Rename / Duplicate / Delete ──
-            row.addEventListener('contextmenu', (event) => {
-                event.preventDefault()
-                event.stopPropagation()
-
-                const existing = document.querySelector('.cp-layer-context-menu')
-                if (existing) existing.remove()
-
-                const menu = el('div', 'cp-layer-context-menu')
-                menu.style.position = 'fixed'
-                menu.style.left = `${event.clientX}px`
-                menu.style.top = `${event.clientY}px`
-
-                const moveUpItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Up' })
-                const moveDownItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Down' })
-                const editItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Edit' })
-                const renameItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Rename' })
-                const duplicateItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Duplicate' })
-                const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
-
-                if (index === 0) moveUpItem.disabled = true
-                if (index >= layers.length - 1) moveDownItem.disabled = true
-
-                moveUpItem.addEventListener('click', () => {
-                    menu.remove()
-                    if (index === 0) return
-                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                    const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
-                    if (fromIndex < 1) return
-                    const temp = ordered[fromIndex]
-                    ordered[fromIndex] = ordered[fromIndex - 1]
-                    ordered[fromIndex - 1] = temp
-                    const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                    setRuleLayers(normalized)
-                    renderLayerList()
-                })
-
-                moveDownItem.addEventListener('click', () => {
-                    menu.remove()
-                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                    const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
-                    if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
-                    const temp = ordered[fromIndex]
-                    ordered[fromIndex] = ordered[fromIndex + 1]
-                    ordered[fromIndex + 1] = temp
-                    const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                    setRuleLayers(normalized)
-                    renderLayerList()
-                })
-
-                editItem.addEventListener('click', () => {
-                    menu.remove()
-                    openPopupForOwner({ type: 'layer', id: layer.id })
-                })
-
-                renameItem.addEventListener('click', () => {
-                    menu.remove()
-                    const newName = prompt('Layer name:', layer.name || '')
-                    if (newName && newName.trim() && newName.trim() !== layer.name) {
-                        const nextEntities = getRuleLayers().map((entry) =>
-                            entry.id === layer.id ? { ...entry, name: newName.trim() } : entry
-                        )
-                        setRuleLayers(nextEntities)
-                        renderLayerList()
-                        if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
-                            popupTitle.textContent = newName.trim()
-                            renderPopupMeta()
-                        }
-                    }
-                })
-
-                duplicateItem.addEventListener('click', () => {
-                    menu.remove()
-                    const newId = `layer-${Date.now()}`
-                    const baseName = layer.name || 'Layer'
-                    const nextEntities = [...getRuleLayers(), {
-                        ...layer,
-                        id: newId,
-                        name: `${baseName} (copy)`,
-                        order: getRuleLayers().length,
-                        rules: layer.rules ? JSON.parse(JSON.stringify(layer.rules)) : [],
-                        definitions: layer.definitions ? JSON.parse(JSON.stringify(layer.definitions)) : [],
-                    }]
-                    setRuleLayers(nextEntities)
-                    renderLayerList()
-                })
-
-                deleteItem.addEventListener('click', () => {
-                    menu.remove()
-                    const next = getRuleLayers().filter((entry) => entry.id !== layer.id)
-                    setRuleLayers(next)
-                    if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
-                        activeOwner = { type: 'layer', id: next[0]?.id || null }
-                        if (popupOpen) renderPopupMeta()
-                    }
-                    renderLayerList()
-                })
-
-                menu.append(renameItem, duplicateItem, deleteItem)
-                document.body.appendChild(menu)
-
-                const closeMenu = (ev) => {
-                    if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) }
-                }
-                setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
-            })
-
+            row.append(toggleCheck, typeBadge, moveUpBtn, moveDownBtn, nameInput, expandBtn, removeBtn, rulesBody)
             layerList.appendChild(row)
+
+            // ── Row click → toggle expand/collapse ──
+            row.addEventListener('click', (e) => {
+                // Don't toggle if clicking on controls
+                const target = e.target
+                if (target.closest('.cp-input-toggle')) return
+                if (target.closest('.cp-styles-move-btn')) return
+                if (target.closest('.cp-btn-danger')) return
+                if (target.closest('.cp-layer-expand-btn')) return
+                if (target.closest('.cp-styles-layer-name-input')) return
+                toggleOwnerExpanded(ownerRef)
+            })
+
+            // ── Move up/down handlers (regular layers only) ──
+            if (!isSpecial) {
+                moveUpBtn.addEventListener('click', (e) => {
+                    e.stopPropagation()
+                    if (actualIndex === 0) return
+                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIdx = ordered.findIndex((l) => l.id === entry.id)
+                    if (fromIdx < 1) return
+                    const temp = ordered[fromIdx]; ordered[fromIdx] = ordered[fromIdx - 1]; ordered[fromIdx - 1] = temp
+                    setRuleLayers(ordered.map((l, i) => ({ ...l, order: i })))
+                    renderLayerList()
+                })
+                moveDownBtn.addEventListener('click', (e) => {
+                    e.stopPropagation()
+                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIdx = ordered.findIndex((l) => l.id === entry.id)
+                    if (fromIdx < 0 || fromIdx >= ordered.length - 1) return
+                    const temp = ordered[fromIdx]; ordered[fromIdx] = ordered[fromIdx + 1]; ordered[fromIdx + 1] = temp
+                    setRuleLayers(ordered.map((l, i) => ({ ...l, order: i })))
+                    renderLayerList()
+                })
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation()
+                    const next = getRuleLayers().filter((l) => l.id !== entry.id)
+                    setRuleLayers(next)
+                    if (activeOwner.type === 'layer' && activeOwner.id === entry.id) {
+                        activeOwner = { type: 'layer', id: next[0]?.id || null }
+                        if (popupOpen) renderInlineMeta()
+                    }
+                    renderLayerList()
+                })
+                // Drag events for reordering
+                row.draggable = true
+                row.addEventListener('dragstart', () => {
+                    draggingLayerId = entry.id; row.classList.add('is-dragging')
+                })
+                row.addEventListener('dragend', () => {
+                    draggingLayerId = null; row.classList.remove('is-dragging')
+                })
+                row.addEventListener('dragover', (e) => e.preventDefault())
+                row.addEventListener('drop', (e) => {
+                    e.preventDefault()
+                    if (!draggingLayerId || draggingLayerId === entry.id) return
+                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIdx = ordered.findIndex((l) => l.id === draggingLayerId)
+                    const toIdx = ordered.findIndex((l) => l.id === entry.id)
+                    if (fromIdx < 0 || toIdx < 0) return
+                    const moved = ordered.splice(fromIdx, 1)[0]
+                    ordered.splice(toIdx, 0, moved)
+                    setRuleLayers(ordered.map((l, i) => ({ ...l, order: i })))
+                    renderLayerList()
+                })
+            }
+
+            // ── Right-click context menu (regular layers only) ──
+            if (!isSpecial) {
+                const layer = entry
+                const index = actualIndex
+                row.addEventListener('contextmenu', (event) => {
+                    event.preventDefault(); event.stopPropagation()
+                    const existing = document.querySelector('.cp-layer-context-menu')
+                    if (existing) existing.remove()
+                    const menu = el('div', 'cp-layer-context-menu')
+                    menu.style.position = 'fixed'; menu.style.left = `${event.clientX}px`; menu.style.top = `${event.clientY}px`
+                    const moveUpItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Up' })
+                    const moveDownItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Move Down' })
+                    const editItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Edit' })
+                    const renameItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Rename' })
+                    const duplicateItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'Duplicate' })
+                    const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
+                    if (index === 0) moveUpItem.disabled = true
+                    if (index >= regularLayers.length - 1) moveDownItem.disabled = true
+                    moveUpItem.addEventListener('click', () => {
+                        menu.remove()
+                        const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                        const fromIdx = ordered.findIndex((l) => l.id === layer.id)
+                        if (fromIdx < 1) return
+                        const temp = ordered[fromIdx]; ordered[fromIdx] = ordered[fromIdx - 1]; ordered[fromIdx - 1] = temp
+                        setRuleLayers(ordered.map((l, i) => ({ ...l, order: i })))
+                        renderLayerList()
+                    })
+                    moveDownItem.addEventListener('click', () => {
+                        menu.remove()
+                        const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                        const fromIdx = ordered.findIndex((l) => l.id === layer.id)
+                        if (fromIdx < 0 || fromIdx >= ordered.length - 1) return
+                        const temp = ordered[fromIdx]; ordered[fromIdx] = ordered[fromIdx + 1]; ordered[fromIdx + 1] = temp
+                        setRuleLayers(ordered.map((l, i) => ({ ...l, order: i })))
+                        renderLayerList()
+                    })
+                    editItem.addEventListener('click', () => { menu.remove(); openActiveRulesForOwner({ type: 'layer', id: layer.id }) })
+                    renameItem.addEventListener('click', () => {
+                        menu.remove()
+                        const newName = prompt('Layer name:', layer.name || '')
+                        if (newName && newName.trim() && newName.trim() !== layer.name) {
+                            setRuleLayers(getRuleLayers().map((l) => l.id === layer.id ? { ...l, name: newName.trim() } : l))
+                            renderLayerList()
+                        }
+                    })
+                    duplicateItem.addEventListener('click', () => {
+                        menu.remove()
+                        const newId = `layer-${Date.now()}`
+                        setRuleLayers([...getRuleLayers(), { ...layer, id: newId, name: `${layer.name || 'Layer'} (copy)`, order: getRuleLayers().length, rules: JSON.parse(JSON.stringify(layer.rules || [])), definitions: JSON.parse(JSON.stringify(layer.definitions || [])) }])
+                        renderLayerList()
+                    })
+                    deleteItem.addEventListener('click', () => {
+                        menu.remove()
+                        const next = getRuleLayers().filter((l) => l.id !== layer.id)
+                        setRuleLayers(next)
+                        if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
+                            activeOwner = { type: 'layer', id: next[0]?.id || null }
+                            if (popupOpen) renderInlineMeta()
+                        }
+                        renderLayerList()
+                    })
+                    menu.append(renameItem, duplicateItem, deleteItem)
+                    document.body.appendChild(menu)
+                    const closeMenu = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) } }
+                    setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
+                })
+            }
         })
     }
 
-    function renderPopupMeta() {
-        popupMeta.innerHTML = ''
+    function renderInlineMeta() {
+        // Remove any existing inline meta rendered inside expanded bodies
+        document.querySelectorAll('.cp-layer-rules-meta').forEach((el) => el.remove())
         if (!popupOpen) return
 
-const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        const isBg = activeOwner.type === 'background'
+        const isCam = activeOwner.type === 'camera'
+        const metaBody = el('div', 'cp-layer-rules-meta')
+
+        if (isBg || isCam) {
+            // Render a settings section for the global owner
+            const titleRow = el('div', 'cp-section-title-row')
+            const titleEl = el('h3', 'cp-section-title', { text: isBg ? 'Background Rules' : 'Camera Rules' })
+            const typeBadge = el('span', 'cp-styles-layer-badge', { text: isBg ? 'background' : 'camera' })
+            titleRow.append(titleEl, typeBadge)
+            metaBody.appendChild(titleRow)
+        } else {
+            const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
             if (!layer) return
 
-        // Layer name as cp-section-title
-        const titleRow = el('div', 'cp-section-title-row')
-        const titleEl = el('h3', 'cp-section-title', { text: layer.name || 'Layer' })
-        const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShapeType || 'particle' })
-        titleRow.append(titleEl, typeBadge)
-        popupMeta.appendChild(titleRow)
+            const titleRow = el('div', 'cp-section-title-row')
+            const titleEl = el('h3', 'cp-section-title', { text: getLayerDisplayName(layer) })
+            const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShapeType || 'particle' })
+            titleRow.append(titleEl, typeBadge)
+            metaBody.appendChild(titleRow)
 
-        // ── Audio Track Selector ──────────────────────────────────────────
-        // Replaces the old expression-based definitions filter.
-        const trackSection = el('div', 'cp-styles-definitions')
-        const trackRow = el('label', 'cp-setting-row')
-        const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
-        const trackSelect = el('select', 'cp-input-select')
-        const currentTrack = layer.audioTrackId || 'full'
-        const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
-            value: id,
-            label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
-        }))
-        trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
-        trackSelect.addEventListener('change', () => {
-            const nextTrack = trackSelect.value
-            const nextEntities = getRuleLayers().map((entry) =>
-                entry.id === layer.id ? { ...entry, audioTrackId: nextTrack } : entry
-            )
-            setRuleLayers(nextEntities)
-        })
-        trackRow.append(trackLabel, trackSelect)
-        const trackHint = el('div', 'cp-styles-layer-info', { text: 'Select which audio stem this layer reacts to. Additional stems will appear when the stem splitter is active.' })
-        trackSection.append(trackRow, trackHint)
-        popupMeta.appendChild(trackSection)
+            // Audio Track Selector
+            const trackRow = el('label', 'cp-setting-row')
+            const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
+            const trackSelect = el('select', 'cp-input-select')
+            const currentTrack = layer.audioTrackId || 'full'
+            const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
+                value: id,
+                label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
+            }))
+            trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
+            trackSelect.addEventListener('change', () => {
+                const nextTrack = trackSelect.value
+                setRuleLayers(getRuleLayers().map((entry) =>
+                    entry.id === layer.id ? { ...entry, audioTrackId: nextTrack } : entry
+                ))
+            })
+            trackRow.append(trackLabel, trackSelect)
+            metaBody.appendChild(trackRow)
+        }
     }
 
     function updateOwnerSectionVisibility() {
@@ -596,8 +662,6 @@ const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
             { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
             { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
             { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
-            { value: 'camera', label: UI_TEXT.rules?.shapeCamera || 'Camera' },
-            { value: 'background', label: UI_TEXT.rules?.shapeBackground || 'Background' },
         ], 'particle'))
         typeRow.append(typeLabel, typeSelect)
 
@@ -645,20 +709,11 @@ const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
         applyButtonIcon(createBtn, BUTTON_ICON_MAP.add, 'Create')
         createBtn.addEventListener('click', () => {
             const rawName = String(nameInput.value || '').trim()
-            const nextName = rawName || `Element ${getRuleLayers().length + 1}`
+            const nextName = rawName || `Layer ${getRuleLayers().length + 1}`
             const nextType = typeSelect.value || 'particle'
             const nextLayerType = layerTypeSelect.value || 'generator'
             const nextSpacing = spacingSelect.value || 'coordinates'
             const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
-
-            // Only one camera and one background layer allowed
-            if (nextType === 'camera' || nextType === 'background') {
-                const alreadyExists = getRuleLayers().some((e) => e.layerShapeType === nextType)
-                if (alreadyExists) {
-                    alert(`Only one ${nextType} layer is allowed.`)
-                    return
-                }
-            }
 
             const nextEntities = [...getRuleLayers(), {
                 id: `layer-${Date.now()}`,
@@ -673,7 +728,7 @@ const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
                 rules: [],
             }]
             setRuleLayers(nextEntities)
-                        renderLayerList()
+            renderLayerList()
             backdrop.remove()
         })
         actions.append(cancelBtn, createBtn)
@@ -1964,7 +2019,7 @@ const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
     }
 
     const applyRowsFromParams = () => {
-            renderLayerList()
+        renderLayerList()
         ensureActiveOwner()
         updateOwnerSectionVisibility()
         const nextBlocks = getActiveRules()
@@ -1975,7 +2030,7 @@ const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
         }
         pendingLocalRuleBlocksSignature = null
         applyRowsFromRuleBlocks(nextBlocks)
-        if (popupOpen) renderPopupMeta()
+        if (popupOpen) renderInlineMeta()
     }
 
     registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks'])
