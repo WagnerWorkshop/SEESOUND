@@ -15,7 +15,7 @@
 
 /**
  * Cloud-mode positioning sub-mode.
- * - `direct`: entity xyz positions assigned by user rules.
+ * - `direct`: layer xyz positions assigned by user rules.
  * - `network`: Force-Directed Graph positions entities organically.
  * @typedef {'direct'|'network'} CloudPositioningMode
  */
@@ -61,7 +61,6 @@
  * @property {boolean} worklet.needEnvelope - Per-bin envelope state.
  * @property {boolean} worklet.needAttackTime - Per-bin attack time.
  * @property {boolean} worklet.needPitchBrain - 16384-window pitch FFT.
- * @property {boolean} worklet.needTextureBrain - 4096-window texture analysis.
  * @property {boolean} worklet.needRhythmBrain - 1024-window transient detection.
  * @property {boolean} worklet.needTrackerBrain - Frame-to-frame object tracking.
  * @property {Object} engine - Flags for main-thread feature computation.
@@ -93,15 +92,15 @@
  * @property {number} inharmonicity - Localized inharmonicity (0-1).
  * @property {number} temporalGroupId - Transient-group identifier (0 if none).
  * @property {number} streamId - Persistent tracker ID across frames (0 if unassigned).
- * @property {number} entityAge - Frames since first detection.
+ * @property {number} objectAge - Frames since first detection.
  */
 
 /**
- * A compiled rule block with its entity metadata.
+ * A compiled rule block with its layer metadata.
  * @typedef {Object} RuleBlock
  * @property {string} id - Unique rule ID.
- * @property {string} [entityId] - Owning entity ID.
- * @property {string} [entityName] - Owning entity name.
+ * @property {string} [layerId] - Owning layer ID.
+ * @property {string} [layerName] - Owning layer name.
  * @property {string} target - Rule target context.
  * @property {string} [scope] - Particle scope.
  * @property {boolean} enabled - Whether the rule is active.
@@ -109,7 +108,7 @@
  * @property {number} order - Execution order index.
  * @property {Object} condition - Rule condition.
  * @property {Array<Object>} actions - Rule actions.
- * @property {string} [definitionExpression] - Entity definition filter expression.
+ * @property {string} [definitionExpression] - Layer definition filter expression.
  */
 
 /**

@@ -635,7 +635,7 @@ import { LayerManager } from './engine/LayerManager.js'
 
 const ps = new LayerManager(scene, { maxParticlesPerLayer: params.maxParticles ?? 262144 })
 ps.rebuild({
-    ruleEntities: params.ruleEntities ?? [],
+    ruleLayers: params.ruleLayers ?? [],
     ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
 })
 const _initialCompileState = ps.getRuleCompileState()
@@ -2061,10 +2061,10 @@ subscribe((_, key) => {
         const rhythm = Math.max(256, Math.min(4096, Math.round(Number(params.rhythmFftSize) || 1024)))
         ae.setFftSizes(freq, rhythm)
     }
-    if (key === 'ruleBlocks' || key === 'ruleEntities' || key === 'ruleGlobalBlocks') {
-        // Rebuild all layers from current entity definitions
+    if (key === 'ruleBlocks' || key === 'ruleLayers' || key === 'ruleGlobalBlocks') {
+        // Rebuild all layers from current layer definitions
         ps.rebuild({
-            ruleEntities: params.ruleEntities ?? [],
+            ruleLayers: params.ruleLayers ?? [],
             ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
         })
         const state = ps.getRuleCompileState()
@@ -2088,18 +2088,18 @@ window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))
 
-const startupEntityCount = Array.isArray(params.ruleEntities) ? params.ruleEntities.length : 0
-const startupTotalRules = (Array.isArray(params.ruleEntities) ? params.ruleEntities : []).reduce((sum, e) => sum + (Array.isArray(e?.rules) ? e.rules.length : 0), 0)
+const startupLayerCount = Array.isArray(params.ruleLayers) ? params.ruleLayers.length : 0
+const startupTotalRules = (Array.isArray(params.ruleLayers) ? params.ruleLayers : []).reduce((sum, e) => sum + (Array.isArray(e?.rules) ? e.rules.length : 0), 0)
 const startupCompile = ps.getRuleCompileState()
 const startupCompileStatus = startupCompile?.compileStatus ?? 'bootstrap-pending'
 console.info(
-    `[RuleEngine] schema=v${RULE_SCHEMA_VERSION} compile=${startupCompileStatus} entities=${startupEntityCount} rules=${startupTotalRules}`,
+    `[RuleEngine] schema=v${RULE_SCHEMA_VERSION} compile=${startupCompileStatus} layers=${startupLayerCount} rules=${startupTotalRules}`,
     {
         schemaVersion: RULE_SCHEMA_VERSION,
         compileStatus: startupCompileStatus,
         compileTimeMs: startupCompile?.compileTimeMs ?? 0,
         compileError: startupCompile?.compileError ?? null,
-        entities: startupEntityCount,
+        layers: startupLayerCount,
         rules: startupTotalRules,
         debug: RULE_DEBUG_FLAGS,
     }
@@ -2140,7 +2140,7 @@ if (headlessMode) {
     // Periodic compilation status (every 2s)
     setInterval(() => {
         const state = ps.getRuleCompileState()
-        const entities = Array.isArray(params.ruleEntities) ? params.ruleEntities : []
+        const entities = Array.isArray(params.ruleLayers) ? params.ruleLayers : []
         let spawned = 0, living = 0, lines = 0, bg = 0, cam = 0
         for (const e of entities) {
             if (!e || !Array.isArray(e.rules)) continue
@@ -2153,7 +2153,7 @@ if (headlessMode) {
                 else if (r.target === 'camera') cam++
             }
         }
-        const liveCount = Array.isArray(params.ruleEntities) ? params.ruleEntities.reduce((s, e) => s + (Array.isArray(e?.rules) ? e.rules.length : 0), 0) : 0
+        const liveCount = Array.isArray(params.ruleLayers) ? params.ruleLayers.reduce((s, e) => s + (Array.isArray(e?.rules) ? e.rules.length : 0), 0) : 0
         const visible = ps.getVisibleCount()
         console.log(`[RuleStatus] entities=${entities.length} totalRules=${liveCount} S=${spawned} L=${living} lines=${lines} bg=${bg} cam=${cam} | compiled=${state?.compileStatus || '?'} livingActive=${state?.livingRuleCount > 0 && visible > 0} visible=${visible}`)
     }, 3000)

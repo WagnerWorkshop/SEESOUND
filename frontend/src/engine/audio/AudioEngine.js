@@ -24,7 +24,6 @@ function defaultUsage() {
             needEnvelope: false,
             needAttackTime: false,
             needPitchBrain: false,
-            needTextureBrain: false,
             needRhythmBrain: false,
             needTrackerBrain: false,
             objectMode: 'particle',
@@ -82,7 +81,6 @@ export class AudioEngine {
             needEnvelope: false,
             needAttackTime: false,
             needPitchBrain: false,
-            needTextureBrain: false,
             // Rhythm brain always on for transient detection
             needRhythmBrain: true,
             needTrackerBrain: false,
@@ -163,16 +161,12 @@ export class AudioEngine {
         this.fundamentalHz = 0
         this.fundamentalPitch = 0
         this.fundamentalNote = 0
-        this.entityCentroid = 0
-        this.entityFlatness = 0
-        this.entityInharmonicity = 0
-        this.entityVolume = 0
         // Rhythm/transient metrics from the 1024-FFT
         this.globalTransient = 0
         this._rhythmTransient = 0
         this._rhythmEnergy = 0
 
-        this.entityAge = 0
+        this.objectAge = 0
         this.streamId = 0
         this.ctxState = 'none'
         this.monitorMuted = false
@@ -229,21 +223,17 @@ export class AudioEngine {
                 if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
                 return
             }
-            if (msg.type === 'entityMetrics') {
+            if (msg.type === 'objectMetrics') {
                 this.fundamentalHz = Number(msg.fundamentalHz) || 0
                 this.fundamentalPitch = Number(msg.fundamentalPitch) || 0
                 this.fundamentalNote = Number.isFinite(msg.fundamentalNote) ? Number(msg.fundamentalNote) : 0
-                this.entityCentroid = Number(msg.entityCentroid) || 0
-                this.entityFlatness = Number(msg.entityFlatness) || 0
-                this.entityInharmonicity = Number(msg.entityInharmonicity) || 0
-                this.entityVolume = Number(msg.entityVolume) || 0
                 // Suppress worklet transient during fade ramping — the
                 // main-thread transient (globalTransient) is more reliable
                 // because it respects the fade-gate.
                 if (this._workletTransientSuppress <= 0) {
                     this.globalTransient = Number(msg.globalTransient) || 0
                 }
-                this.entityAge = Number(msg.entityAge) || 0
+                this.objectAge = Number(msg.objectAge) || 0
                 this.streamId = Number(msg.streamId) || 0
             }
             if (msg.type === 'harmonicObjects') {
@@ -301,7 +291,6 @@ export class AudioEngine {
         this._workletConfig.needEnvelope = usage.worklet.needEnvelope
         this._workletConfig.needAttackTime = usage.worklet.needAttackTime
         this._workletConfig.needPitchBrain = usage.worklet.needPitchBrain
-        this._workletConfig.needTextureBrain = usage.worklet.needTextureBrain
         this._workletConfig.needRhythmBrain = true // always on for transient detection
         this._workletConfig.needTrackerBrain = usage.worklet.needTrackerBrain
         this._workletConfig.objectMode = usage.worklet.objectMode || 'particle'

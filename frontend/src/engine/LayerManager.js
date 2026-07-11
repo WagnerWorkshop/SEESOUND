@@ -2,7 +2,7 @@
  * SEESOUND — LayerManager.js
  * ═══════════════════════════════════════════════════════════════════════════
  * Manages multiple independent ParticleSystem instances, one per enabled
- * entity/layer. Each layer compiles and runs its own rules independently
+ * layer. Each layer compiles and runs its own rules independently
  * and renders its own particles into the shared Three.js scene.
  *
  * Exposes a compatible subset of the ParticleSystem API so main.js calling
@@ -14,7 +14,7 @@ import { ParticleSystem } from './ParticleSystem.js'
 
 /**
  * @typedef {import('../main').ParticleSystem} ParticleSystem
- * @typedef {import('./types').RuleEntity} RuleEntity
+ * @typedef {Object} RuleLayer
  */
 
 export class LayerManager {
@@ -27,11 +27,11 @@ export class LayerManager {
         this._scene = scene
         this._maxParticles = Math.max(1, Math.floor(opts.maxParticlesPerLayer ?? 262144))
 
-        /** @type {{ entity: object, ps: ParticleSystem }[]} */
+        /** @type {{ data: object, ps: ParticleSystem }[]} */
         this._layers = []
 
-        /** @type {string|null} Cache of last entity hash to avoid redundant rebuilds */
-        this._lastEntityHash = null
+        /** @type {string|null} Cache of last layers hash to avoid redundant rebuilds */
+        this._lastLayerHash = null
 
         // Background state — read from primary layer or fallback
         this._fallbackBackground = new THREE.Color(0, 0, 0)
@@ -57,60 +57,60 @@ export class LayerManager {
 
     /**
      * Rebuild all layers from the current param state.
-     * Called whenever ruleEntities or ruleGlobalBlocks changes.
+     * Called whenever ruleLayers or ruleGlobalBlocks changes.
      * @param {object} param0
-     * @param {object[]} [param0.ruleEntities]
+     * @param {object[]} [param0.ruleLayers]
      * @param {object} [param0.ruleGlobalBlocks]
      */
-    rebuild({ ruleEntities = [], ruleGlobalBlocks = { background: [], camera: [] } } = {}) {
+    rebuild({ ruleLayers = [], ruleGlobalBlocks = { background: [], camera: [] } } = {}) {
         // Build a hash to detect changes quickly
-        const hash = JSON.stringify({ entities: ruleEntities, globals: ruleGlobalBlocks })
-        if (hash === this._lastEntityHash) return
-        this._lastEntityHash = hash
+        const hash = JSON.stringify({ layers: ruleLayers, globals: ruleGlobalBlocks })
+        if (hash === this._lastLayerHash) return
+        this._lastLayerHash = hash
 
-        // Index existing layers by entity id/name for reuse — preserves particles
+        // Index existing layers by layer id/name for reuse — preserves particles
         const oldLayers = new Map()
         for (const layer of this._layers) {
-            const key = layer.entity?.id ?? layer.entity?.name ?? null
+            const key = layer.data?.id ?? layer.data?.name ?? null
             if (key !== null) oldLayers.set(key, layer)
         }
 
-        // Sort entities by order
-        const sorted = [...ruleEntities]
+        // Sort layers by order
+        const sorted = [...ruleLayers]
             .filter((e) => e && typeof e === 'object')
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
         const newLayers = []
         let primaryAssigned = false
 
-        for (const entity of sorted) {
-            const key = entity.id ?? entity.name ?? null
+        for (const layerObj of sorted) {
+            const key = layerObj.id ?? layerObj.name ?? null
             let layer = key !== null ? oldLayers.get(key) : null
             oldLayers.delete(key) // don't dispose, we keep it
 
             if (!layer) {
-                // New entity — create a fresh ParticleSystem
-                const isModifier = entity.layerType === 'modifier'
+                // New layer — create a fresh ParticleSystem
+                const isModifier = layerObj.layerType === 'modifier'
                 const ps = new ParticleSystem(this._scene, {
                     maxParticles: this._maxParticles,
                     isModifier,
                 })
                 this._scene.add(ps._mesh)
                 this._scene.add(ps._lineMesh)
-                layer = { entity, ps }
+                layer = { data: layerObj, ps }
             }
 
             // Recompile rules on the (existing or new) layer
-            const isDisabled = entity.enabled === false
-            const entityRules = {
-                ruleEntities: [entity],
+            const isDisabled = layerObj.enabled === false
+            const layerRules = {
+                ruleLayers: [layerObj],
                 ruleGlobalBlocks: (!isDisabled && !primaryAssigned)
                     ? (ruleGlobalBlocks || { background: [], camera: [] })
                     : { background: [], camera: [] },
             }
-            const compiled = layer.ps.onRulesChanged(entityRules)
-            // Update stored entity ref (rules may have changed on same entity)
-            layer.entity = entity
+            const compiled = layer.ps.onRulesChanged(layerRules)
+            // Update stored layer ref (rules may have changed on same layer)
+            layer.data = layerObj
 
             newLayers.push(layer)
 
@@ -134,7 +134,7 @@ export class LayerManager {
 
         if (this._layers.length === 0) {
             const ps = new ParticleSystem(this._scene, { maxParticles: this._maxParticles })
-            this._layers.push({ entity: {}, ps })
+            this._layers.push({ data: {}, ps })
         }
     }
 
@@ -142,12 +142,12 @@ export class LayerManager {
      * Compile background and camera rules from global blocks.
      */
     /**
-     * Compat alias — calls rebuild(). Accepts { ruleBlocks, ruleEntities, ruleGlobalBlocks }.
+     * Compat alias — calls rebuild(). Accepts { ruleBlocks, ruleLayers, ruleGlobalBlocks }.
      */
     onRulesChanged(rules) {
         if (rules && typeof rules === 'object') {
             this.rebuild({
-                ruleEntities: Array.isArray(rules.ruleEntities) ? rules.ruleEntities : [],
+                ruleLayers: Array.isArray(rules.ruleLayers) ? rules.ruleLayers : [],
                 ruleGlobalBlocks: rules.ruleGlobalBlocks || { background: [], camera: [] },
             })
         }
@@ -172,8 +172,8 @@ export class LayerManager {
 
         for (const pass of ['generator', 'modifier']) {
             for (const layer of this._layers) {
-                if (layer.entity?.enabled === false) continue
-                const isModifier = layer.entity?.layerType === 'modifier'
+                if (layer.data?.enabled === false) continue
+                const isModifier = layer.data?.layerType === 'modifier'
                 if (pass === 'generator' && isModifier) continue
                 if (pass === 'modifier' && !isModifier) continue
                 layer.ps.update(ae, params, canvasW, canvasH)
@@ -183,7 +183,7 @@ export class LayerManager {
 
         // Forward camera output from whichever layer has camera rules
         if (hasCamRules) {
-            const camLayer = this._layers.find((l) => l.entity?.enabled !== false && l.ps._compiledRules?.cameraRuleCount > 0)
+            const camLayer = this._layers.find((l) => l.data?.enabled !== false && l.ps._compiledRules?.cameraRuleCount > 0)
             if (camLayer) this._cameraOutput = camLayer.ps.getCameraOutput()
         } else {
             this._cameraOutput = {
@@ -199,7 +199,7 @@ export class LayerManager {
      * Get the background color from the primary (first enabled) layer.
      */
     getBackgroundColor() {
-        const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+        const primary = this._layers.find((l) => l.data?.enabled !== false)?.ps
         if (primary) return primary.getBackgroundColor()
         const first = this._layers[0]?.ps
         if (first) return first.getBackgroundColor()
@@ -237,7 +237,7 @@ export class LayerManager {
     getVisibleCount() {
         let total = 0
         for (const layer of this._layers) {
-            if (layer.entity?.enabled === false) continue
+            if (layer.data?.enabled === false) continue
             total += layer.ps.getVisibleCount()
         }
         return total
@@ -249,7 +249,7 @@ export class LayerManager {
     getLineVisibleCount() {
         let total = 0
         for (const layer of this._layers) {
-            if (layer.entity?.enabled === false) continue
+            if (layer.data?.enabled === false) continue
             total += layer.ps.getLineVisibleCount()
         }
         return total
@@ -259,7 +259,7 @@ export class LayerManager {
      * Get compiled state from the primary layer (for UI).
      */
     getRuleCompileState() {
-        const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+        const primary = this._layers.find((l) => l.data?.enabled !== false)?.ps
         if (primary) return primary.getRuleCompileState()
         return this._lastCompileState || { compileStatus: 'empty', spawnRuleCount: 0, livingRuleCount: 0 }
     }
@@ -287,7 +287,7 @@ export class LayerManager {
      */
     getVisibleBounds() {
         for (const layer of this._layers) {
-            if (layer.entity?.enabled === false) continue
+            if (layer.data?.enabled === false) continue
             const bounds = layer.ps.getVisibleBounds()
             if (!bounds.empty) return bounds
         }
@@ -307,7 +307,7 @@ export class LayerManager {
      * Number of enabled layers.
      */
     getLayerCount() {
-        return this._layers.filter((l) => l.entity?.enabled !== false).length
+        return this._layers.filter((l) => l.data?.enabled !== false).length
     }
 
     /**
@@ -323,8 +323,8 @@ export class LayerManager {
      */
     getPrimarySystem() {
         // Prefer generator layers over modifiers for direct access (cloud graph, position data)
-        const layer = this._layers.find((l) => l.entity?.enabled !== false && l.entity?.layerType !== 'modifier')
-            || this._layers.find((l) => l.entity?.enabled !== false)
+        const activeLayer = this._layers.find((l) => l.data?.enabled !== false && l.data?.layerType !== 'modifier')
+            || this._layers.find((l) => l.data?.enabled !== false)
         return layer ? layer.ps : null
     }
 

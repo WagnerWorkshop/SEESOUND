@@ -65,9 +65,9 @@ export class SeesoundEngine {
         this._scene = null
         this._camera = null
 
-        // Param subscription — recompile rules when entity/global rules change
+        // Param subscription — recompile rules when layer/global rules change
         this._unsubscribeParams = paramSubscribe((_, key) => {
-            if (key === 'ruleEntities' || key === 'ruleGlobalBlocks' || key === 'ruleEngineEnabled') {
+            if (key === 'ruleLayers' || key === 'ruleGlobalBlocks' || key === 'ruleEngineEnabled') {
                 console.log('[Engine] param changed:', key, '→ recompiling')
                 this._syncParticleRules()
             }
@@ -424,13 +424,13 @@ export class SeesoundEngine {
 
     _syncParticleRules() {
         if (!this._ps) return
-        // Derive engine mode from entity settings
+        // Derive engine mode from layer settings
         // Only consider enabled render entities (skip camera/background layers)
-        const entities = Array.isArray(params.ruleEntities) ? params.ruleEntities : []
-        const enabledEntities = entities.filter((e) => e?.enabled !== false)
-        const renderEntities = enabledEntities.filter((e) => e?.entityShapeType !== 'camera' && e?.entityShapeType !== 'background')
-        const hasCloud = renderEntities.some((e) => e?.entityShapeType === 'cloud')
-        const hasNetwork = renderEntities.some((e) => e?.spacingMode === 'network' && e?.entityShapeType === 'cloud')
+        const entities = Array.isArray(params.ruleLayers) ? params.ruleLayers : []
+        const enabledLayers = entities.filter((e) => e?.enabled !== false)
+        const renderLayers = enabledLayers.filter((e) => e?.layerShapeType !== 'camera' && e?.layerShapeType !== 'background')
+        const hasCloud = renderLayers.some((e) => e?.layerShapeType === 'cloud')
+        const hasNetwork = renderLayers.some((e) => e?.spacingMode === 'network' && e?.layerShapeType === 'cloud')
 
         const derivedMode = hasCloud ? 'cloud' : 'particle'
         const derivedPositioning = hasNetwork ? 'network' : 'direct'
@@ -461,12 +461,12 @@ export class SeesoundEngine {
         const graph = resolveDependencyGraph(rules, this._mode, { cloudNetwork: this._cloudPositioning === 'network' })
         const byTarget = this._buildRequiredInputsByTarget(rules)
         this._ae?.setRuleInputUsage(byTarget)
-        // Pass entity structure directly so LayerManager can separate per-layer.
-        // compileRules in RuleCompiler handles both { ruleBlocks } and { ruleEntities } formats.
-        const entityPayload = params.ruleEngineEnabled !== false
-            ? { ruleEntities: entities, ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] } }
-            : { ruleEntities: [], ruleGlobalBlocks: { background: [], camera: [] } }
-        const cr = this._ps.onRulesChanged(entityPayload)
+        // Pass layer structure directly so LayerManager can separate per-layer.
+        // compileRules in RuleCompiler handles both { ruleBlocks } and { ruleLayers } formats.
+        const layerPayload = params.ruleEngineEnabled !== false
+            ? { ruleLayers: entities, ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] } }
+            : { ruleLayers: [], ruleGlobalBlocks: { background: [], camera: [] } }
+        const cr = this._ps.onRulesChanged(layerPayload)
         if (cr) this._emit(EngineEvent.COMPILE_STATE, cr)
         this._emit(EngineEvent.GRAPH_UPDATED, { referencedInputs: [...graph.referencedInputs], mode: this._mode })
 
@@ -487,22 +487,22 @@ export class SeesoundEngine {
     _flattenRules(entities, globals) {
         const blocks = []
         const ordered = [...(entities ?? [])].sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
-        ordered.forEach((entity, ei) => {
-            if (!entity || typeof entity !== 'object') return
-            const entityRules = Array.isArray(entity.rules) ? entity.rules : []
-            if (entityRules.length > 0) {
-                console.log('[Engine] _flattenRules: entity=', entity.name, 'id=', entity.id, 'rulesCount=', entityRules.length, 'targets=', entityRules.map(r => r.target))
+        ordered.forEach((layer, ei) => {
+            if (!layer || typeof layer !== 'object') return
+            const layerRules = Array.isArray(layer.rules) ? layer.rules : []
+            if (layerRules.length > 0) {
+                console.log('[Engine] _flattenRules: layer=', layer.name, 'id=', layer.id, 'rulesCount=', layerRules.length, 'targets=', layerRules.map(r => r.target))
             } else {
-                console.log('[Engine] _flattenRules: EMPTY entity=', entity.name, 'id=', entity.id, 'shapeType=', entity.entityShapeType, 'allKeys=', Object.keys(entity).join(','), 'Has rules key=', 'rules' in entity, 'rules type=', typeof entity.rules, 'isArray=', Array.isArray(entity.rules))
+                console.log('[Engine] _flattenRules: EMPTY layer=', layer.name, 'id=', layer.id, 'shapeType=', layer.layerShapeType, 'allKeys=', Object.keys(layer).join(','), 'Has rules key=', 'rules' in layer, 'rules type=', typeof layer.rules, 'isArray=', Array.isArray(layer.rules))
             }
             const base = ei * 10000
-            const defs = (Array.isArray(entity.definitions) ? entity.definitions : [])
+            const defs = (Array.isArray(layer.definitions) ? layer.definitions : [])
                 .map((d) => String(d?.expression || '').trim()).filter(Boolean)
             const defExpr = defs.length ? defs.map((e) => `(${e})`).join(' && ') : ''
-                ; (entityRules).forEach((rule, ri) => {
+                ; (layerRules).forEach((rule, ri) => {
                     blocks.push({
-                        ...rule, entityId: entity.id, entityName: entity.name,
-                        sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+                        ...rule, layerId: layer.id, layerName: layer.name,
+                        sectionDisabled: rule?.sectionDisabled === true || layer.enabled === false,
                         order: base + (Number.isFinite(rule?.order) ? rule.order : ri),
                         definitionExpression: defExpr
                     })

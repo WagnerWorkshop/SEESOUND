@@ -304,11 +304,11 @@
       "background": "Background",
       "camera": "Camera",
       "entities": "Layers",
-      "addEntity": "Add Layer",
-      "editEntity": "Edit",
-      "removeEntity": "Remove",
-      "newEntityPrompt": "Layer name",
-      "entityName": "Name",
+      "addLayer": "Add Layer",
+      "editLayer": "Edit",
+      "removeLayer": "Remove",
+      "newLayerPrompt": "Layer name",
+      "layerName": "Name",
       "shapeType": "Type",
       "shapeParticle": "Particle",
       "shapeCloud": "Cloud",
@@ -342,8 +342,8 @@
       "insertVariable": "Audio data",
       "detailVariables": "Detail Variables",
       "overallVariables": "Overall Variables",
-      "entityVariable": "Entity Variable",
-      "entityVariables": "Entity Variables",
+      "layerVariable": "Layer Variable",
+      "layerVariables": "Layer Variables",
       "mathPlaceholder": "Type math or number and add",
       "addMath": "Add Math",
       "clearTokens": "Clear",
@@ -717,63 +717,35 @@
     },
     {
       "id": "fundamentalHz",
-      "group": "entity",
+      "group": "layer",
       "label": "Fundamental Hz",
       "technicalName": "fundamentalHz",
       "description": "Detected fundamental frequency in Hz."
     },
     {
       "id": "fundamentalPitch",
-      "group": "entity",
+      "group": "layer",
       "label": "Fundamental Pitch",
       "technicalName": "fundamentalPitch",
       "description": "Detected fundamental pitch in MIDI note values."
     },
     {
       "id": "fundamentalNote",
-      "group": "entity",
+      "group": "layer",
       "label": "Fundamental Note",
       "technicalName": "fundamentalNote",
       "description": "Pitch class (0-11) of the detected fundamental."
     },
     {
-      "id": "entityCentroid",
-      "group": "entity",
-      "label": "Entity Centroid",
-      "technicalName": "entityCentroid",
-      "description": "Spectral centroid of the entity window in Hz."
-    },
-    {
-      "id": "entityFlatness",
-      "group": "entity",
-      "label": "Entity Flatness",
-      "technicalName": "entityFlatness",
-      "description": "Spectral flatness of the entity window."
-    },
-    {
-      "id": "entityInharmonicity",
-      "group": "entity",
-      "label": "Entity Inharmonicity",
-      "technicalName": "entityInharmonicity",
-      "description": "Inharmonicity of the entity window."
-    },
-    {
-      "id": "entityVolume",
-      "group": "entity",
-      "label": "Entity Volume",
-      "technicalName": "entityVolume",
-      "description": "RMS volume of the entity window."
-    },
-    {
-      "id": "entityAge",
-      "group": "entity",
-      "label": "Entity Age",
-      "technicalName": "entityAge",
-      "description": "Seconds since the entity began."
+      "id": "objectAge",
+      "group": "layer",
+      "label": "Audio Object Age",
+      "technicalName": "objectAge",
+      "description": "Seconds since the audio object began."
     },
     {
       "id": "streamId",
-      "group": "entity",
+      "group": "layer",
       "label": "Stream Id",
       "technicalName": "streamId",
       "description": "Tracking stream id for a continuous tone."

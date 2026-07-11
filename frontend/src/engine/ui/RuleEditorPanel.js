@@ -16,7 +16,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     const wrapper = el('div', 'cp-rules-wrapper')
 
     // Naked layer list — no cp-section wrapper
-    const entityList = el('div', 'cp-styles-entity-list')
+    const layerList = el('div', 'cp-styles-layer-list')
 
     // Inline rules popup — appears when a layer is selected
     const popup = el('section', 'cp-section cp-rules-popup')
@@ -25,10 +25,29 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     popupBody.append(popupMeta, wrapper)
     popup.appendChild(popupBody)
 
-    panel.append(entityList, popup)
+    panel.append(layerList, popup)
+
+    // ── Layer list footer with layer actions ──
+    const layerListFooter = el('div', 'cp-styles-layer-list-footer')
+    const addLayerBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: '+ Layer' })
+    applyButtonIcon(addLayerBtn, BUTTON_ICON_MAP.add, '+ Layer')
+    addLayerBtn.addEventListener('click', () => openLayerCreationModal())
+    layerListFooter.appendChild(addLayerBtn)
+    panel.append(layerListFooter)
+
+    // ── Global section owners (background / camera) ──
+    const globalSection = el('div', 'cp-styles-global-section')
+    const bgRow = el('button', 'cp-styles-layer-row cp-styles-global-row', { type: 'button' })
+    bgRow.textContent = UI_TEXT.rules?.backgroundTitle || 'Background'
+    bgRow.addEventListener('click', () => openPopupForOwner({ type: 'background' }))
+    const camRow = el('button', 'cp-styles-layer-row cp-styles-global-row', { type: 'button' })
+    camRow.textContent = UI_TEXT.rules?.cameraTitle || 'Camera'
+    camRow.addEventListener('click', () => openPopupForOwner({ type: 'camera' }))
+    globalSection.append(bgRow, camRow)
+    panel.append(globalSection)
 
     // ── Available audio track IDs ─────────────────────────────────────────
-    // Entities filter which audio stem they react to.
+    // Layers filter which audio stem they react to.
     // 'full' = full mix. The stem splitter (coming soon) will add track IDs
     // such as 'vocals', 'drums', 'bass', 'other' dynamically.
     const AVAILABLE_AUDIO_TRACKS = ['full']
@@ -42,9 +61,9 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     let duplicateSequence = 0
     let latestProbeInputs = null
 
-    let activeOwner = { type: 'entity', id: null }
+    let activeOwner = { type: 'layer', id: null }
     let popupOpen = false
-    let draggingEntityId = null
+    let draggingLayerId = null
 
     const RULE_INPUT_IDS = [...RULE_VARIABLE_ID_SET]
     const RULE_INPUT_ENTRIES = RULE_INPUT_IDS
@@ -55,31 +74,31 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         return RULE_INPUT_ENTRIES.filter((entry) => entry.group === group)
     }
 
-    function getActiveEntityShapeType() {
-        if (activeOwner.type !== 'entity') return null
-        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
-        return entity?.entityShapeType || 'particle'
+    function getActiveLayerShapeType() {
+        if (activeOwner.type !== 'layer') return null
+        const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        return layer?.layerShapeType || 'particle'
     }
 
-    function getActiveEntitySpacingMode() {
-        if (activeOwner.type !== 'entity') return 'coordinates'
-        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
-        if (entity?.entityShapeType !== 'cloud') return 'coordinates'
-        return entity?.spacingMode || 'coordinates'
+    function getActiveLayerSpacingMode() {
+        if (activeOwner.type !== 'layer') return 'coordinates'
+        const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        if (layer?.layerShapeType !== 'cloud') return 'coordinates'
+        return layer?.spacingMode || 'coordinates'
     }
 
-    function getActiveEntityCloudShape() {
-        if (activeOwner.type !== 'entity') return 'cylindrical'
-        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
-        if (entity?.entityShapeType !== 'cloud') return 'cylindrical'
-        return entity?.cloudShape || 'cylindrical'
+    function getActiveLayerCloudShape() {
+        if (activeOwner.type !== 'layer') return 'cylindrical'
+        const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        if (layer?.layerShapeType !== 'cloud') return 'cylindrical'
+        return layer?.cloudShape || 'cylindrical'
     }
 
     function getAllowedTargetsForOwner() {
         if (activeOwner.type === 'background') return new Set(['background'])
         if (activeOwner.type === 'camera') return new Set(['camera'])
-        if (activeOwner.type !== 'entity') return new Set()
-        const shape = getActiveEntityShapeType()
+        if (activeOwner.type !== 'layer') return new Set()
+        const shape = getActiveLayerShapeType()
         if (shape === 'line') return new Set(['lines'])
         if (shape === 'cloud') return new Set(['spawnedParticles', 'allParticles'])
         return new Set(['spawnedParticles'])
@@ -88,18 +107,18 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function isDefinitionAllowed(definition) {
         const allowedTargets = getAllowedTargetsForOwner()
         if (!allowedTargets.has(definition?.target)) return false
-        if (activeOwner.type !== 'entity') return true
-        const shape = getActiveEntityShapeType()
-        if (Array.isArray(definition?.entityShapes) && !definition.entityShapes.includes(shape)) return false
-        if (Array.isArray(definition?.entityExclude) && definition.entityExclude.includes(shape)) return false
-        // Spacing mode gating (only for cloud entities)
+        if (activeOwner.type !== 'layer') return true
+        const shape = getActiveLayerShapeType()
+        if (Array.isArray(definition?.layerShapes) && !definition.layerShapes.includes(shape)) return false
+        if (Array.isArray(definition?.layerExclude) && definition.layerExclude.includes(shape)) return false
+        // Spacing mode gating (only for cloud layers)
         if (shape === 'cloud' && Array.isArray(definition?.spacingModes)) {
-            const spacing = getActiveEntitySpacingMode()
+            const spacing = getActiveLayerSpacingMode()
             if (!definition.spacingModes.includes(spacing)) return false
         }
         // Cloud shape gating (only for cloud aura rules)
         if (shape === 'cloud' && Array.isArray(definition?.cloudShapes)) {
-            const cloudShape = getActiveEntityCloudShape()
+            const cloudShape = getActiveLayerCloudShape()
             if (!definition.cloudShapes.includes(cloudShape)) return false
         }
         return true
@@ -108,7 +127,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     function getAllowedRuleVariableGroups() {
         if (activeOwner.type === 'background' || activeOwner.type === 'camera') return ['overall']
         const groups = ['detail', 'overall']
-        if (getActiveEntityShapeType() === 'cloud') groups.push('entity')
+        if (getActiveLayerShapeType() === 'cloud') groups.push('layer')
         return groups
     }
 
@@ -121,16 +140,15 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             }
         }
         // Mode-gate by current engine mode (params.objectMode).
-        // Per-bin variables are particle-only; entity variables are cloud-only.
+        // Per-bin variables are particle-only; layer variables are cloud-only.
         const mode = String(params.objectMode || 'particle')
         const cloudOnly = new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote',
-            'entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume',
-            'globalTransient', 'entityAge', 'streamId'])
-        // Per-bin variables are available in ALL modes; only entity variables are cloud-only.
+            'globalTransient', 'objectAge', 'streamId'])
+        // Per-bin variables are available in ALL modes; only layer variables are cloud-only.
         if (mode === 'particle') {
             for (const id of ids) if (cloudOnly.has(id)) ids.delete(id)
         }
-        // Cloud mode: all variables allowed (per-bin + entity + overall)
+        // Cloud mode: all variables allowed (per-bin + layer + overall)
         return ids
     }
     const EVAL_HELPERS = Object.freeze({
@@ -170,12 +188,12 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     const EVAL_HELPER_NAMES = Object.keys(EVAL_HELPERS)
     const EVAL_HELPER_VALUES = EVAL_HELPER_NAMES.map((name) => EVAL_HELPERS[name])
 
-    function getRuleEntities() {
-        return Array.isArray(params.ruleEntities) ? params.ruleEntities : []
+    function getRuleLayers() {
+        return Array.isArray(params.ruleLayers) ? params.ruleLayers : []
     }
 
-    function setRuleEntities(next) {
-        set('ruleEntities', Array.isArray(next) ? next : [])
+    function setRuleLayers(next) {
+        set('ruleLayers', Array.isArray(next) ? next : [])
     }
 
     function getRuleGlobals() {
@@ -195,15 +213,15 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     function ensureActiveOwner() {
-        const entities = getRuleEntities()
-        if (!entities.length) {
-            setRuleEntities([{ id: 'entity-all', name: 'All', enabled: true, order: 0, entityShapeType: 'particle', audioTrackId: 'full', rules: [] }])
-            activeOwner = { type: 'entity', id: 'entity-all' }
+        const layers = getRuleLayers()
+        if (!layers.length) {
+            setRuleLayers([{ id: 'layer-all', name: 'All', enabled: true, order: 0, layerShapeType: 'particle', audioTrackId: 'full', rules: [] }])
+            activeOwner = { type: 'layer', id: 'layer-all' }
             return
         }
-        if (activeOwner.type === 'entity') {
-            const match = entities.find((entity) => entity.id === activeOwner.id)
-            if (!match) activeOwner = { type: 'entity', id: entities[0].id }
+        if (activeOwner.type === 'layer') {
+            const match = layers.find((layer) => layer.id === activeOwner.id)
+            if (!match) activeOwner = { type: 'layer', id: layers[0].id }
         }
     }
 
@@ -211,8 +229,8 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         ensureActiveOwner()
         if (activeOwner.type === 'background') return getRuleGlobals().background
         if (activeOwner.type === 'camera') return getRuleGlobals().camera
-        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
-        return Array.isArray(entity?.rules) ? entity.rules : []
+        const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        return Array.isArray(layer?.rules) ? layer.rules : []
     }
 
     function setActiveRules(nextRules) {
@@ -230,12 +248,12 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             setRuleGlobals(globals)
             return
         }
-        const entities = getRuleEntities()
-        const nextEntities = entities.map((entity) => {
-            if (entity.id !== activeOwner.id) return entity
-            return { ...entity, rules: safeRules }
+        const layers = getRuleLayers()
+        const nextEntities = layers.map((layer) => {
+            if (layer.id !== activeOwner.id) return layer
+            return { ...layer, rules: safeRules }
         })
-        setRuleEntities(nextEntities)
+        setRuleLayers(nextEntities)
     }
 
     function openPopupForOwner(owner) {
@@ -254,52 +272,52 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         popup.classList.add('is-display-none')
     }
 
-    function renderEntityList() {
-        const entities = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-        entityList.innerHTML = ''
-        entities.forEach((entity, index) => {
-            const row = el('div', 'cp-styles-entity-row')
+    function renderLayerList() {
+        const layers = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        layerList.innerHTML = ''
+        layers.forEach((layer, index) => {
+            const row = el('div', 'cp-styles-layer-row')
             row.draggable = true
-            row.dataset.entityId = entity.id
-            if (entity.enabled === false) row.classList.add('is-disabled')
+            row.dataset.layerId = layer.id
+            if (layer.enabled === false) row.classList.add('is-disabled')
 
             // Enable/disable toggle (checkbox styled as cp-input-toggle)
             const toggleCheck = el('input', 'cp-input-toggle', {
                 type: 'checkbox',
-                checked: entity.enabled !== false ? 'checked' : undefined,
-                title: entity.enabled === false ? 'Enable element' : 'Disable element',
+                checked: layer.enabled !== false ? 'checked' : undefined,
+                title: layer.enabled === false ? 'Enable element' : 'Disable element',
             })
-            toggleCheck.checked = entity.enabled !== false
+            toggleCheck.checked = layer.enabled !== false
             toggleCheck.addEventListener('change', (e) => {
                 e.stopPropagation()
                 const nextEnabled = toggleCheck.checked
-                const nextEntities = getRuleEntities().map((entry) =>
-                    entry.id === entity.id ? { ...entry, enabled: nextEnabled } : entry
+                const nextEntities = getRuleLayers().map((entry) =>
+                    entry.id === layer.id ? { ...entry, enabled: nextEnabled } : entry
                 )
-                setRuleEntities(nextEntities)
-                renderEntityList()
+                setRuleLayers(nextEntities)
+                renderLayerList()
             })
 
             // Badge: layer type + shape type
-            const typeBadge = el('span', 'cp-styles-entity-badge')
-            const isModifier = entity.layerType === 'modifier'
+            const typeBadge = el('span', 'cp-styles-layer-badge')
+            const isModifier = layer.layerType === 'modifier'
             // Modifier badge is distinct
             if (isModifier) {
                 typeBadge.classList.add('is-modifier')
                 typeBadge.textContent = 'mod'
             } else {
-                let badgeText = entity.entityShapeType || 'particle'
-                if (entity.entityShapeType === 'cloud' && entity.spacingMode === 'network') {
+                let badgeText = layer.layerShapeType || 'particle'
+                if (layer.layerShapeType === 'cloud' && layer.spacingMode === 'network') {
                     badgeText = 'cloud·net'
-                } else if (entity.entityShapeType === 'cloud') {
-                    badgeText = `cloud·${entity.cloudShape || 'cyl'}`
+                } else if (layer.layerShapeType === 'cloud') {
+                    badgeText = `cloud·${layer.cloudShape || 'cyl'}`
                 }
                 typeBadge.textContent = badgeText
             }
 
-            const nameBtn = el('button', 'cp-btn cp-styles-entity-name', { text: entity.name || `Entity ${index + 1}` })
+            const nameBtn = el('button', 'cp-btn cp-styles-layer-name', { text: layer.name || `Layer ${index + 1}` })
             const editBtn = el('button', 'cp-btn', { type: 'button' })
-            applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editEntity || 'Edit')
+            applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
 
             // Move Up / Move Down buttons
             const moveUpBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
@@ -312,58 +330,58 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 type: 'button',
                 title: 'Move down',
                 text: '▼',
-                disabled: index >= entities.length - 1 ? 'disabled' : undefined,
+                disabled: index >= layers.length - 1 ? 'disabled' : undefined,
             })
 
             const removeBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button' })
-            applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, UI_TEXT.rules?.removeEntity || 'Remove')
-            nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
-            editBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+            applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, UI_TEXT.rules?.removeLayer || 'Remove')
+            nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'layer', id: layer.id }))
+            editBtn.addEventListener('click', () => openPopupForOwner({ type: 'layer', id: layer.id }))
 
             // Move up: swap order with previous
             moveUpBtn.addEventListener('click', (e) => {
                 e.stopPropagation()
                 if (index === 0) return
-                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
                 if (fromIndex < 1) return
                 const temp = ordered[fromIndex]
                 ordered[fromIndex] = ordered[fromIndex - 1]
                 ordered[fromIndex - 1] = temp
                 const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleEntities(normalized)
-                renderEntityList()
+                setRuleLayers(normalized)
+                renderLayerList()
             })
 
             // Move down: swap order with next
             moveDownBtn.addEventListener('click', (e) => {
                 e.stopPropagation()
-                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
                 if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
                 const temp = ordered[fromIndex]
                 ordered[fromIndex] = ordered[fromIndex + 1]
                 ordered[fromIndex + 1] = temp
                 const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleEntities(normalized)
-                renderEntityList()
+                setRuleLayers(normalized)
+                renderLayerList()
             })
 
             removeBtn.addEventListener('click', () => {
-                const next = getRuleEntities().filter((entry) => entry.id !== entity.id)
-                setRuleEntities(next)
-                if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
-                    activeOwner = { type: 'entity', id: next[0]?.id || null }
+                const next = getRuleLayers().filter((entry) => entry.id !== layer.id)
+                setRuleLayers(next)
+                if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
+                    activeOwner = { type: 'layer', id: next[0]?.id || null }
                     if (popupOpen) renderPopupMeta()
                 }
             })
 
             row.addEventListener('dragstart', () => {
-                draggingEntityId = entity.id
+                draggingLayerId = layer.id
                 row.classList.add('is-dragging')
             })
             row.addEventListener('dragend', () => {
-                draggingEntityId = null
+                draggingLayerId = null
                 row.classList.remove('is-dragging')
             })
             row.addEventListener('dragover', (event) => {
@@ -371,16 +389,16 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             })
             row.addEventListener('drop', (event) => {
                 event.preventDefault()
-                if (!draggingEntityId || draggingEntityId === entity.id) return
-                const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                const fromIndex = ordered.findIndex((entry) => entry.id === draggingEntityId)
-                const toIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                if (!draggingLayerId || draggingLayerId === layer.id) return
+                const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                const fromIndex = ordered.findIndex((entry) => entry.id === draggingLayerId)
+                const toIndex = ordered.findIndex((entry) => entry.id === layer.id)
                 if (fromIndex < 0 || toIndex < 0) return
                 const moved = ordered.splice(fromIndex, 1)[0]
                 ordered.splice(toIndex, 0, moved)
                 const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                setRuleEntities(normalized)
-                renderEntityList()
+                setRuleLayers(normalized)
+                renderLayerList()
             })
 
             row.append(toggleCheck, typeBadge, moveUpBtn, moveDownBtn, nameBtn, editBtn, removeBtn)
@@ -406,50 +424,50 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 const deleteItem = el('button', 'cp-layer-context-item cp-layer-context-item--danger', { type: 'button', text: 'Delete' })
 
                 if (index === 0) moveUpItem.disabled = true
-                if (index >= entities.length - 1) moveDownItem.disabled = true
+                if (index >= layers.length - 1) moveDownItem.disabled = true
 
                 moveUpItem.addEventListener('click', () => {
                     menu.remove()
                     if (index === 0) return
-                    const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                    const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
                     if (fromIndex < 1) return
                     const temp = ordered[fromIndex]
                     ordered[fromIndex] = ordered[fromIndex - 1]
                     ordered[fromIndex - 1] = temp
                     const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                    setRuleEntities(normalized)
-                    renderEntityList()
+                    setRuleLayers(normalized)
+                    renderLayerList()
                 })
 
                 moveDownItem.addEventListener('click', () => {
                     menu.remove()
-                    const ordered = [...getRuleEntities()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                    const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+                    const ordered = [...getRuleLayers()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    const fromIndex = ordered.findIndex((entry) => entry.id === layer.id)
                     if (fromIndex < 0 || fromIndex >= ordered.length - 1) return
                     const temp = ordered[fromIndex]
                     ordered[fromIndex] = ordered[fromIndex + 1]
                     ordered[fromIndex + 1] = temp
                     const normalized = ordered.map((entry, idx) => ({ ...entry, order: idx }))
-                    setRuleEntities(normalized)
-                    renderEntityList()
+                    setRuleLayers(normalized)
+                    renderLayerList()
                 })
 
                 editItem.addEventListener('click', () => {
                     menu.remove()
-                    openPopupForOwner({ type: 'entity', id: entity.id })
+                    openPopupForOwner({ type: 'layer', id: layer.id })
                 })
 
                 renameItem.addEventListener('click', () => {
                     menu.remove()
-                    const newName = prompt('Layer name:', entity.name || '')
-                    if (newName && newName.trim() && newName.trim() !== entity.name) {
-                        const nextEntities = getRuleEntities().map((entry) =>
-                            entry.id === entity.id ? { ...entry, name: newName.trim() } : entry
+                    const newName = prompt('Layer name:', layer.name || '')
+                    if (newName && newName.trim() && newName.trim() !== layer.name) {
+                        const nextEntities = getRuleLayers().map((entry) =>
+                            entry.id === layer.id ? { ...entry, name: newName.trim() } : entry
                         )
-                        setRuleEntities(nextEntities)
-                        renderEntityList()
-                        if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+                        setRuleLayers(nextEntities)
+                        renderLayerList()
+                        if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
                             popupTitle.textContent = newName.trim()
                             renderPopupMeta()
                         }
@@ -458,29 +476,29 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
                 duplicateItem.addEventListener('click', () => {
                     menu.remove()
-                    const newId = `entity-${Date.now()}`
-                    const baseName = entity.name || 'Layer'
-                    const nextEntities = [...getRuleEntities(), {
-                        ...entity,
+                    const newId = `layer-${Date.now()}`
+                    const baseName = layer.name || 'Layer'
+                    const nextEntities = [...getRuleLayers(), {
+                        ...layer,
                         id: newId,
                         name: `${baseName} (copy)`,
-                        order: getRuleEntities().length,
-                        rules: entity.rules ? JSON.parse(JSON.stringify(entity.rules)) : [],
-                        definitions: entity.definitions ? JSON.parse(JSON.stringify(entity.definitions)) : [],
+                        order: getRuleLayers().length,
+                        rules: layer.rules ? JSON.parse(JSON.stringify(layer.rules)) : [],
+                        definitions: layer.definitions ? JSON.parse(JSON.stringify(layer.definitions)) : [],
                     }]
-                    setRuleEntities(nextEntities)
-                    renderEntityList()
+                    setRuleLayers(nextEntities)
+                    renderLayerList()
                 })
 
                 deleteItem.addEventListener('click', () => {
                     menu.remove()
-                    const next = getRuleEntities().filter((entry) => entry.id !== entity.id)
-                    setRuleEntities(next)
-                    if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
-                        activeOwner = { type: 'entity', id: next[0]?.id || null }
+                    const next = getRuleLayers().filter((entry) => entry.id !== layer.id)
+                    setRuleLayers(next)
+                    if (activeOwner.type === 'layer' && activeOwner.id === layer.id) {
+                        activeOwner = { type: 'layer', id: next[0]?.id || null }
                         if (popupOpen) renderPopupMeta()
                     }
-                    renderEntityList()
+                    renderLayerList()
                 })
 
                 menu.append(renameItem, duplicateItem, deleteItem)
@@ -492,7 +510,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                 setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
             })
 
-            entityList.appendChild(row)
+            layerList.appendChild(row)
         })
     }
 
@@ -500,13 +518,13 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         popupMeta.innerHTML = ''
         if (!popupOpen) return
 
-        const entity = getRuleEntities().find((entry) => entry.id === activeOwner.id)
-        if (!entity) return
+const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+            if (!layer) return
 
         // Layer name as cp-section-title
         const titleRow = el('div', 'cp-section-title-row')
-        const titleEl = el('h3', 'cp-section-title', { text: entity.name || 'Layer' })
-        const typeBadge = el('span', 'cp-styles-entity-badge', { text: entity.entityShapeType || 'particle' })
+        const titleEl = el('h3', 'cp-section-title', { text: layer.name || 'Layer' })
+        const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShapeType || 'particle' })
         titleRow.append(titleEl, typeBadge)
         popupMeta.appendChild(titleRow)
 
@@ -516,7 +534,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const trackRow = el('label', 'cp-setting-row')
         const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
         const trackSelect = el('select', 'cp-input-select')
-        const currentTrack = entity.audioTrackId || 'full'
+        const currentTrack = layer.audioTrackId || 'full'
         const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
             value: id,
             label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
@@ -524,19 +542,19 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
         trackSelect.addEventListener('change', () => {
             const nextTrack = trackSelect.value
-            const nextEntities = getRuleEntities().map((entry) =>
-                entry.id === entity.id ? { ...entry, audioTrackId: nextTrack } : entry
+            const nextEntities = getRuleLayers().map((entry) =>
+                entry.id === layer.id ? { ...entry, audioTrackId: nextTrack } : entry
             )
-            setRuleEntities(nextEntities)
+            setRuleLayers(nextEntities)
         })
         trackRow.append(trackLabel, trackSelect)
-        const trackHint = el('div', 'cp-styles-entity-info', { text: 'Select which audio stem this layer reacts to. Additional stems will appear when the stem splitter is active.' })
+        const trackHint = el('div', 'cp-styles-layer-info', { text: 'Select which audio stem this layer reacts to. Additional stems will appear when the stem splitter is active.' })
         trackSection.append(trackRow, trackHint)
         popupMeta.appendChild(trackSection)
     }
 
     function updateOwnerSectionVisibility() {
-        wrapper.classList.toggle('is-entity-owner', activeOwner.type === 'entity')
+        wrapper.classList.toggle('is-layer-owner', activeOwner.type === 'layer')
         const targetSet = getAllowedTargetsForOwner()
         for (const rowState of orderedRows) {
             if (!rowState?.card) continue
@@ -551,26 +569,26 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
     // (Background and Camera are now created as layer types)
 
-    function openEntityCreationModal() {
+    function openLayerCreationModal() {
         // Build a creation overlay
         const backdrop = el('div', 'cp-modal-backdrop')
-        const panel = el('div', 'cp-entity-creation-panel')
-        const title = el('div', 'cp-entity-creation-title', { text: UI_TEXT.rules?.newEntityPrompt || 'Create Element' })
-        const closeBtn = el('button', 'cp-btn cp-btn-danger cp-entity-creation-close', { type: 'button' })
+        const panel = el('div', 'cp-layer-creation-panel')
+        const title = el('div', 'cp-layer-creation-title', { text: UI_TEXT.rules?.newLayerPrompt || 'Create Layer' })
+        const closeBtn = el('button', 'cp-btn cp-btn-danger cp-layer-creation-close', { type: 'button' })
         applyIconOnlyButton(closeBtn, BUTTON_ICON_MAP.close, 'Close')
         closeBtn.addEventListener('click', () => backdrop.remove())
 
         // Name
         const nameRow = el('label', 'cp-setting-row')
-        const nameLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.entityName || 'Name' })
+        const nameLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.layerName || 'Name' })
         const nameInput = el('input', 'cp-input-text', {
             type: 'text',
-            placeholder: 'My Element',
+            placeholder: 'New Layer',
             value: '',
         })
         nameRow.append(nameLabel, nameInput)
 
-        // Entity type (shape type)
+        // Layer type (shape type)
         const typeRow = el('label', 'cp-setting-row')
         const typeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' })
         const typeSelect = el('select', 'cp-input-select')
@@ -623,11 +641,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         const actions = el('div', 'cp-button-grid')
         const cancelBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button', text: UI_TEXT.file?.projectNameCancel || 'Cancel' })
         cancelBtn.addEventListener('click', () => backdrop.remove())
-        const createBtn = el('button', 'cp-btn', { type: 'button', text: UI_TEXT.rules?.createEntity || 'Create' })
+        const createBtn = el('button', 'cp-btn', { type: 'button', text: UI_TEXT.rules?.createLayer || 'Create' })
         applyButtonIcon(createBtn, BUTTON_ICON_MAP.add, 'Create')
         createBtn.addEventListener('click', () => {
             const rawName = String(nameInput.value || '').trim()
-            const nextName = rawName || `Element ${getRuleEntities().length + 1}`
+            const nextName = rawName || `Element ${getRuleLayers().length + 1}`
             const nextType = typeSelect.value || 'particle'
             const nextLayerType = layerTypeSelect.value || 'generator'
             const nextSpacing = spacingSelect.value || 'coordinates'
@@ -635,35 +653,35 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
             // Only one camera and one background layer allowed
             if (nextType === 'camera' || nextType === 'background') {
-                const alreadyExists = getRuleEntities().some((e) => e.entityShapeType === nextType)
+                const alreadyExists = getRuleLayers().some((e) => e.layerShapeType === nextType)
                 if (alreadyExists) {
                     alert(`Only one ${nextType} layer is allowed.`)
                     return
                 }
             }
 
-            const nextEntities = [...getRuleEntities(), {
-                id: `entity-${Date.now()}`,
+            const nextEntities = [...getRuleLayers(), {
+                id: `layer-${Date.now()}`,
                 name: nextName,
                 enabled: true,
-                order: getRuleEntities().length,
-                entityShapeType: nextType,
+                order: getRuleLayers().length,
+                layerShapeType: nextType,
                 layerType: nextLayerType,
                 spacingMode: nextType === 'cloud' ? nextSpacing : 'coordinates',
                 cloudShape: nextType === 'cloud' ? nextCloudShape : 'cylindrical',
                 audioTrackId: 'full',
                 rules: [],
             }]
-            setRuleEntities(nextEntities)
-            renderEntityList()
+            setRuleLayers(nextEntities)
+                        renderLayerList()
             backdrop.remove()
         })
         actions.append(cancelBtn, createBtn)
 
-        const body = el('div', 'cp-entity-creation-body')
+        const body = el('div', 'cp-layer-creation-body')
         body.append(nameRow, layerTypeRow, typeRow, spacingRow, cloudShapeRow, actions)
 
-        const header = el('div', 'cp-entity-creation-header')
+        const header = el('div', 'cp-layer-creation-header')
         header.append(title, closeBtn)
         panel.append(header, body)
         backdrop.appendChild(panel)
@@ -1257,7 +1275,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
                     if (inputMeta?.group === 'detail') {
                         rowState.conditionDetail = condInput
                         rowState.conditionOverall = NONE_VAR
-                    } else if (inputMeta?.group === 'overall' || inputMeta?.group === 'entity') {
+                    } else if (inputMeta?.group === 'overall' || inputMeta?.group === 'layer') {
                         rowState.conditionOverall = condInput
                         rowState.conditionDetail = NONE_VAR
                     }
@@ -1878,7 +1896,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             if (selected !== NONE_VAR) {
                 const meta = getRuleVariableById(selected)
                 if (meta?.group === 'detail') rowState.conditionDetail = selected
-                else if (meta?.group === 'overall' || meta?.group === 'entity') rowState.conditionOverall = selected
+                else if (meta?.group === 'overall' || meta?.group === 'layer') rowState.conditionOverall = selected
             }
             commitRowIfReady(rowState)
         })
@@ -1946,7 +1964,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     const applyRowsFromParams = () => {
-        renderEntityList()
+            renderLayerList()
         ensureActiveOwner()
         updateOwnerSectionVisibility()
         const nextBlocks = getActiveRules()
@@ -1960,7 +1978,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         if (popupOpen) renderPopupMeta()
     }
 
-    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks'])
+    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks'])
     applyRowsFromParams()
 
     window.addEventListener('seesound:rule-probe', (event) => {

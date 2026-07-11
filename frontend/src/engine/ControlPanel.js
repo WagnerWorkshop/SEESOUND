@@ -265,31 +265,31 @@ const SETTINGS_RANGES = Object.freeze([
 
 const FIXED_RULE_ROWS = Object.freeze([
     // Cloud fundamentals — XYZ positioning (coordinates mode only)
-    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
-    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
-    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
+    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'x', label: 'X', layerShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
+    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'y', label: 'Y', layerShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
+    { target: 'spawnedParticles', section: 'Cloud Fundamentals', subgroup: 'Position', output: 'z', label: 'Z', layerShapes: ['cloud'], spacingModes: ['coordinates'], sectionLabel: 'Fundamentals' },
 
     // Cloud Aura — cylindrical
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'General', output: 'cloudSize', label: 'Cloud Size', entityShapes: ['cloud'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraDistance', label: 'Radius', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraAngle', label: 'Angle (°)', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraElevation', label: 'Elevation', entityShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'General', output: 'cloudSize', label: 'Cloud Size', layerShapes: ['cloud'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraDistance', label: 'Radius', layerShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraAngle', label: 'Angle (°)', layerShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Cylindrical', output: 'auraElevation', label: 'Elevation', layerShapes: ['cloud'], cloudShapes: ['cylindrical'], sectionLabel: 'Aura' },
 
     // Cloud Aura — spherical
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraDistance', label: 'Radius', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraAngle', label: 'Longitude (°)', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraLatitude', label: 'Latitude (°)', entityShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraDistance', label: 'Radius', layerShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraAngle', label: 'Longitude (°)', layerShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Spherical', output: 'auraLatitude', label: 'Latitude (°)', layerShapes: ['cloud'], cloudShapes: ['spherical'], sectionLabel: 'Aura' },
 
     // Cloud Random — spread
-    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Random 3D', output: 'cloudSize', label: 'Spread', entityShapes: ['cloud'], cloudShapes: ['random'], sectionLabel: 'Aura' },
-    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'repulsion', label: 'Repulsion', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
-    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'centerGravity', label: 'Center Gravity', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
-    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'tension', label: 'Tension', entityShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Aura', subgroup: 'Random 3D', output: 'cloudSize', label: 'Spread', layerShapes: ['cloud'], cloudShapes: ['random'], sectionLabel: 'Aura' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'repulsion', label: 'Repulsion', layerShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'centerGravity', label: 'Center Gravity', layerShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
+    { target: 'allParticles', section: 'Cloud Network', subgroup: 'Forces', output: 'tension', label: 'Tension', layerShapes: ['cloud'], spacingModes: ['network'], sectionLabel: 'Network' },
 
     // Light Particles
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X', entityShapes: ['particle'] },
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'y', label: 'Y', entityShapes: ['particle'] },
-    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'z', label: 'Z', entityShapes: ['particle'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'x', label: 'X', layerShapes: ['particle'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'y', label: 'Y', layerShapes: ['particle'] },
+    { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Position', output: 'z', label: 'Z', layerShapes: ['particle'] },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'size', label: 'Size' },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'shapeType', label: 'Shape', type: 'enum', options: ['circle', 'square'] },
     { target: 'spawnedParticles', section: 'Light Particles', subgroup: 'Appearance', output: 'particleCount', label: 'Particle Count' },
@@ -1138,18 +1138,18 @@ function createRuleTokenValueSelect(selected = '', allowedVariableIds = null) {
         overallGroup.appendChild(option)
     }
 
-    const entityGroup = document.createElement('optgroup')
-    entityGroup.label = getRuleText('entityVariables', 'Entity Variables')
-    for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+    const layerGroup = document.createElement('optgroup')
+    layerGroup.label = getRuleText('layerVariables', 'Layer Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('layer'))) {
         const option = el('option', '', { value: `var:${entry.id}`, text: formatRuleVariableDropdownLabel(entry) })
         option.title = getRuleVariableTooltip(entry)
-        entityGroup.appendChild(option)
+        layerGroup.appendChild(option)
     }
 
     const groups = []
     if (detailGroup.childNodes.length > 0) groups.push(detailGroup)
     if (overallGroup.childNodes.length > 0) groups.push(overallGroup)
-    if (entityGroup.childNodes.length > 0) groups.push(entityGroup)
+    if (layerGroup.childNodes.length > 0) groups.push(layerGroup)
     select.append(...groups)
     if (selected) select.value = selected
     applySelectedOptionTooltip(select)
@@ -2085,18 +2085,18 @@ function createRuleConditionInputSelect(selected = NONE_VAR, allowedVariableIds 
         overallGroup.appendChild(option)
     }
 
-    const entityGroup = document.createElement('optgroup')
-    entityGroup.label = getRuleText('entityVariables', 'Entity Variables')
-    for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+    const layerGroup = document.createElement('optgroup')
+    layerGroup.label = getRuleText('layerVariables', 'Layer Variables')
+    for (const entry of filterAllowed(getRuleVariablesByGroup('layer'))) {
         const option = el('option', '', { value: entry.id, text: entry.label })
         option.title = getRuleVariableTooltip(entry)
-        entityGroup.appendChild(option)
+        layerGroup.appendChild(option)
     }
 
     const groups = []
     if (detailGroup.childNodes.length > 0) groups.push(detailGroup)
     if (overallGroup.childNodes.length > 0) groups.push(overallGroup)
-    if (entityGroup.childNodes.length > 0) groups.push(entityGroup)
+    if (layerGroup.childNodes.length > 0) groups.push(layerGroup)
     select.append(...groups)
     if (selected && selected !== NONE_VAR) select.value = selected
     applySelectedOptionTooltip(select)

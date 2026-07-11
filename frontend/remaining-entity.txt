@@ -1,0 +1,149 @@
+BinAnalysisWorklet.js:550 // not for entity-level metrics like fundamentalHz, objectVolume etc.
+RuleCompiler.js:283 ordered.forEach((entity, layerIndex) => {
+RuleCompiler.js:284 if (!entity || typeof entity !== 'object') return
+RuleCompiler.js:286 const definitionFilters = Array.isArray(entity.definitions)
+RuleCompiler.js:287 ? entity.definitions.map((def) => String(def?.expression || '').trim()).filter(Boolean)
+RuleCompiler.js:292 const rules = Array.isArray(entity.rules) ? entity.rules : []
+RuleCompiler.js:297 layerId: entity.id,
+RuleCompiler.js:298 layerName: entity.name,
+RuleCompiler.js:299 sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+RuleDictionary.js:100 // Cloud-only: entity variables
+MenuSettings.js:43 // ── Time dropdown only (engine mode is derived from entity settings) ──
+MenuSettings.js:47 text: 'Engine mode is derived automatically from entity type settings in Styles.',
+RuleEditorPanel.js:64 let activeOwner = { type: 'entity', id: null }
+RuleEditorPanel.js:78 if (activeOwner.type !== 'entity') return null
+RuleEditorPanel.js:79 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:80 return entity?.layerShapeType || 'particle'
+RuleEditorPanel.js:84 if (activeOwner.type !== 'entity') return 'coordinates'
+RuleEditorPanel.js:85 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:86 if (entity?.layerShapeType !== 'cloud') return 'coordinates'
+RuleEditorPanel.js:87 return entity?.spacingMode || 'coordinates'
+RuleEditorPanel.js:91 if (activeOwner.type !== 'entity') return 'cylindrical'
+RuleEditorPanel.js:92 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:93 if (entity?.layerShapeType !== 'cloud') return 'cylindrical'
+RuleEditorPanel.js:94 return entity?.cloudShape || 'cylindrical'
+RuleEditorPanel.js:100 if (activeOwner.type !== 'entity') return new Set()
+RuleEditorPanel.js:110 if (activeOwner.type !== 'entity') return true
+RuleEditorPanel.js:130 if (getActiveEntityShapeType() === 'cloud') groups.push('entity')
+RuleEditorPanel.js:143 // Per-bin variables are particle-only; entity variables are cloud-only.
+RuleEditorPanel.js:148 // Per-bin variables are available in ALL modes; only entity variables are cloud-only.
+RuleEditorPanel.js:152 // Cloud mode: all variables allowed (per-bin + entity + overall)
+RuleEditorPanel.js:220 activeOwner = { type: 'entity', id: 'layer-all' }
+RuleEditorPanel.js:223 if (activeOwner.type === 'entity') {
+RuleEditorPanel.js:224 const match = entities.find((entity) => entity.id === activeOwner.id)
+RuleEditorPanel.js:225 if (!match) activeOwner = { type: 'entity', id: entities[0].id }
+RuleEditorPanel.js:233 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:234 return Array.isArray(entity?.rules) ? entity.rules : []
+RuleEditorPanel.js:253 const nextEntities = entities.map((entity) => {
+RuleEditorPanel.js:254 if (entity.id !== activeOwner.id) return entity
+RuleEditorPanel.js:255 return { ...entity, rules: safeRules }
+RuleEditorPanel.js:279 entities.forEach((entity, index) => {
+RuleEditorPanel.js:282 row.dataset.layerId = entity.id
+RuleEditorPanel.js:283 if (entity.enabled === false) row.classList.add('is-disabled')
+RuleEditorPanel.js:288 checked: entity.enabled !== false ? 'checked' : undefined,
+RuleEditorPanel.js:289 title: entity.enabled === false ? 'Enable element' : 'Disable element',
+RuleEditorPanel.js:291 toggleCheck.checked = entity.enabled !== false
+RuleEditorPanel.js:296 entry.id === entity.id ? { ...entry, enabled: nextEnabled } : entry
+RuleEditorPanel.js:304 const isModifier = entity.layerType === 'modifier'
+RuleEditorPanel.js:310 let badgeText = entity.layerShapeType || 'particle'
+RuleEditorPanel.js:311 if (entity.layerShapeType === 'cloud' && entity.spacingMode === 'network') {
+RuleEditorPanel.js:313 } else if (entity.layerShapeType === 'cloud') {
+RuleEditorPanel.js:314 badgeText = `cloud·${entity.cloudShape || 'cyl'}`
+RuleEditorPanel.js:319 const nameBtn = el('button', 'cp-btn cp-styles-layer-name', { text: entity.name || `Entity ${index + 1}` })
+RuleEditorPanel.js:339 nameBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+RuleEditorPanel.js:340 editBtn.addEventListener('click', () => openPopupForOwner({ type: 'entity', id: entity.id }))
+RuleEditorPanel.js:347 const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+RuleEditorPanel.js:361 const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+RuleEditorPanel.js:372 const next = getRuleLayers().filter((entry) => entry.id !== entity.id)
+RuleEditorPanel.js:374 if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+RuleEditorPanel.js:375 activeOwner = { type: 'entity', id: next[0]?.id || null }
+RuleEditorPanel.js:381 draggingEntityId = entity.id
+RuleEditorPanel.js:393 if (!draggingEntityId || draggingEntityId === entity.id) return
+RuleEditorPanel.js:396 const toIndex = ordered.findIndex((entry) => entry.id === entity.id)
+RuleEditorPanel.js:434 const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+RuleEditorPanel.js:447 const fromIndex = ordered.findIndex((entry) => entry.id === entity.id)
+RuleEditorPanel.js:459 openPopupForOwner({ type: 'entity', id: entity.id })
+RuleEditorPanel.js:464 const newName = prompt('Layer name:', entity.name || '')
+RuleEditorPanel.js:465 if (newName && newName.trim() && newName.trim() !== entity.name) {
+RuleEditorPanel.js:467 entry.id === entity.id ? { ...entry, name: newName.trim() } : entry
+RuleEditorPanel.js:471 if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+RuleEditorPanel.js:480 const newId = `entity-${Date.now()}`
+RuleEditorPanel.js:481 const baseName = entity.name || 'Layer'
+RuleEditorPanel.js:483 ...entity,
+RuleEditorPanel.js:487 rules: entity.rules ? JSON.parse(JSON.stringify(entity.rules)) : [],
+RuleEditorPanel.js:488 definitions: entity.definitions ? JSON.parse(JSON.stringify(entity.definitions)) : [],
+RuleEditorPanel.js:496 const next = getRuleLayers().filter((entry) => entry.id !== entity.id)
+RuleEditorPanel.js:498 if (activeOwner.type === 'entity' && activeOwner.id === entity.id) {
+RuleEditorPanel.js:499 activeOwner = { type: 'entity', id: next[0]?.id || null }
+RuleEditorPanel.js:522 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:523 if (!entity) return
+RuleEditorPanel.js:527 const titleEl = el('h3', 'cp-section-title', { text: entity.name || 'Layer' })
+RuleEditorPanel.js:528 const typeBadge = el('span', 'cp-styles-layer-badge', { text: entity.layerShapeType || 'particle' })
+RuleEditorPanel.js:538 const currentTrack = entity.audioTrackId || 'full'
+RuleEditorPanel.js:547 entry.id === entity.id ? { ...entry, audioTrackId: nextTrack } : entry
+RuleEditorPanel.js:558 wrapper.classList.toggle('is-entity-owner', activeOwner.type === 'entity')
+RuleEditorPanel.js:665 id: `entity-${Date.now()}`,
+ControlPanel.js:1143 for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+ControlPanel.js:2090 for (const entry of filterAllowed(getRuleVariablesByGroup('entity'))) {
+DependencyGraph.js:64 // Cloud-mode only (entity-level variables)
+DependencyGraph.js:204 // are the primary output, even if no individual entity variable
+LayerManager.js:5 * entity/layer. Each layer compiles and runs its own rules independently
+LayerManager.js:30 /** @type {{ entity: object, ps: ParticleSystem }[]} */
+LayerManager.js:33 /** @type {string|null} Cache of last entity hash to avoid redundant rebuilds */
+LayerManager.js:71 // Index existing layers by entity id/name for reuse — preserves particles
+LayerManager.js:86 for (const entity of sorted) {
+LayerManager.js:87 const key = entity.id ?? entity.name ?? null
+LayerManager.js:92 // New entity — create a fresh ParticleSystem
+LayerManager.js:93 const isModifier = entity.layerType === 'modifier'
+LayerManager.js:100 layer = { entity, ps }
+LayerManager.js:104 const isDisabled = entity.enabled === false
+LayerManager.js:106 ruleLayers: [entity],
+LayerManager.js:112 // Update stored entity ref (rules may have changed on same entity)
+LayerManager.js:113 layer.data = entity
+LayerManager.js:137 this._layers.push({ entity: {}, ps })
+LayerManager.js:186 const camLayer = this._layers.find((l) => l.entity?.enabled !== false && l.ps._compiledRules?.cameraRuleCount > 0)
+LayerManager.js:202 const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+LayerManager.js:262 const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+LayerManager.js:310 return this._layers.filter((l) => l.entity?.enabled !== false).length
+LayerManager.js:326 const layer = this._layers.find((l) => l.entity?.enabled !== false && l.entity?.layerType !== 'modifier')
+LayerManager.js:327 || this._layers.find((l) => l.entity?.enabled !== false)
+ParamStore.js:51 : `entity-${index + 1}`
+ParamStore.js:103 const entity = _coerceRuleLayer({ id: 'layer-all', name: 'All', rules: layerRules }, 0)
+ParamStore.js:105 entities: [entity],
+ParamStore.js:113 ordered.forEach((entity, layerIndex) => {
+ParamStore.js:114 if (!entity || typeof entity !== 'object') return
+ParamStore.js:116 const rules = Array.isArray(entity.rules) ? entity.rules : []
+ParamStore.js:121 layerId: entity.id,
+ParamStore.js:122 layerName: entity.name,
+ParamStore.js:123 sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+ParamStore.js:677 desc: 'Operating mode. Particle = per-bin positioning. Cloud = harmonic objects with entity-level rules.',
+ParamStore.js:767 // entity rules, and global blocks (luma was removed as a rule output).
+ParamStore.js:781 migrated.ruleLayers = migrated.ruleLayers.map((entity) => {
+ParamStore.js:782 if (!entity || typeof entity !== 'object') return entity
+ParamStore.js:783 return { ...entity, rules: stripLuma(entity.rules) }
+ParticleSystem.js:697 // Aura outputs create offsets from the entity centroid (average of
+ParticleSystem.js:708 // Spherical: offset from entity centroid
+ParticleSystem.js:714 // Cylindrical: offset from entity centroid
+ParticleSystem.js:723 // Random cloud: scatter around entity centroid
+ParticleSystem.js:1934 // Compute entity centroid from all fundamental isFundamental=1 particles
+SeesoundEngine.js:68 // Param subscription — recompile rules when entity/global rules change
+SeesoundEngine.js:427 // Derive engine mode from entity settings
+SeesoundEngine.js:464 // Pass entity structure directly so LayerManager can separate per-layer.
+SeesoundEngine.js:490 ordered.forEach((entity, ei) => {
+SeesoundEngine.js:491 if (!entity || typeof entity !== 'object') return
+SeesoundEngine.js:492 const layerRules = Array.isArray(entity.rules) ? entity.rules : []
+SeesoundEngine.js:494 console.log('[Engine] _flattenRules: entity=', entity.name, 'id=', entity.id, 'rulesCount=', layerRules.length, 'targets=', layerRules.map(r => r.target))
+SeesoundEngine.js:496 console.log('[Engine] _flattenRules: EMPTY entity=', entity.name, 'id=', entity.id, 'shapeType=', entity.layerShapeType, 'allKeys=', Object.keys(entity).join(','), 'Has rules key=', 'rules' in entity, 'rules type=', typeof entity.rules, 'isArray=', Array.isArray(entity.rules))
+SeesoundEngine.js:499 const defs = (Array.isArray(entity.definitions) ? entity.definitions : [])
+SeesoundEngine.js:504 ...rule, layerId: entity.id, layerName: entity.name,
+SeesoundEngine.js:505 sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+types.js:18 * - `direct`: entity xyz positions assigned by user rules.
+types.js:100 * A compiled rule block with its entity metadata.
+types.js:103 * @property {string} [layerId] - Owning entity ID.
+types.js:104 * @property {string} [layerName] - Owning entity name.
+en.json:744 "description": "Spectral centroid of the entity window in Hz."
+en.json:751 "description": "Spectral flatness of the entity window."
+en.json:758 "description": "Inharmonicity of the entity window."
+en.json:765 "description": "RMS volume of the entity window."
+en.json:772 "description": "Seconds since the entity began."
+main.js:2065 // Rebuild all layers from current entity definitions

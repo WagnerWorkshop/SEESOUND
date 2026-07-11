@@ -483,7 +483,7 @@ input[type=number]::-webkit-inner-spin-button {
     right: 0;
     bottom: 0;
     z-index: 140;
-    pointer-events: none;
+    pointer-events: auto;
     /* Only animate opacity for opening/closing; disable width transitions that cause sliding */
     transition: opacity var(--transition-mid) !important;
 }
@@ -497,7 +497,7 @@ input[type=number]::-webkit-inner-spin-button {
 .cp-shell {
     position: absolute;
     inset: 0;
-    pointer-events: none;
+    pointer-events: auto;
 }
 
 .cp-shell-root {
@@ -508,7 +508,7 @@ input[type=number]::-webkit-inner-spin-button {
     display: flex;
     align-items: flex-start;
     gap: var(--gap-l);
-    pointer-events: none;
+    pointer-events: auto;
 }
 
 #app.audio-player-collapsed .cp-shell-root {
@@ -606,8 +606,8 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 .cp-shell.is-open .cp-menu-stack {
-    opacity: 1;
-    pointer-events: auto;
+    opacity: 1 !important;
+    pointer-events: auto !important;
 }
 
 .cp-menu-pane {
@@ -1768,8 +1768,8 @@ input[type=number]::-webkit-inner-spin-button {
 
     .cp-shell.is-open .cp-menu-stack {
         width: 100%;
-        opacity: 1;
-        pointer-events: auto;
+        opacity: 1 !important;
+        pointer-events: auto !important;
     }
 
     .cp-menu-pane {
@@ -2229,7 +2229,7 @@ input[type=number]::-webkit-inner-spin-button {
 
 /* ===== BEGIN styles-menu.css ===== */
 
-.cp-styles-entity-list,
+.cp-styles-layer-list,
 .cp-styles-definition-list {
     display: flex;
     flex-direction: column;
@@ -2237,7 +2237,7 @@ input[type=number]::-webkit-inner-spin-button {
     margin-bottom: var(--gap-s);
 }
 
-.cp-styles-entity-row,
+.cp-styles-layer-row,
 .cp-styles-definition-row {
     display: flex;
     align-items: center;
@@ -2254,12 +2254,12 @@ input[type=number]::-webkit-inner-spin-button {
     align-items: flex-start;
 }
 
-.cp-styles-entity-row.is-dragging,
+.cp-styles-layer-row.is-dragging,
 .cp-styles-definition-row.is-dragging {
     opacity: 0.6;
 }
 
-.cp-styles-entity-name,
+.cp-styles-layer-name,
 .cp-styles-definition-name {
     flex: 1;
     justify-content: flex-start;
@@ -2335,6 +2335,42 @@ input[type=number]::-webkit-inner-spin-button {
     align-items: center;
     justify-content: center;
     font-size: var(--fs-title);
+}
+
+/* ── Layer list footer (New Layer button) ── */
+.cp-styles-layer-list-footer {
+    display: flex;
+    justify-content: center;
+    padding: var(--padding-s) 0;
+    margin-bottom: var(--gap-m);
+}
+
+/* ── Global section (Background / Camera owners) ── */
+.cp-styles-global-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-xs);
+    margin-bottom: var(--gap-s);
+}
+
+.cp-styles-global-row {
+    cursor: pointer;
+    justify-content: center;
+    font-weight: 600;
+    opacity: 0.8;
+    transition: opacity 0.15s;
+    background: var(--gradient);
+    border: var(--border-soft);
+    border-radius: var(--radius-s);
+    corner-shape: squircle;
+    padding: var(--padding-s);
+    display: flex;
+    align-items: center;
+    gap: var(--gap-xs);
+}
+
+.cp-styles-global-row:hover {
+    opacity: 1;
 }
 
 .cp-styles-popup-header {
@@ -2513,7 +2549,7 @@ input[type=number]::-webkit-inner-spin-button {
     display: block;
 }
 
-/* ===== Entity creation modal ===== */
+/* ===== Layer creation modal ===== */
 .cp-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -2524,7 +2560,7 @@ input[type=number]::-webkit-inner-spin-button {
     z-index: 100;
 }
 
-.cp-entity-creation-panel {
+.cp-layer-creation-panel {
     background: var(--color-bg-raised);
     border-radius: var(--radius-m);
     border: var(--border-strong);
@@ -2535,7 +2571,7 @@ input[type=number]::-webkit-inner-spin-button {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-.cp-entity-creation-header {
+.cp-layer-creation-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2543,25 +2579,25 @@ input[type=number]::-webkit-inner-spin-button {
     border-bottom: var(--border-default);
 }
 
-.cp-entity-creation-title {
+.cp-layer-creation-title {
     font-size: var(--fs-title);
     font-weight: 600;
     color: var(--color-text);
 }
 
-.cp-entity-creation-body {
+.cp-layer-creation-body {
     padding: var(--padding-m);
     display: flex;
     flex-direction: column;
     gap: var(--gap-l);
 }
 
-.cp-entity-creation-body .cp-setting-row {
+.cp-layer-creation-body .cp-setting-row {
     grid-template-columns: minmax(100px, 1fr) minmax(140px, 2fr);
 }
 
-/* ===== Entity eye toggle and badge ===== */
-.cp-styles-entity-badge {
+/* ===== Layer eye toggle and badge ===== */
+.cp-styles-layer-badge {
     font-family: var(--font-mono);
     font-size: var(--fs-aux);
     color: var(--color-text-dim);
@@ -2573,7 +2609,7 @@ input[type=number]::-webkit-inner-spin-button {
 }
 
 /* Modifier layer badge — distinct color */
-.cp-styles-entity-badge.is-modifier {
+.cp-styles-layer-badge.is-modifier {
     color: var(--color-accent, #8ab4f8);
     background: var(--gradient);
     border-color: var(--border-soft);
@@ -2601,16 +2637,16 @@ input[type=number]::-webkit-inner-spin-button {
     color: var(--color-text);
 }
 
-.cp-styles-entity-row.is-disabled {
+.cp-styles-layer-row.is-disabled {
     opacity: 0.5;
 }
 
-.cp-styles-entity-row.is-disabled .cp-styles-entity-name {
+.cp-styles-layer-row.is-disabled .cp-styles-layer-name {
     text-decoration: line-through;
     opacity: 0.6;
 }
 
-.cp-styles-entity-info {
+.cp-styles-layer-info {
     grid-column: 1 / -1;
     font-family: var(--font-ui);
     font-size: var(--fs-aux);

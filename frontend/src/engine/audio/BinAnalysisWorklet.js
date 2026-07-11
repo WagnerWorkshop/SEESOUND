@@ -29,7 +29,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             needEnvelope: false,
             needAttackTime: false,
             needPitchBrain: false,
-            needTextureBrain: false,
             needRhythmBrain: false,
             needTrackerBrain: false,
             objectMode: 'particle',
@@ -95,7 +94,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._rhythmEnergyAvg = 0
         this._lastFundamentalHz = 0
         this._lastTransientFrame = 0
-        this._entityAgeMs = 0
+        this._objectAgeMs = 0
 
         this._fluxHistory = new Float32Array(0)
         this._fluxHistorySums = new Float32Array(0)
@@ -138,7 +137,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._cfg.needEnvelope = !!cfg.needEnvelope
             this._cfg.needAttackTime = !!cfg.needAttackTime
             this._cfg.needPitchBrain = !!cfg.needPitchBrain
-            this._cfg.needTextureBrain = !!cfg.needTextureBrain
             this._cfg.needRhythmBrain = !!cfg.needRhythmBrain
             this._cfg.needTrackerBrain = !!cfg.needTrackerBrain
             this._cfg.objectMode = (cfg.objectMode === 'cloud' || cfg.objectMode === 'tracing' || cfg.objectMode === 'lines')
@@ -478,7 +476,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                 inharmonicity: localInharmonicity,
                 temporalGroupId: 0, // assigned by rhythm brain
                 streamId: 0,        // assigned by tracker brain
-                entityAge: 0,
+                objectAge: 0,
             })
         }
 
@@ -547,23 +545,18 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         // Always run Quad-Brain when any brain is needed, regardless of objectMode.
         // The particle/cloud distinction only matters for harmonic object output,
-        // not for entity-level metrics like fundamentalHz, entityVolume etc.
+        // not for object-level holistic metrics like fundamentalHz, etc.
         const needPitch = cfg.needPitchBrain || cfg.needTrackerBrain
-        const needTexture = cfg.needTextureBrain || cfg.needTrackerBrain
         const needRhythm = cfg.needRhythmBrain
-        if (!needPitch && !needTexture && !needRhythm) return null
+        if (!needPitch && !needRhythm) return null
         if (this._brainFill < RHYTHM_WINDOW_SAMPLES) return null
 
         const sr = sampleRate
         let fundamentalHz = 0
         let fundamentalPitch = 0
         let fundamentalNote = 0
-        let entityCentroid = 0
-        let entityFlatness = 0
-        let entityInharmonicity = 0
-        let entityVolume = 0
         let globalTransient = 0
-        let entityAgeSec = 0
+        let objectAgeSec = 0
         let streamId = 0
         /** @type {Array} */
         let harmonicObjects = null
@@ -578,7 +571,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                     const minHz = Math.min(cfg.pitchMinHz, cfg.pitchMaxHz)
                     const maxHz = Math.max(cfg.pitchMinHz, cfg.pitchMaxHz)
 
-                    // Primary fundamental (kept for backward compat with entityMetrics)
+                    // Primary fundamental (kept for backward compat with layerMetrics)
                     fundamentalHz = this._findFundamental(mags, sr, minHz, maxHz)
                     this._lastFundamentalHz = fundamentalHz
 
@@ -590,21 +583,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                 }
             } else {
                 fundamentalHz = this._lastFundamentalHz
-            }
-        }
-
-        if (needTexture) {
-            this._textureHopCounter += sampleCount
-            if (this._textureHopCounter >= TEXTURE_HOP_SAMPLES) {
-                this._textureHopCounter = 0
-                if (this._brainFill >= TEXTURE_WINDOW_SAMPLES) {
-                    this._copyBrainWindow(this._textureWindow)
-                    const mags = this._fftMagnitudes(this._textureFftCache, this._textureWindow)
-                    entityCentroid = this._computeCentroid(mags, sr)
-                    entityFlatness = this._computeFlatness(mags)
-                    const fundamentalRef = fundamentalHz > 0 ? fundamentalHz : this._lastFundamentalHz
-                    entityInharmonicity = this._computeInharmonicity(mags, sr, fundamentalRef)
-                }
             }
         }
 
@@ -641,12 +619,12 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             // Simple persistence: match objects by closest fundamental
             for (const obj of harmonicObjects) {
                 if (obj.fundamentalHz > 0) {
-                    this._entityAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
+                    this._objectAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
                     obj.streamId = 1
-                    obj.entityAge = this._entityAgeMs / 1000
+                    obj.objectAge = this._objectAgeMs / 1000
                 } else {
                     obj.streamId = 0
-                    obj.entityAge = 0
+                    obj.objectAge = 0
                 }
 
                 // Temporal group assignment
@@ -658,13 +636,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                 }
             }
             if (fundamentalHz > 0) {
-                this._entityAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
+                this._objectAgeMs += (PITCH_HOP_SAMPLES / Math.max(1, sr)) * 1000
                 streamId = 1
             } else {
-                this._entityAgeMs = 0
+                this._objectAgeMs = 0
                 streamId = 0
             }
-            entityAgeSec = this._entityAgeMs / 1000
+            objectAgeSec = this._objectAgeMs / 1000
         }
 
         if (fundamentalHz > 0) {
@@ -673,24 +651,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             fundamentalNote = ((Math.round(fundamentalPitch) % 12) + 12) % 12
         }
 
-        if (needPitch || needTexture) {
-            if (this._brainFill >= TEXTURE_WINDOW_SAMPLES) {
-                this._copyBrainWindow(this._textureWindow)
-                entityVolume = this._computeRms(this._textureWindow)
-            }
-        }
-
-        // Send legacy entityMetrics for backward compat
-        const payload = { type: 'entityMetrics' }
+        // Build payload
+        const payload = { type: 'objectMetrics' }
         payload.fundamentalHz = fundamentalHz
         payload.fundamentalPitch = fundamentalPitch
         payload.fundamentalNote = fundamentalNote
-        payload.entityCentroid = entityCentroid
-        payload.entityFlatness = entityFlatness
-        payload.entityInharmonicity = entityInharmonicity
-        payload.entityVolume = entityVolume
         payload.globalTransient = globalTransient
-        payload.entityAge = entityAgeSec
+        payload.objectAge = objectAgeSec
         payload.streamId = streamId
 
         // In Cloud mode, also send the full harmonic objects array

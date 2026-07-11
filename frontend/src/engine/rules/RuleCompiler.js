@@ -274,29 +274,29 @@ function _normalizeRuleSource(ruleSource) {
     if (Array.isArray(ruleSource)) return { ruleBlocks: ruleSource }
     if (ruleSource && typeof ruleSource === 'object') {
         if (Array.isArray(ruleSource.ruleBlocks)) return { ruleBlocks: ruleSource.ruleBlocks }
-        const entities = Array.isArray(ruleSource.ruleEntities) ? ruleSource.ruleEntities : []
+        const entities = Array.isArray(ruleSource.ruleLayers) ? ruleSource.ruleLayers : []
         const globals = ruleSource.ruleGlobalBlocks && typeof ruleSource.ruleGlobalBlocks === 'object'
             ? ruleSource.ruleGlobalBlocks
             : { background: [], camera: [] }
         const flattened = []
         const ordered = [...entities].sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
-        ordered.forEach((entity, entityIndex) => {
-            if (!entity || typeof entity !== 'object') return
-            const baseOrder = entityIndex * 10000
-            const definitionFilters = Array.isArray(entity.definitions)
-                ? entity.definitions.map((def) => String(def?.expression || '').trim()).filter(Boolean)
+        ordered.forEach((layer, layerIndex) => {
+            if (!layer || typeof layer !== 'object') return
+            const baseOrder = layerIndex * 10000
+            const definitionFilters = Array.isArray(layer.definitions)
+                ? layer.definitions.map((def) => String(def?.expression || '').trim()).filter(Boolean)
                 : []
             const definitionExpression = definitionFilters.length > 0
                 ? definitionFilters.map((expr) => `(${expr})`).join(' && ')
                 : ''
-            const rules = Array.isArray(entity.rules) ? entity.rules : []
+            const rules = Array.isArray(layer.rules) ? layer.rules : []
             rules.forEach((rule, ruleIndex) => {
                 const order = Number.isFinite(rule?.order) ? Number(rule.order) : ruleIndex
                 flattened.push({
                     ...rule,
-                    entityId: entity.id,
-                    entityName: entity.name,
-                    sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+                    layerId: layer.id,
+                    layerName: layer.name,
+                    sectionDisabled: rule?.sectionDisabled === true || layer.enabled === false,
                     order: baseOrder + order,
                     definitionExpression,
                 })

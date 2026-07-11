@@ -61,15 +61,11 @@ const MODE_GATED_VARS = new Map([
     ['binRMSEnergy', new Set(['particle', 'cloud'])],
     ['notePitchClass', new Set(['particle', 'cloud'])],
     ['octave', new Set(['particle', 'cloud'])],
-    // Cloud-mode only (entity-level variables)
+    // Cloud-mode only (layer-level variables)
     ['fundamentalHz', new Set(['cloud'])],
     ['fundamentalPitch', new Set(['cloud'])],
     ['fundamentalNote', new Set(['cloud'])],
-    ['entityCentroid', new Set(['cloud'])],
-    ['entityFlatness', new Set(['cloud'])],
-    ['entityInharmonicity', new Set(['cloud'])],
-    ['entityVolume', new Set(['cloud'])],
-    ['entityAge', new Set(['cloud'])],
+    ['objectAge', new Set(['cloud'])],
     ['streamId', new Set(['cloud'])],
     // isFundamental is legal in all modes (flagged at spawn/harmonic time)
     // globalTransient is available in all modes
@@ -91,9 +87,9 @@ const MODE_GATED_VARS = new Map([
 // ── Variables that, when used, trigger a specific brain in the worklet
 const BRAIN_TRIGGERS = {
     pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote']),
-    textureBrain: new Set(['entityCentroid', 'entityFlatness', 'entityInharmonicity', 'entityVolume']),
+    // textureBrain removed — clouds now use component variables instead
     rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState']),
-    trackerBrain: new Set(['entityAge', 'streamId']),
+    trackerBrain: new Set(['objectAge', 'streamId']),
 }
 
 // ── Worklet feature triggers (frequency brain — high FFT)
@@ -188,25 +184,22 @@ export function buildAudioUsage(referencedIds, mode) {
 
     // Detect worklet brain requirements
     let needPitchBrain = false
-    let needTextureBrain = false
     let needRhythmBrain = false
     let needTrackerBrain = false
 
     for (const id of used) {
         if (BRAIN_TRIGGERS.pitchBrain.has(id)) needPitchBrain = true
-        if (BRAIN_TRIGGERS.textureBrain.has(id)) needTextureBrain = true
         if (BRAIN_TRIGGERS.rhythmBrain.has(id)) needRhythmBrain = true
         if (BRAIN_TRIGGERS.trackerBrain.has(id)) needTrackerBrain = true
     }
 
-    // In Cloud mode, always enable the full Quad-Brain pipeline
-    // (Pitch + Texture + Rhythm + Tracker) because harmonic objects
-    // are the primary output, even if no individual entity variable
+    // In Cloud mode, always enable the brain pipeline
+    // (Pitch + Rhythm + Tracker) because harmonic objects
+    // are the primary output, even if no individual layer variable
     // appears in a rule expression.
     if (mode === 'cloud') {
         needPitchBrain = true
         needRhythmBrain = true
-        needTextureBrain = true
         needTrackerBrain = true
         // The worklet uses objectMode to decide whether to run the
         // full harmonic association or just the single-fundamental path.
@@ -247,7 +240,7 @@ export function buildAudioUsage(referencedIds, mode) {
     const workletEnabled = mode === 'cloud'
         || needMagnitude || needFlux || needPhaseDeviation
         || needEnvelope || needAttackTime || needPhase
-        || needPitchBrain || needTextureBrain || needRhythmBrain || needTrackerBrain
+        || needPitchBrain || needRhythmBrain || needTrackerBrain
 
     return {
         used,
@@ -260,7 +253,6 @@ export function buildAudioUsage(referencedIds, mode) {
             needEnvelope,
             needAttackTime,
             needPitchBrain,
-            needTextureBrain,
             needRhythmBrain,
             needTrackerBrain,
             objectMode: mode,

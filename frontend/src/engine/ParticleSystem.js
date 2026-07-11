@@ -694,24 +694,24 @@ export class ParticleSystem {
             this._compiledRules.applyLivingRules(loopCtx, particle)
 
             // ── Aura → XYZ conversion ──
-            // Aura outputs create offsets from the entity centroid (average of
+            // Aura outputs create offsets from the layer centroid (average of
             // all fundamental isFundamental=1 particles). This ensures harmonics
             // distribute around the cloud centre, not around world origin (0,0,0).
             const cloudScale = Number.isFinite(particle.cloudSize) ? Math.max(0.01, particle.cloudSize) : 1
-            const ec = this._entityCentroid || { x: 0, y: 0, z: 0 }
+            const ec = this._layerCentroid || { x: 0, y: 0, z: 0 }
             if (Number.isFinite(particle.auraDistance)) {
                 const dist = particle.auraDistance * Math.max(hw, hh) * 0.5 * cloudScale
                 const angle = Number.isFinite(particle.auraAngle)
                     ? particle.auraAngle * Math.PI * 2
                     : 0
                 if (Number.isFinite(particle.auraLatitude)) {
-                    // Spherical: offset from entity centroid
+                    // Spherical: offset from layer centroid
                     const lat = (particle.auraLatitude - 0.5) * Math.PI
                     particle.x = ec.x + dist * Math.cos(lat) * Math.cos(angle)
                     particle.y = ec.y + dist * Math.sin(lat)
                     particle.z = ec.z + dist * Math.cos(lat) * Math.sin(angle)
                 } else {
-                    // Cylindrical: offset from entity centroid
+                    // Cylindrical: offset from layer centroid
                     const elev = Number.isFinite(particle.auraElevation)
                         ? (particle.auraElevation - 0.5) * Math.max(hw, hh) * cloudScale * 0.5
                         : 0
@@ -720,7 +720,7 @@ export class ParticleSystem {
                     particle.z = ec.z + dist * Math.sin(angle)
                 }
             } else if (Number.isFinite(particle.cloudSize)) {
-                // Random cloud: scatter around entity centroid
+                // Random cloud: scatter around layer centroid
                 const radius = particle.cloudSize * Math.max(hw, hh) * 0.4
                 const theta = Math.random() * Math.PI * 2
                 const phi = Math.acos(2 * Math.random() - 1)
@@ -1207,7 +1207,7 @@ export class ParticleSystem {
         const _getCompMetricsByIndex = (compIdx) => {
             const _comps = this._componentTracker.components
             if (compIdx < 0 || compIdx >= _comps.length) {
-                return { compId: -1, compCentroid: undefined, compFlatness: undefined, compFlux: undefined, compOnset: undefined, compCount: Math.max(0, this._componentTracker.componentCount) }
+                return { compId: -1, compCentroid: 0, compFlatness: 0, compFlux: 0, compOnset: 0, compCount: Math.max(0, this._componentTracker.componentCount) }
             }
             const comp = _comps[compIdx]
             return {
@@ -1233,12 +1233,16 @@ export class ParticleSystem {
             const norm = (Math.log2(clampedHz) - logMin) / (logMax - logMin)
             const bin = Math.round(norm * (comp.template.length - 1))
             // Check a 3-bin window around the target to handle frequency alignment
+            // Check 5-bin neighborhood — use a low enough threshold that
+            // normalized unit templates (average bin ~0.065) always pass.
             const lo = Math.max(0, bin - 2)
             const hi = Math.min(comp.template.length - 1, bin + 2)
+            let maxInWindow = 0
             for (let b = lo; b <= hi; b++) {
-                if ((comp.template[b] || 0) > 1e-12) return true
+                const v = comp.template[b] || 0
+                if (v > maxInWindow) maxInWindow = v
             }
-            return false
+            return maxInWindow > 1e-6
         }
 
         const writeParticle = (bucket, alphaBoost = 1, isFundamentalFlag = 1) => {
@@ -1596,8 +1600,7 @@ export class ParticleSystem {
         const lineInputs = this._compiledRules?.requiredInputsByTarget?.lines ?? []
         const spawnNeedsBins = spawnInputs.some((id) => PER_BIN_VARS.has(id))
         const lineNeedsBins = lineInputs.some((id) => PER_BIN_VARS.has(id))
-        const needsFullBucketLoop = this._componentTracker.componentCount > 0
-            || (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
+        const needsFullBucketLoop = (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
         let effectiveBucketCount = needsFullBucketLoop ? logBucketCount : 1
         // In painting mode always use full buckets to accumulate trails
         if (persistMode === 1) effectiveBucketCount = logBucketCount
@@ -1802,13 +1805,23 @@ export class ParticleSystem {
                 // timbre metrics (centroid, flatness, flux, onset, binEnergy).
                 // Even if no spawn/line rules are active, the component data is
                 // stored on every particle for potential living-rule use.
-                const compsNeedEmission = activeComps.length > 0
+                // Only run per-component emission when rules actually reference
+                // component-level variables. This prevents spawning N particles
+                // per bucket (where N = component count) when no rule uses them.
+                const componentVarIds = new Set(['componentId', 'componentCentroid', 'componentFlatness', 'componentFlux', 'componentOnset', 'componentCount', 'componentBinEnergy'])
+                const usesComponentVars = [...requiredInputs].some((id) => componentVarIds.has(id))
+                const compsNeedEmission = activeComps.length > 0 && usesComponentVars
 
                 if (compsNeedEmission) {
-                    // Emit one particle per component — no gate, every active
-                    // component gets a particle at every bucket frequency.
+                    // Emit particles for up to MAX_COMP_PER_BUCKET components at
+                    // this bucket frequency. Every component emits regardless of
+                    // template energy — this guarantees component variables are
+                    // always populated in the rule inputs.
+                    // Cap at 3 to bound particle count when many components exist.
+                    const MAX_COMP_PER_BUCKET = 3
                     const compCount = Math.max(0, this._componentTracker.componentCount)
-                    for (let ci = 0; ci < activeComps.length; ci++) {
+                    const emitCount = Math.min(activeComps.length, MAX_COMP_PER_BUCKET)
+                    for (let ci = 0; ci < emitCount; ci++) {
                         const cm = _getCompMetricsByIndex(ci)
 
                         // Per-component bin energy: sample the component's
@@ -1826,6 +1839,9 @@ export class ParticleSystem {
                             const v0 = Number(compTemplate[i0]) || 0
                             const v1 = Number(compTemplate[i1]) || 0
                             compBinEnergy = clamp01(v0 + (v1 - v0) * frac)
+                        } else {
+                            // No template — use bucket energy as proxy
+                            compBinEnergy = clamp01(bucketBase.energy)
                         }
 
                         const particleBucket = {
@@ -1836,8 +1852,6 @@ export class ParticleSystem {
                             compFlux: cm.compFlux,
                             compOnset: cm.compOnset,
                             compCount: compCount,
-                            // Per-component bin-level variable — replaces the
-                            // aggregate binRMSEnergy for this component.
                             compBinEnergy,
                         }
                         writeParticle(particleBucket, 1, isFund)
@@ -1845,9 +1859,46 @@ export class ParticleSystem {
                         if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
                     }
                 } else {
-                    // No components (or only global-level rules) — emit default particle
-                    writeParticle(bucketBase, 1, isFund)
-                    writeLine(bucketBase)
+                    // Emit default particle with component 0 data attached.
+                    // Always attach component data so component variables are
+                    // never undefined in living rules or other dynamic paths.
+                    const compCount = Math.max(0, this._componentTracker.componentCount)
+                    if (activeComps.length > 0 && compCount > 0) {
+                        const cm = _getCompMetricsByIndex(0)
+                        const compTemplate = activeComps[0]?.template
+                        let compBinEnergy = 0
+                        if (compTemplate && compTemplate.length > 1) {
+                            const hzForComp = Math.max(40, Math.min(16000, hzCenter))
+                            const logMin = Math.log2(40), logMax = Math.log2(16000)
+                            const norm = (Math.log2(hzForComp) - logMin) / (logMax - logMin)
+                            const pos = norm * (compTemplate.length - 1)
+                            const i0 = Math.max(0, Math.min(compTemplate.length - 1, Math.floor(pos)))
+                            const i1 = Math.max(0, Math.min(compTemplate.length - 1, i0 + 1))
+                            const frac = pos - i0
+                            const v0 = Number(compTemplate[i0]) || 0
+                            const v1 = Number(compTemplate[i1]) || 0
+                            compBinEnergy = clamp01(v0 + (v1 - v0) * frac)
+                        } else {
+                            // No template — use bucket energy
+                            compBinEnergy = clamp01(bucketBase.energy)
+                        }
+                        const attachedBucket = {
+                            ...bucketBase,
+                            compId: cm.compId,
+                            compCentroid: cm.compCentroid,
+                            compFlatness: cm.compFlatness,
+                            compFlux: cm.compFlux,
+                            compOnset: cm.compOnset,
+                            compCount: compCount,
+                            compBinEnergy,
+                        }
+                        writeParticle(attachedBucket, 1, isFund)
+                        writeLine(attachedBucket)
+                    } else {
+                        // No components — bare particle
+                        writeParticle(bucketBase, 1, isFund)
+                        writeLine(bucketBase)
+                    }
                 }
                 hzStart = hzEnd
                 if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
@@ -1880,7 +1931,7 @@ export class ParticleSystem {
 
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visible_count > 0
         if (livingRulesActive) {
-            // Compute entity centroid from all fundamental isFundamental=1 particles
+            // Compute layer centroid from all fundamental isFundamental=1 particles
             let cx = 0, cy = 0, cz = 0, nFund = 0
             const n = Math.min(this._visible_count, this._pos.length / 3)
             for (let i = 0; i < n; i++) {
@@ -1891,7 +1942,7 @@ export class ParticleSystem {
                     nFund++
                 }
             }
-            this._entityCentroid = nFund > 0 ? { x: cx / nFund, y: cy / nFund, z: cz / nFund } : null
+            this._layerCentroid = nFund > 0 ? { x: cx / nFund, y: cy / nFund, z: cz / nFund } : null
             this.applyLivingRulesToRange({ params, inputs: _frameRuleBase }, 0, this._visible_count)
         }
 

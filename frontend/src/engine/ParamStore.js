@@ -23,7 +23,7 @@ export const RULE_DEBUG_FLAGS = {
 
 const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     ruleBlocks: [],
-    ruleEntities: [],
+    ruleLayers: [],
     ruleGlobalBlocks: {
         background: [],
         camera: [],
@@ -44,24 +44,24 @@ const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     },
 })
 
-function _coerceRuleEntity(raw, index) {
+function _coerceRuleLayer(raw, index) {
     const source = (raw && typeof raw === 'object') ? raw : {}
     const id = (typeof source.id === 'string' && source.id.trim())
         ? source.id.trim()
-        : `entity-${index + 1}`
+        : `layer-${index + 1}`
     const name = (typeof source.name === 'string' && source.name.trim())
         ? source.name.trim()
-        : `Entity ${index + 1}`
+        : `Layer ${index + 1}`
     const enabled = source.enabled !== false
     const order = Number.isFinite(source.order) ? Number(source.order) : index
     const definitionsMode = source.definitionsMode === 'special' ? 'special' : 'all'
-    const entityShapeType = (source.entityShapeType === 'cloud' || source.entityShapeType === 'line' || source.entityShapeType === 'camera' || source.entityShapeType === 'background')
-        ? source.entityShapeType
+    const layerShapeType = (source.layerShapeType === 'cloud' || source.layerShapeType === 'line' || source.layerShapeType === 'camera' || source.layerShapeType === 'background')
+        ? source.layerShapeType
         : 'particle'
-    const spacingMode = entityShapeType === 'cloud'
+    const spacingMode = layerShapeType === 'cloud'
         ? (source.spacingMode === 'network' ? 'network' : 'coordinates')
         : 'coordinates'
-    const cloudShape = entityShapeType === 'cloud'
+    const cloudShape = layerShapeType === 'cloud'
         ? (source.cloudShape === 'spherical' || source.cloudShape === 'random' ? source.cloudShape : 'cylindrical')
         : 'cylindrical'
     const definitions = Array.isArray(source.definitions) ? source.definitions.map((def, defIndex) => {
@@ -79,7 +79,7 @@ function _coerceRuleEntity(raw, index) {
         enabled,
         order,
         definitionsMode,
-        entityShapeType,
+        layerShapeType,
         spacingMode,
         cloudShape,
         definitions,
@@ -99,10 +99,10 @@ function _splitLegacyRuleBlocks(ruleBlocks) {
     const input = Array.isArray(ruleBlocks) ? ruleBlocks : []
     const background = input.filter((rule) => rule?.target === 'background')
     const camera = input.filter((rule) => rule?.target === 'camera')
-    const entityRules = input.filter((rule) => rule?.target !== 'background' && rule?.target !== 'camera')
-    const entity = _coerceRuleEntity({ id: 'entity-all', name: 'All', rules: entityRules }, 0)
+    const layerRules = input.filter((rule) => rule?.target !== 'background' && rule?.target !== 'camera')
+    const layer = _coerceRuleLayer({ id: 'layer-all', name: 'All', rules: layerRules }, 0)
     return {
-        entities: [entity],
+        layers: [layer],
         globals: _sanitizeRuleGlobals({ background, camera }),
     }
 }
@@ -110,17 +110,17 @@ function _splitLegacyRuleBlocks(ruleBlocks) {
 function _flattenRuleEntities(entities = [], globals = { background: [], camera: [] }) {
     const blocks = []
     const ordered = [...entities].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    ordered.forEach((entity, entityIndex) => {
-        if (!entity || typeof entity !== 'object') return
-        const baseOrder = entityIndex * 10000
-        const rules = Array.isArray(entity.rules) ? entity.rules : []
+    ordered.forEach((layer, layerIndex) => {
+        if (!layer || typeof layer !== 'object') return
+        const baseOrder = layerIndex * 10000
+        const rules = Array.isArray(layer.rules) ? layer.rules : []
         rules.forEach((rule, ruleIndex) => {
             const order = Number.isFinite(rule?.order) ? Number(rule.order) : ruleIndex
             blocks.push({
                 ...rule,
-                entityId: entity.id,
-                entityName: entity.name,
-                sectionDisabled: rule?.sectionDisabled === true || entity.enabled === false,
+                layerId: layer.id,
+                layerName: layer.name,
+                sectionDisabled: rule?.sectionDisabled === true || layer.enabled === false,
                 order: baseOrder + order,
             })
         })
@@ -674,7 +674,7 @@ const PARAMS_BASE = [
     {
         key: 'objectMode', group: 'mixing', label: 'Engine Mode',
         default: 'particle', unit: '',
-        desc: 'Operating mode. Particle = per-bin positioning. Cloud = harmonic objects with entity-level rules.',
+        desc: 'Operating mode. Particle = per-bin positioning. Cloud = harmonic objects with layer-level rules.',
         isDropdown: true,
         dropdownOptions: [
             { label: 'Particle', value: 'particle' },
@@ -764,7 +764,7 @@ export function migrateRuleSchema(snapshot) {
     const sanitization = sanitizeRuleBlocks(incomingBlocks)
 
     // Schema v2→v3 migration: strip luma and yellow from all rule blocks,
-    // entity rules, and global blocks (luma was removed as a rule output).
+    // layer rules, and global blocks (luma was removed as a rule output).
     const stripLuma = (blocks) => {
         if (!Array.isArray(blocks)) return blocks
         return blocks.map((rule) => {
@@ -777,10 +777,10 @@ export function migrateRuleSchema(snapshot) {
     }
 
     migrated.ruleBlocks = stripLuma(sanitization.ruleBlocks)
-    if (Array.isArray(migrated.ruleEntities)) {
-        migrated.ruleEntities = migrated.ruleEntities.map((entity) => {
-            if (!entity || typeof entity !== 'object') return entity
-            return { ...entity, rules: stripLuma(entity.rules) }
+    if (Array.isArray(migrated.ruleLayers)) {
+        migrated.ruleLayers = migrated.ruleLayers.map((layer) => {
+            if (!layer || typeof layer !== 'object') return layer
+            return { ...layer, rules: stripLuma(layer.rules) }
         })
     }
     if (migrated.ruleGlobalBlocks && typeof migrated.ruleGlobalBlocks === 'object') {
@@ -815,14 +815,14 @@ function _buildInitial() {
         out[p.key] = Object.prototype.hasOwnProperty.call(saved, p.key) ? saved[p.key] : p.default
     }
     out.ruleBlocks = saved.ruleBlocks
-    out.ruleEntities = saved.ruleEntities ?? []
+    out.ruleLayers = saved.ruleLayers ?? []
     out.ruleGlobalBlocks = saved.ruleGlobalBlocks ?? { background: [], camera: [] }
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
     out.palettes = _sanitizePalettes(saved.palettes)
     out.tuners = _sanitizeTuners(saved.tuners)
     out.ruleUiState = _sanitizeRuleUiState(saved.ruleUiState)
-    console.log('[ParamStore] _buildInitial: entities=', Array.isArray(out.ruleEntities) ? out.ruleEntities.length : 0, 'tuners=', Array.isArray(out.tuners) ? out.tuners.length : 0)
+    console.log('[ParamStore] _buildInitial: entities=', Array.isArray(out.ruleLayers) ? out.ruleLayers.length : 0, 'tuners=', Array.isArray(out.tuners) ? out.tuners.length : 0)
     return out
 }
 
@@ -935,7 +935,7 @@ function _notify(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function set(key, value) {
-    const ruleSchemaKeys = new Set(['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState'])
+    const ruleSchemaKeys = new Set(['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState'])
     if (ruleSchemaKeys.has(key)) {
         setMany({ [key]: value })
         return
@@ -949,9 +949,9 @@ export function setMany(updates) {
     _pushUndoSnapshot()
     const patch = (updates && typeof updates === 'object') ? updates : {}
     if (Object.prototype.hasOwnProperty.call(patch, 'ruleBlocks')
-        && !Object.prototype.hasOwnProperty.call(patch, 'ruleEntities')) {
+        && !Object.prototype.hasOwnProperty.call(patch, 'ruleLayers')) {
         const legacy = _splitLegacyRuleBlocks(patch.ruleBlocks)
-        patch.ruleEntities = legacy.entities
+        patch.ruleLayers = legacy.entities
         patch.ruleGlobalBlocks = legacy.globals
     }
     const merged = migrateRuleSchema({ ...params, ...patch })
@@ -965,7 +965,7 @@ export function setMany(updates) {
         changed[key] = nextValue
     }
 
-    const ruleSchemaKeys = ['ruleBlocks', 'ruleEntities', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
+    const ruleSchemaKeys = ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
     const includesRuleSchemaField = ruleSchemaKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))
     if (includesRuleSchemaField) {
         for (const key of ruleSchemaKeys) {
@@ -986,16 +986,16 @@ export function setMany(updates) {
 
     // Auto-save rule state to STORAGE_KEY so it survives page reload
     // without depending on the project draft recovery flow.
-    if (includesRuleSchemaField || Object.prototype.hasOwnProperty.call(patch, 'ruleEntities') || Object.prototype.hasOwnProperty.call(patch, 'ruleGlobalBlocks')) {
+    if (includesRuleSchemaField || Object.prototype.hasOwnProperty.call(patch, 'ruleLayers') || Object.prototype.hasOwnProperty.call(patch, 'ruleGlobalBlocks')) {
         try {
             const snapshot = {}
             for (const key of Object.keys(params)) {
-                if (key === 'ruleEngineEnabled' || key === 'ruleEntities' || key === 'ruleGlobalBlocks' || key === 'ruleSchemaVersion' || key === 'palettes' || key === 'tuners' || key === 'ruleUiState' || key === 'ruleBlocks') {
+                if (key === 'ruleEngineEnabled' || key === 'ruleLayers' || key === 'ruleGlobalBlocks' || key === 'ruleSchemaVersion' || key === 'palettes' || key === 'tuners' || key === 'ruleUiState' || key === 'ruleBlocks') {
                     snapshot[key] = params[key]
                 }
             }
             const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')
-            existing.ruleEntities = snapshot.ruleEntities
+            existing.ruleLayers = snapshot.ruleLayers
             existing.ruleGlobalBlocks = snapshot.ruleGlobalBlocks
             existing.ruleEngineEnabled = snapshot.ruleEngineEnabled
             existing.ruleSchemaVersion = snapshot.ruleSchemaVersion
@@ -1037,7 +1037,7 @@ export function resetToDefaults() {
     }
 
     params.ruleBlocks = []
-    params.ruleEntities = [_coerceRuleEntity({ id: 'entity-all', name: 'All', rules: [] }, 0)]
+    params.ruleLayers = [_coerceRuleLayer({ id: 'layer-all', name: 'All', rules: [] }, 0)]
     params.ruleGlobalBlocks = _sanitizeRuleGlobals(DEFAULT_RULE_ENGINE_STATE.ruleGlobalBlocks)
     params.ruleEngineEnabled = true
     params.ruleSchemaVersion = RULE_SCHEMA_VERSION
@@ -1045,7 +1045,7 @@ export function resetToDefaults() {
     params.tuners = []
     params.ruleUiState = _sanitizeRuleUiState(DEFAULT_RULE_ENGINE_STATE.ruleUiState)
     changed.ruleBlocks = params.ruleBlocks
-    changed.ruleEntities = params.ruleEntities
+    changed.ruleLayers = params.ruleLayers
     changed.ruleGlobalBlocks = params.ruleGlobalBlocks
     changed.ruleEngineEnabled = params.ruleEngineEnabled
     changed.ruleSchemaVersion = params.ruleSchemaVersion
@@ -1208,11 +1208,11 @@ function _buildCanonicalPresetParams(source) {
             canonical[paramDef.key] = _coerceParamValue(paramDef, incoming[paramDef.key])
         }
 
-        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEntities') && Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleLayers') && Object.prototype.hasOwnProperty.call(incoming, 'ruleBlocks')) {
             canonical.ruleBlocks = Array.isArray(incoming.ruleBlocks) ? incoming.ruleBlocks : []
         }
-        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleEntities')) {
-            canonical.ruleEntities = []
+        if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleLayers')) {
+            canonical.ruleLayers = []
         }
         if (!Object.prototype.hasOwnProperty.call(incoming, 'ruleGlobalBlocks')) {
             canonical.ruleGlobalBlocks = DEFAULT_RULE_ENGINE_STATE.ruleGlobalBlocks

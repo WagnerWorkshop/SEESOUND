@@ -547,11 +547,8 @@ export class ComponentTracker {
 
             // Apply sparsity penalty: if meanScore * (1 - lambda) beats the
             // best previous match, start a new component
-            // Also start a new component if the best previous match would be
-            // killed by soft threshold — this prevents silent frames from
-            // producing zero components.
             const sparsityDiscount = 1 - lambda
-            if ((meanScore * sparsityDiscount > bestScore || bestScore < lambda) && iter < maxComp - 1) {
+            if (meanScore * sparsityDiscount > bestScore && iter < maxComp - 1) {
                 // Create a new template from the residual
                 const newTemplate = new Float64Array(CQT_BINS)
                 for (let i = 0; i < CQT_BINS; i++) {
@@ -571,23 +568,22 @@ export class ComponentTracker {
                     activation += residual[i] * newTemplate[i]
                 }
                 activation = softThreshold(activation, lambda * 0.5)
-                // Always produce at least a minimal activation so the extraction
-                // loop never stalls on quiet frames.
-                if (activation <= EPS) activation = EPS
 
-                const newComp = createComponent(iter)
-                for (let i = 0; i < CQT_BINS; i++) {
-                    newComp.template[i] = newTemplate[i]
-                }
-                newComp.activation = activation
-                extracted.push(newComp)
+                if (activation > EPS) {
+                    const newComp = createComponent(iter)
+                    for (let i = 0; i < CQT_BINS; i++) {
+                        newComp.template[i] = newTemplate[i]
+                    }
+                    newComp.activation = activation
+                    extracted.push(newComp)
 
-                // Subtract explained energy from residual
-                for (let i = 0; i < CQT_BINS; i++) {
-                    residual[i] = Math.max(EPS, residual[i] - activation * newTemplate[i])
+                    // Subtract explained energy from residual
+                    for (let i = 0; i < CQT_BINS; i++) {
+                        residual[i] = Math.max(EPS, residual[i] - activation * newTemplate[i])
+                    }
+                    remainingEnergy = residual.reduce((s, v) => s + v, 0)
+                    continue
                 }
-                remainingEnergy = residual.reduce((s, v) => s + v, 0)
-                continue
             }
 
             // Use best-matching previous component
@@ -603,10 +599,11 @@ export class ComponentTracker {
                 activation += residual[i] * template[i]
             }
             activation = softThreshold(activation, lambda)
-            // Always produce at least a minimal activation so the extraction
-            // loop never stalls. Each iteration MUST produce a component to
-            // guarantee componentCount > 0 for downstream rules.
-            if (activation <= EPS) activation = EPS
+
+            if (activation <= EPS) {
+                // Component no longer active — skip
+                continue
+            }
 
             // Slightly adapt the template to the current frame (online learning)
             const learnRate = 0.3

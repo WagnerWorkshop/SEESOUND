@@ -40,11 +40,11 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
         rangeSection.appendChild(createRangePairControl(definition, syncRegistry, deps))
     }
 
-    // ── Time dropdown only (engine mode is derived from entity settings) ──
+    // ── Time dropdown only (engine mode is derived from layer settings) ──
     const modeSection = el('section', 'cp-section')
     modeSection.appendChild(el('h3', 'cp-section-title', { text: 'Engine Mode' }))
     const modeInfo = el('div', 'cp-setting-hint cp-mode-info', {
-        text: 'Engine mode is derived automatically from entity type settings in Styles.',
+        text: 'Engine mode is derived automatically from layer type settings in Styles.',
     })
     modeSection.appendChild(modeInfo)
 

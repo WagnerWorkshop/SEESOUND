@@ -1,0 +1,43 @@
+RuleEditorPanel.js:79 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:80 return entity?.layerShapeType || 'particle'
+RuleEditorPanel.js:85 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:86 if (entity?.layerShapeType !== 'cloud') return 'coordinates'
+RuleEditorPanel.js:87 return entity?.spacingMode || 'coordinates'
+RuleEditorPanel.js:92 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:93 if (entity?.layerShapeType !== 'cloud') return 'cylindrical'
+RuleEditorPanel.js:94 return entity?.cloudShape || 'cylindrical'
+RuleEditorPanel.js:143 // Per-bin variables are particle-only; entity variables are cloud-only.
+RuleEditorPanel.js:148 // Per-bin variables are available in ALL modes; only entity variables are cloud-only.
+RuleEditorPanel.js:152 // Cloud mode: all variables allowed (per-bin + entity + overall)
+RuleEditorPanel.js:233 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:234 return Array.isArray(entity?.rules) ? layer.rules : []
+RuleEditorPanel.js:254 if (layer.id !== activeOwner.id) return entity
+RuleEditorPanel.js:255 return { ...entity, rules: safeRules }
+RuleEditorPanel.js:480 const newId = `entity-${Date.now()}`
+RuleEditorPanel.js:483 ...entity,
+RuleEditorPanel.js:522 const entity = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+RuleEditorPanel.js:523 if (!entity) return
+RuleEditorPanel.js:665 id: `entity-${Date.now()}`,
+LayerManager.js:5 * entity/layer. Each layer compiles and runs its own rules independently
+LayerManager.js:30 /** @type {{ entity: object, ps: ParticleSystem }[]} */
+LayerManager.js:86 for (const entity of sorted) {
+LayerManager.js:87 const key = entity.id ?? entity.name ?? null
+LayerManager.js:93 const isModifier = entity.layerType === 'modifier'
+LayerManager.js:100 layer = { data: entity, ps }
+LayerManager.js:104 const isDisabled = entity.enabled === false
+LayerManager.js:106 ruleLayers: [entity],
+LayerManager.js:113 layer.data = entity
+LayerManager.js:186 const camLayer = this._layers.find((l) => l.entity?.enabled !== false && l.ps._compiledRules?.cameraRuleCount > 0)
+LayerManager.js:202 const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+LayerManager.js:262 const primary = this._layers.find((l) => l.entity?.enabled !== false)?.ps
+LayerManager.js:310 return this._layers.filter((l) => l.entity?.enabled !== false).length
+LayerManager.js:326 const layer = this._layers.find((l) => l.entity?.enabled !== false && l.entity?.layerType !== 'modifier')
+LayerManager.js:327 || this._layers.find((l) => l.entity?.enabled !== false)
+ParamStore.js:781 migrated.ruleLayers = migrated.ruleLayers.map((entity) => {
+ParamStore.js:782 if (!layer || typeof layer !== 'object') return entity
+ParamStore.js:783 return { ...entity, rules: stripLuma(layer.rules) }
+SeesoundEngine.js:68 // Param subscription — recompile rules when entity/global rules change
+SeesoundEngine.js:427 // Derive engine mode from entity settings
+SeesoundEngine.js:464 // Pass entity structure directly so LayerManager can separate per-layer.
+SeesoundEngine.js:494 console.log('[Engine] _flattenRules: entity=', layer.name, 'id=', layer.id, 'rulesCount=', layerRules.length, 'targets=', layerRules.map(r => r.target))
+SeesoundEngine.js:496 console.log('[Engine] _flattenRules: EMPTY entity=', layer.name, 'id=', layer.id, 'shapeType=', layer.layerShapeType, 'allKeys=', Object.keys(entity).join(','), 'Has rules key=', 'rules' in entity, 'rules type=', typeof layer.rules, 'isArray=', Array.isArray(layer.rules))
