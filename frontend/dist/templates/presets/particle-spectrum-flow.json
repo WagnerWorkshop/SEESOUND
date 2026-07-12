@@ -52,7 +52,7 @@
             "collapsedRules": [],
             "selectedContextGroup": "spawnedParticles"
         },
-        "ruleEntities": [
+        "ruleLayers": [
             {
                 "id": "layer-spectrum",
                 "name": "Spectrum Flow",

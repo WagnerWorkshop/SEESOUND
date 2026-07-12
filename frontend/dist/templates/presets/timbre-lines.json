@@ -46,7 +46,7 @@
             "collapsedRules": [],
             "selectedContextGroup": "spawnedParticles"
         },
-        "ruleEntities": [
+        "ruleLayers": [
             {
                 "id": "layer-particle-layer",
                 "name": "Particle Layer",

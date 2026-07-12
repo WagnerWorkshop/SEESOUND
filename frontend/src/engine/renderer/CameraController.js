@@ -142,8 +142,8 @@ export class CameraController {
         this._listen(this.canvas, 'contextmenu', (e) => e.preventDefault())
 
         this._listen(this.col, 'mousedown', (e) => {
-            if (e.target === this.canvas || this.wrapper.contains(e.target) && e.target !== this.col) return
-            if (e.button !== 0) return
+            if (this.wrapper.contains(e.target)) return
+            if (e.button !== 0 && e.button !== 1) return
             this.wrapperState.active = true
             this.wrapperState.lastX = e.clientX
             this.wrapperState.lastY = e.clientY
@@ -151,7 +151,7 @@ export class CameraController {
         })
 
         this._listen(this.col, 'touchstart', (e) => {
-            if (e.target === this.canvas || this.wrapper.contains(e.target) && e.target !== this.col) return
+            if (this.wrapper.contains(e.target)) return
             if (e.touches.length === 1) {
                 this.wrapperState.active = true
                 this.wrapperState.lastX = e.touches[0].clientX
@@ -164,8 +164,18 @@ export class CameraController {
             }
         }, { passive: false })
 
-        this._listen(this.canvas, 'mousedown', (e) => {
+        this._listen(this.wrapper, 'mousedown', (e) => {
             if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
+            // Don't start camera/wrapper drag on resize handles
+            if (e.target.closest('[class*="resize-handle"]')) return
+            if (e.button === 1) {
+                // Middle-click drag — pan the canvas wrapper
+                this.wrapperState.active = true
+                this.wrapperState.lastX = e.clientX
+                this.wrapperState.lastY = e.clientY
+                e.preventDefault()
+                return
+            }
             this.pointerState.active = true
             this.pointerState.button = e.button
             this.pointerState.lastX = e.clientX
@@ -173,7 +183,10 @@ export class CameraController {
             e.preventDefault()
         })
 
-        this._listen(this.canvas, 'touchstart', (e) => {
+        this._listen(this.wrapper, 'touchstart', (e) => {
+            // Don't start camera/wrapper drag on resize handles
+            const target = e.target
+            if (target?.closest && target.closest('[class*="resize-handle"]')) return
             if (e.touches.length === 1) {
                 this._touchGestureMode = null
                 this.pointerState.active = true
@@ -317,7 +330,7 @@ export class CameraController {
         }, { passive: false })
 
         this._listen(this.col, 'wheel', (e) => {
-            if (e.target === this.canvas || this.wrapper.contains(e.target) && e.target !== this.col) return
+            if (this.wrapper.contains(e.target)) return
             e.preventDefault()
             const scaleSpeed = 0.001
             const delta = -e.deltaY * scaleSpeed
