@@ -54,11 +54,11 @@
         },
         "ruleEntities": [
             {
-                "id": "entity-spectrum",
+                "id": "layer-spectrum",
                 "name": "Spectrum Flow",
                 "enabled": true,
                 "order": 0,
-                "entityShapeType": "particle",
+                "layerShapeType": "particle",
                 "spacingMode": "coordinates",
                 "cloudShape": "cylindrical",
                 "definitions": [],

@@ -2283,7 +2283,7 @@ export function initControlPanel(container) {
     buildFileMenu(menuPanes.get('start').body, syncRegistry, deps);
     buildViewMenu(menuPanes.get("view").body, syncRegistry, deps);
     buildSettingsMenu(menuPanes.get("settings").body, syncRegistry, deps);
-    buildRulesMenu(menuPanes.get("rules").body, syncRegistry, deps);
+    buildRulesMenu(menuPanes.get("rules").body, menuPanes.get("rules").headerActions, syncRegistry, deps);
 
     refreshHistoryButtons(true)
 

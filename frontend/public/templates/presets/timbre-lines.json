@@ -46,13 +46,13 @@
             "collapsedRules": [],
             "selectedContextGroup": "spawnedParticles"
         },
-        "ruleEntities": [
+        "ruleLayers": [
             {
-                "id": "entity-particle-layer",
+                "id": "layer-particle-layer",
                 "name": "Particle Layer",
                 "enabled": true,
                 "order": 0,
-                "entityShapeType": "particle",
+                "layerShapeType": "particle",
                 "spacingMode": "coordinates",
                 "cloudShape": "cylindrical",
                 "definitions": [],
@@ -124,11 +124,11 @@
                 ]
             },
             {
-                "id": "entity-line-layer",
+                "id": "layer-line-layer",
                 "name": "Timbre Lines",
                 "enabled": true,
                 "order": 1,
-                "entityShapeType": "line",
+                "layerShapeType": "line",
                 "spacingMode": "coordinates",
                 "cloudShape": "cylindrical",
                 "definitions": [],

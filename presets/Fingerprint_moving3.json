@@ -71,14 +71,14 @@
     "trackingInterval": 0.5,
     "timeMode": "immediate",
     "ruleBlocks": [],
-    "ruleEntities": [
+    "ruleLayers": [
       {
-        "id": "entity-all",
+        "id": "layer-all",
         "name": "All Frequences",
         "enabled": true,
         "order": 0,
         "definitionsMode": "all",
-        "entityShapeType": "particle",
+        "layerShapeType": "particle",
         "spacingMode": "coordinates",
         "cloudShape": "cylindrical",
         "definitions": [],
@@ -333,11 +333,11 @@
         ]
       },
       {
-        "id": "entity-1781964068086",
+        "id": "layer-1781964068086",
         "name": "Basic pitch",
         "enabled": true,
         "order": 1,
-        "entityShapeType": "particle",
+        "layerShapeType": "particle",
         "spacingMode": "coordinates",
         "cloudShape": "cylindrical",
         "definitions": [],

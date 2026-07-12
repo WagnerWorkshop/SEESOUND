@@ -760,6 +760,14 @@ function _loadDisabled() {
 export function migrateRuleSchema(snapshot) {
     const source = (snapshot && typeof snapshot === 'object') ? snapshot : {}
     const migrated = { ...source }
+
+    // Schema v2→v3 migration: rename ruleEntities → ruleLayers
+    // (happened during the entity→layer rename in the codebase)
+    if (Array.isArray(migrated.ruleEntities) && !Array.isArray(migrated.ruleLayers)) {
+        migrated.ruleLayers = migrated.ruleEntities
+        delete migrated.ruleEntities
+    }
+
     const incomingBlocks = Array.isArray(source.ruleBlocks) ? source.ruleBlocks : []
     const sanitization = sanitizeRuleBlocks(incomingBlocks)
 

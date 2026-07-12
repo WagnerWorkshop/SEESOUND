@@ -1,4 +1,4 @@
-export function buildRulesMenu(body, syncRegistry, deps) {
+export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
     const {
         el, UI_TEXT, params, set, registerSync, NONE_VAR, RULE_OPERATORS, FIXED_RULE_ROWS, RULE_VARIABLE_ID_SET,
         RULE_SLOT_MARKER_REGEX, BUTTON_ICON_MAP, getRuleText, getRuleSectionLabel, getRuleSubgroupLabel, getRuleRowLabel,
@@ -21,13 +21,11 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     // Layer list comes first, then the rules wrapper (moved inline when expanded)
     panel.append(layerList, wrapper)
 
-    // ── Layer list footer with layer actions ──
-    const layerListFooter = el('div', 'cp-styles-layer-list-footer')
+    // ── Add Layer button in the menu pane header ──
     const addLayerBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: 'Layer' })
     applyButtonIcon(addLayerBtn, BUTTON_ICON_MAP.add, 'Layer')
     addLayerBtn.addEventListener('click', () => openLayerCreationModal())
-    layerListFooter.appendChild(addLayerBtn)
-    panel.append(layerListFooter)
+    headerActions.prepend(addLayerBtn)
 
     // ── Available audio track IDs ─────────────────────────────────────────
     // Layers filter which audio stem they react to.
@@ -47,6 +45,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     let activeOwner = { type: 'layer', id: null }
     let popupOpen = false
     let draggingLayerId = null
+    let suppressLayerListRebuild = false
 
     const RULE_INPUT_IDS = [...RULE_VARIABLE_ID_SET]
     const RULE_INPUT_ENTRIES = RULE_INPUT_IDS
@@ -438,13 +437,14 @@ export function buildRulesMenu(body, syncRegistry, deps) {
 
             // ── Row click → toggle expand/collapse ──
             row.addEventListener('click', (e) => {
-                // Don't toggle if clicking on controls
+                // Don't toggle if clicking on controls or inside the expanded rules area
                 const target = e.target
                 if (target.closest('.cp-input-toggle')) return
                 if (target.closest('.cp-styles-move-btn')) return
                 if (target.closest('.cp-btn-danger')) return
                 if (target.closest('.cp-layer-expand-btn')) return
                 if (target.closest('.cp-styles-layer-name-input')) return
+                if (target.closest('.cp-layer-rules-body')) return
                 toggleOwnerExpanded(ownerRef)
             })
 
@@ -1231,6 +1231,7 @@ export function buildRulesMenu(body, syncRegistry, deps) {
         // Local edits already updated rowState in-place; ignore the immediate
         // echo notification only when it matches exactly what we just wrote.
         pendingLocalRuleBlocksSignature = serializeRuleBlocksSignature(nextBlocks)
+        suppressLayerListRebuild = true
         setActiveRules(nextBlocks)
         refreshAllRowOutputs()
     }
@@ -2019,9 +2020,6 @@ export function buildRulesMenu(body, syncRegistry, deps) {
     }
 
     const applyRowsFromParams = () => {
-        renderLayerList()
-        ensureActiveOwner()
-        updateOwnerSectionVisibility()
         const nextBlocks = getActiveRules()
         const incomingSignature = serializeRuleBlocksSignature(nextBlocks)
         if (pendingLocalRuleBlocksSignature !== null && incomingSignature === pendingLocalRuleBlocksSignature) {
@@ -2029,11 +2027,20 @@ export function buildRulesMenu(body, syncRegistry, deps) {
             return
         }
         pendingLocalRuleBlocksSignature = null
+        if (suppressLayerListRebuild) {
+            suppressLayerListRebuild = false
+            applyRowsFromRuleBlocks(nextBlocks)
+            if (popupOpen) renderInlineMeta()
+            return
+        }
+        renderLayerList()
+        ensureActiveOwner()
+        updateOwnerSectionVisibility()
         applyRowsFromRuleBlocks(nextBlocks)
         if (popupOpen) renderInlineMeta()
     }
 
-    registerSync(syncRegistry, applyRowsFromParams, ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks'])
+    registerSync(syncRegistry, applyRowsFromParams, ['ruleLayers', 'ruleGlobalBlocks'])
     applyRowsFromParams()
 
     window.addEventListener('seesound:rule-probe', (event) => {
