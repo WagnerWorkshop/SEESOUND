@@ -3,6 +3,7 @@ import { compileRules } from './rules/RuleCompiler.js'
 import { ParticleArchive } from './ParticleArchive.js'
 import { createIso226CompensationLut, sampleIso226CompensationDb } from './audio/Iso226Lut.js'
 import { ComponentTracker } from './audio/ComponentTracker.js'
+import { HarmonicPercussiveSplitter } from './audio/HarmonicPercussiveSplitter.js'
 
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
@@ -355,6 +356,14 @@ export class ParticleSystem {
         this._componentTracker = new ComponentTracker({ maxComponents: 12 })
         /** @type {number} Cached component distinctness */
         this._lastDistinctness = -1
+
+        // ── Harmonic-Percussive Source Separation (HPSS) ──
+        /** @type {HarmonicPercussiveSplitter} */
+        this._hpss = new HarmonicPercussiveSplitter({ frameRate: 60 })
+        /** @type {Float64Array|null} Current HPSS harmonic data (per-bin) */
+        this.harmonicEnergy = null
+        /** @type {Float64Array|null} Current HPSS percussive data (per-bin) */
+        this.percussiveEnergy = null
 
         // ── Particle age buffer (frames since spawn) ──
         this._particleAge = new Float32Array(this._N)
@@ -980,6 +989,7 @@ export class ParticleSystem {
         if (this._trackerLastFftSize !== currentFftForTracker) {
             if (this._trackerLastFftSize !== undefined) {
                 this._componentTracker.reset()
+                this._hpss.reset()
             }
             this._trackerLastFftSize = currentFftForTracker
         }
@@ -994,6 +1004,40 @@ export class ParticleSystem {
             sampleRate,
             gainMult,
         })
+
+        // ── Harmonic-Percussive Source Separation ─────────────────────
+        // Build a log-frequency frame (240 CQT bins) from the raw data
+        // and run HPSS median filtering on it.
+        // The HPSS outputs (harmonicEnergy, percussiveEnergy) are Float64Arrays
+        // of length CQT_BINS (240) that can be sampled at arbitrary Hz.
+        {
+            const CQT_BINS = 240;
+            const LOG_FREQ_MIN_HPSS = Math.log2(40);
+            const LOG_FREQ_MAX_HPSS = Math.log2(16000);
+            const hpssFrame = new Float64Array(CQT_BINS);
+            const nyquist = sampleRate / 2;
+            for (let b = 0; b < CQT_BINS; b++) {
+                const t = b / (CQT_BINS - 1);
+                const hz = Math.pow(2, LOG_FREQ_MIN_HPSS + t * (LOG_FREQ_MAX_HPSS - LOG_FREQ_MIN_HPSS));
+                let mag = 0;
+                if (binMagArr && binMagArr.length > 0) {
+                    // Sample from worklet CQT data
+                    mag = sampleLogCqtArrayAtHz(binMagArr, hz) ?? 0;
+                } else if (freqData && freqData.length > 0) {
+                    const binIdx = (hz / nyquist) * (currentFftForTracker / 2);
+                    const i0 = Math.max(0, Math.min(freqData.length - 1, Math.floor(binIdx)));
+                    const i1 = Math.max(0, Math.min(freqData.length - 1, i0 + 1));
+                    const frac = binIdx - i0;
+                    const v0 = freqData[i0] / 255;
+                    const v1 = freqData[i1] / 255;
+                    mag = v0 + (v1 - v0) * frac;
+                }
+                hpssFrame[b] = Math.max(0, mag * gainMult);
+            }
+            const hpssOut = this._hpss.processFrame(hpssFrame);
+            this.harmonicEnergy = hpssOut.harmonic;
+            this.percussiveEnergy = hpssOut.percussive;
+        }
 
         // Adjust Three.js blending mode
         if (!luminousMode) {
@@ -1211,7 +1255,7 @@ export class ParticleSystem {
             }
             const comp = _comps[compIdx]
             return {
-                compId: comp.id,
+                compId: comp.streamId,
                 compCentroid: clamp01(comp.centroid / 16000),
                 compFlatness: clamp01(comp.flatness),
                 compFlux: clamp01(comp.flux),
@@ -1272,6 +1316,9 @@ export class ParticleSystem {
             const compCount = Number.isFinite(bucket.compCount) ? bucket.compCount : undefined
             // Per-component bin energy — from component's own spectrum
             const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
+            // HPSS variables
+            const harmonicEnergy = Number.isFinite(bucket.harmonicEnergy) ? bucket.harmonicEnergy : undefined
+            const percussiveEnergy = Number.isFinite(bucket.percussiveEnergy) ? bucket.percussiveEnergy : undefined
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -1318,6 +1365,9 @@ export class ParticleSystem {
                         componentCount: compCount > 0 ? compCount : undefined,
                         // Per-component bin energy — from component's own spectrum
                         componentBinEnergy: compBinEnergy,
+                        // HPSS variables
+                        harmonicEnergy,
+                        percussiveEnergy,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1404,6 +1454,9 @@ export class ParticleSystem {
             const compCount = Number.isFinite(bucket.compCount) ? bucket.compCount : undefined
             // Per-component bin energy — from component's own spectrum
             const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
+            // HPSS variables
+            const harmonicEnergy = Number.isFinite(bucket.harmonicEnergy) ? bucket.harmonicEnergy : undefined
+            const percussiveEnergy = Number.isFinite(bucket.percussiveEnergy) ? bucket.percussiveEnergy : undefined
 
             const y = (freqNorm * 2 - 1) * hh
             const x = 0
@@ -1452,6 +1505,9 @@ export class ParticleSystem {
                         componentCount: compCount > 0 ? compCount : undefined,
                         // Per-component bin energy — from component's own spectrum
                         componentBinEnergy: compBinEnergy,
+                        // HPSS variables
+                        harmonicEnergy,
+                        percussiveEnergy,
                         // Per-bin music theory
                         notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                         octave: midiToOctave(frequencyToMidi(hz)),
@@ -1595,6 +1651,8 @@ export class ParticleSystem {
             // Per-component variables
             'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
             'componentOnset', 'componentCount', 'componentBinEnergy',
+            // HPSS variables
+            'harmonicEnergy', 'percussiveEnergy',
         ])
         const spawnInputs = this._compiledRules?.requiredInputsByTarget?.spawnedParticles ?? []
         const lineInputs = this._compiledRules?.requiredInputsByTarget?.lines ?? []
@@ -1785,10 +1843,15 @@ export class ParticleSystem {
                 // This ensures overlapping harmonics from different instruments
                 // produce distinct particles even at the same frequency.
                 const activeComps = this._componentTracker.components || []
+                // Sample HPSS data at this bucket's frequency
+                const hpssHarmonic = this.harmonicEnergy ? (sampleLogCqtArrayAtHz(this.harmonicEnergy, hzCenter) ?? 0) : 0;
+                const hpssPercussive = this.percussiveEnergy ? (sampleLogCqtArrayAtHz(this.percussiveEnergy, hzCenter) ?? 0) : 0;
                 const bucketBase = {
                     hz: hzCenter,
                     byte: peakByteBucket,
                     energy: bucketEnergy,
+                    harmonicEnergy: clamp01(hpssHarmonic),
+                    percussiveEnergy: clamp01(hpssPercussive),
                     binPan: sumPanWeight > 0 ? (sumPan / sumPanWeight) : 0,
                     binRMSEnergy: clamp01(avgRaw),
                     binMagnitude: needBinMagnitude ? (sumBinMagnitude / count) : undefined,

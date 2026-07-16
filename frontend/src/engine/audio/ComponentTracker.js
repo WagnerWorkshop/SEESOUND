@@ -642,6 +642,27 @@ export class ComponentTracker {
         // Sort extracted components by activation descending
         extracted.sort((a, b) => b.activation - a.activation)
 
+        // ── Deduplicate near-identical components ──
+        // The epsilon activation floor can produce several components with
+        // nearly identical templates (each iteration barely changes the
+        // residual). Merge them by keeping only the first component for
+        // each distinct spectral shape.
+        const unique = []
+        const DUP_SIMILARITY = 0.92
+        for (const comp of extracted) {
+            let isDuplicate = false
+            for (const existing of unique) {
+                const sim = cosineSimilarity(comp.template, existing.template)
+                if (sim > DUP_SIMILARITY) {
+                    isDuplicate = true
+                    break
+                }
+            }
+            if (!isDuplicate) unique.push(comp)
+        }
+        extracted.length = 0
+        extracted.push(...unique)
+
         // ── Fallback: ensure at least one non-degenerate component ──
         // When audio is very quiet or during fade-in ramps, the matching-
         // pursuit loop may fail to extract any component (all activations
@@ -683,6 +704,7 @@ export class ComponentTracker {
 
         const prev = this._prevComponents
         const curr = this._components
+        const matchThreshold = this._matchThreshold
 
         // Build similarity matrix (curr × prev)
         const simMatrix = curr.map((c) =>
@@ -712,6 +734,13 @@ export class ComponentTracker {
                 curr[ci].streamId = matchedPrev.streamId
                 curr[ci].age = matchedPrev.age + 1
                 assignedPrev.add(bestPj)
+            } else if (ci < prev.length) {
+                // No similarity match, but inherit streamId by index to
+                // preserve component identity across frames when the template
+                // has drifted or during fallback/noise frames.
+                // This prevents a new streamId every frame (rainbow effect).
+                curr[ci].streamId = prev[ci].streamId
+                curr[ci].age = prev[ci].age + 1
             } else {
                 // No match — this is a new component
                 curr[ci].streamId = this._nextStreamId++
@@ -883,7 +912,7 @@ export class ComponentTracker {
      */
     getComponentMetrics() {
         return this._components.map((c) => ({
-            componentId: c.id,
+            componentId: c.streamId,
             centroid: c.centroid,
             flatness: c.flatness,
             flux: c.flux,

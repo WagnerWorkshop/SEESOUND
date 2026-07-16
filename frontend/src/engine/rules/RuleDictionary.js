@@ -59,6 +59,9 @@ const _INPUT_RANGES = Object.freeze({
     componentOnset: [0, 1],
     componentCount: [0, 16],
     componentBinEnergy: [0, 1],
+    // HPSS (harmonic-percussive source separation) variables
+    harmonicEnergy: [0, 1],
+    percussiveEnergy: [0, 1],
 })
 
 const _legacyInputAliases = [

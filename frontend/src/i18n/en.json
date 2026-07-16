@@ -819,6 +819,20 @@
       "label": "Component Bin Energy",
       "technicalName": "componentBinEnergy",
       "description": "Energy of this specific frequency bin within the component isolated spectrum."
+    },
+    {
+      "id": "harmonicEnergy",
+      "group": "detail",
+      "label": "Harmonic Energy",
+      "technicalName": "harmonicEnergy",
+      "description": "Sustained (harmonic) energy after HPSS median filtering across time. Strong for vocals, strings, sustained tones."
+    },
+    {
+      "id": "percussiveEnergy",
+      "group": "detail",
+      "label": "Percussive Energy",
+      "technicalName": "percussiveEnergy",
+      "description": "Instantaneous (percussive) energy after HPSS median filtering across frequency bins. Strong for drums, plucks, transients."
     }
   ]
 }
