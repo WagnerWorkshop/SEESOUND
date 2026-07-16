@@ -52,8 +52,8 @@ const _INPUT_RANGES = Object.freeze({
     canvasHeight: [0, Number.POSITIVE_INFINITY],
     audioLengthSec: [0, Number.POSITIVE_INFINITY],
     // Per-component analysis variables
-    componentId: [0, 15],
-    componentCentroid: [0, 1],
+    componentId: [0, 255],
+    componentCentroid: [0, 16000],
     componentFlatness: [0, 1],
     componentFlux: [0, 1],
     componentOnset: [0, 1],
@@ -62,6 +62,12 @@ const _INPUT_RANGES = Object.freeze({
     // HPSS (harmonic-percussive source separation) variables
     harmonicEnergy: [0, 1],
     percussiveEnergy: [0, 1],
+    // Iterative subtraction (time-domain source separation) variables
+    iterativeSourceCount: [0, 16],
+    iterativeSourceF0: [0, 22050],
+    iterativeSourceVolume: [0, 1],
+    iterativeSourceCrest: [0, 1],
+    iterativeSourceSymmetry: [0, 2],
 })
 
 const _legacyInputAliases = [
@@ -113,6 +119,12 @@ const _INPUT_MODES = {
     componentOnset: ['particle', 'cloud', 'tracing', 'lines'],
     componentCount: ['particle', 'cloud', 'tracing', 'lines'],
     componentBinEnergy: ['particle', 'cloud', 'tracing', 'lines'],
+    // Iterative subtraction variables — available in all modes
+    iterativeSourceCount: ['particle', 'cloud', 'tracing', 'lines'],
+    iterativeSourceF0: ['particle', 'cloud', 'tracing', 'lines'],
+    iterativeSourceVolume: ['particle', 'cloud', 'tracing', 'lines'],
+    iterativeSourceCrest: ['particle', 'cloud', 'tracing', 'lines'],
+    iterativeSourceSymmetry: ['particle', 'cloud', 'tracing', 'lines'],
 }
 
 const _inputEntries = RULE_VARIABLES.concat(_legacyInputAliases).map((entry) => ({

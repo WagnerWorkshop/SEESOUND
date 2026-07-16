@@ -458,6 +458,24 @@ const PARAMS_BASE = [
         desc: 'How aggressively the system separates sound sources. Low = blended, High = isolated components.',
         canDisable: false,
     },
+    // ── Iterative Subtraction (Time-Domain Source Separation) ───────────────
+    {
+        key: 'separationMode', group: 'inputProcessing', label: 'Separation Mode',
+        default: 'none',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: 'None', value: 'none' },
+            { label: 'Iterative Subtraction (Time-Domain)', value: 'iterative' },
+        ],
+        desc: 'Source separation algorithm. Iterative Subtraction extracts tonal instrument waveforms from the raw time-domain signal without FFT.',
+        canDisable: false,
+    },
+    {
+        key: 'separationThreshold', group: 'inputProcessing', label: 'Separation Threshold',
+        min: 0.05, max: 0.5, step: 0.01, default: 0.2, unit: '',
+        desc: 'Periodicity confidence threshold. Higher = fewer, cleaner sources; Lower = more sources including weaker harmonics.',
+        canDisable: false,
+    },
 
     // ── Geometry ────────────────────────────────────────────────────────────
     {

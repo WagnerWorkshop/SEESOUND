@@ -1039,6 +1039,28 @@ export class ParticleSystem {
             this.percussiveEnergy = hpssOut.percussive;
         }
 
+        // ── Iterative Subtraction (Time-Domain Source Separation) ──────
+        // Read organically-discovered tonal sources from the AudioEngine.
+        // Each source has f0, volume, crest factor, symmetry — stored per-frame
+        // and exposed as global rule variables so rules can react to source count
+        // and the dominant source's characteristics.
+        {
+            const iterSources = ae.getIterativeSources?.() ?? null
+            const iterCount = ae.getIterativeSourceCount?.() ?? 0
+            this._iterSourceCount = iterCount
+            if (Array.isArray(iterSources) && iterSources.length > 0) {
+                this._iterFirstF0 = iterSources[0].f0 ?? 0
+                this._iterFirstVol = iterSources[0].volume ?? 0
+                this._iterFirstCrest = iterSources[0].crest ?? 0
+                this._iterFirstSym = iterSources[0].symmetry ?? 0
+            } else {
+                this._iterFirstF0 = 0
+                this._iterFirstVol = 0
+                this._iterFirstCrest = 0
+                this._iterFirstSym = 0
+            }
+        }
+
         // Adjust Three.js blending mode
         if (!luminousMode) {
             if (this._mat.blending !== THREE.NormalBlending) {
@@ -1161,6 +1183,12 @@ export class ParticleSystem {
             spectralSpread: clamp01(ae.spectralSpread),
             spectralSkewness: clamp01(ae.spectralSkewness),
             chromagram: clamp01(ae.chromagram),
+            // Iterative subtraction (time-domain source separation)
+            iterativeSourceCount: this._iterSourceCount ?? 0,
+            iterativeSourceF0: this._iterFirstF0 ?? 0,
+            iterativeSourceVolume: this._iterFirstVol ?? 0,
+            iterativeSourceCrest: this._iterFirstCrest ?? 0,
+            iterativeSourceSymmetry: this._iterFirstSym ?? 0,
         }
         frameBinInputs.amplitude = frameBinInputs.globalRmsEnergy
         const frameBinScanLength = Math.max(
@@ -1256,7 +1284,8 @@ export class ParticleSystem {
             const comp = _comps[compIdx]
             return {
                 compId: comp.streamId,
-                compCentroid: clamp01(comp.centroid / 16000),
+                // Pass raw centroid in Hz — users can normalize in their rules
+                compCentroid: comp.centroid || 0,
                 compFlatness: clamp01(comp.flatness),
                 compFlux: clamp01(comp.flux),
                 compOnset: clamp01(comp.onset),
@@ -1314,9 +1343,7 @@ export class ParticleSystem {
             const compFlux = Number.isFinite(bucket.compFlux) ? bucket.compFlux : undefined
             const compOnset = Number.isFinite(bucket.compOnset) ? bucket.compOnset : undefined
             const compCount = Number.isFinite(bucket.compCount) ? bucket.compCount : undefined
-            // Per-component bin energy — from component's own spectrum
             const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
-            // HPSS variables
             const harmonicEnergy = Number.isFinite(bucket.harmonicEnergy) ? bucket.harmonicEnergy : undefined
             const percussiveEnergy = Number.isFinite(bucket.percussiveEnergy) ? bucket.percussiveEnergy : undefined
             const y = (freqNorm * 2 - 1) * hh
@@ -1343,35 +1370,33 @@ export class ParticleSystem {
             if (emitLightParticles) {
                 this.applySpawnRulesToParticle({
                     params,
-                    // Use cached frame-level inputs + override per-bin values
-                    inputs: Object.assign({}, _frameRuleBase, {
-                        frequencyHz: hz,
-                        normFreq: freqNorm,
-                        pan: binPan,
-                        binMagnitude,
-                        binPhase: binPhaseMetric,
-                        binFlux: binFluxMetric,
-                        binPhaseDeviation: binPhaseDevMetric,
-                        binAttackTime: binAttackTimeMetric,
-                        binEnvelope: binEnvelopeMetric,
-                        binEnvelopeState: binEnvelopeMetric,
-                        binRMSEnergy: binRmsMetric,
-                        // Per-component variables
-                        componentId: compId >= 0 ? compId : undefined,
-                        componentCentroid: compCentroid,
-                        componentFlatness: compFlatness,
-                        componentFlux: compFlux,
-                        componentOnset: compOnset,
-                        componentCount: compCount > 0 ? compCount : undefined,
-                        // Per-component bin energy — from component's own spectrum
-                        componentBinEnergy: compBinEnergy,
-                        // HPSS variables
-                        harmonicEnergy,
-                        percussiveEnergy,
-                        // Per-bin music theory
-                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
-                        octave: midiToOctave(frequencyToMidi(hz)),
-                    }),
+                    inputs: Object.assign({}, _frameRuleBase, (() => {
+                        const o = {
+                            frequencyHz: hz,
+                            normFreq: freqNorm,
+                            pan: binPan,
+                            binMagnitude,
+                            binPhase: binPhaseMetric,
+                            binFlux: binFluxMetric,
+                            binPhaseDeviation: binPhaseDevMetric,
+                            binAttackTime: binAttackTimeMetric,
+                            binEnvelope: binEnvelopeMetric,
+                            binEnvelopeState: binEnvelopeMetric,
+                            binRMSEnergy: binRmsMetric,
+                            harmonicEnergy,
+                            percussiveEnergy,
+                            notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
+                            octave: midiToOctave(frequencyToMidi(hz)),
+                        }
+                        if (compId >= 0) o.componentId = compId
+                        if (Number.isFinite(compCentroid)) o.componentCentroid = compCentroid
+                        if (Number.isFinite(compFlatness)) o.componentFlatness = compFlatness
+                        if (Number.isFinite(compFlux)) o.componentFlux = compFlux
+                        if (Number.isFinite(compOnset)) o.componentOnset = compOnset
+                        if (compCount > 0) o.componentCount = compCount
+                        if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
+                        return o
+                    })()),
                     particle,
                 })
             }
@@ -1483,36 +1508,34 @@ export class ParticleSystem {
             if (emitLines) {
                 this.applyLineRules({
                     params,
-                    // Use cached frame-level inputs + per-bin overrides
-                    inputs: Object.assign({}, _frameRuleBase, {
-                        frequencyHz: hz,
-                        normFreq: freqNorm,
-                        pan: binPan,
-                        binMagnitude,
-                        binPhase: binPhaseMetric,
-                        binFlux: binFluxMetric,
-                        binPhaseDeviation: binPhaseDevMetric,
-                        binAttackTime: binAttackTimeMetric,
-                        binEnvelope: binEnvelopeMetric,
-                        binEnvelopeState: binEnvelopeMetric,
-                        binRMSEnergy: binRmsMetric,
-                        // Per-component variables
-                        componentId: compId >= 0 ? compId : undefined,
-                        componentCentroid: compCentroid,
-                        componentFlatness: compFlatness,
-                        componentFlux: compFlux,
-                        componentOnset: compOnset,
-                        componentCount: compCount > 0 ? compCount : undefined,
-                        // Per-component bin energy — from component's own spectrum
-                        componentBinEnergy: compBinEnergy,
-                        // HPSS variables
-                        harmonicEnergy,
-                        percussiveEnergy,
-                        // Per-bin music theory
-                        notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
-                        octave: midiToOctave(frequencyToMidi(hz)),
-                        age: 0,
-                    }),
+                    inputs: Object.assign({}, _frameRuleBase, (() => {
+                        const o = {
+                            frequencyHz: hz,
+                            normFreq: freqNorm,
+                            pan: binPan,
+                            binMagnitude,
+                            binPhase: binPhaseMetric,
+                            binFlux: binFluxMetric,
+                            binPhaseDeviation: binPhaseDevMetric,
+                            binAttackTime: binAttackTimeMetric,
+                            binEnvelope: binEnvelopeMetric,
+                            binEnvelopeState: binEnvelopeMetric,
+                            binRMSEnergy: binRmsMetric,
+                            harmonicEnergy,
+                            percussiveEnergy,
+                            notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
+                            octave: midiToOctave(frequencyToMidi(hz)),
+                            age: 0,
+                        }
+                        if (compId >= 0) o.componentId = compId
+                        if (Number.isFinite(compCentroid)) o.componentCentroid = compCentroid
+                        if (Number.isFinite(compFlatness)) o.componentFlatness = compFlatness
+                        if (Number.isFinite(compFlux)) o.componentFlux = compFlux
+                        if (Number.isFinite(compOnset)) o.componentOnset = compOnset
+                        if (compCount > 0) o.componentCount = compCount
+                        if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
+                        return o
+                    })()),
                 }, line)
             }
 
@@ -1636,6 +1659,27 @@ export class ParticleSystem {
         _frameRuleBase.age = 0
         // Expose componentCount as overall variable
         _frameRuleBase.componentCount = Math.max(0, this._componentTracker.componentCount)
+        // Expose per-component timbre metrics as frame‑level variables
+        // (taken from the first active component for use in living rules)
+        {
+            const comps = this._componentTracker.components || []
+            if (comps.length > 0 && this._componentTracker.componentCount > 0) {
+                const first = comps[0]
+                _frameRuleBase.componentId = first.streamId || 0
+                _frameRuleBase.componentCentroid = first.centroid || 0
+                _frameRuleBase.componentFlatness = first.flatness || 0
+                _frameRuleBase.componentFlux = first.flux || 0
+                _frameRuleBase.componentOnset = first.onset || 0
+                _frameRuleBase.componentBinEnergy = first.energy || 0
+            } else {
+                _frameRuleBase.componentId = 0
+                _frameRuleBase.componentCentroid = 0
+                _frameRuleBase.componentFlatness = 0
+                _frameRuleBase.componentFlux = 0
+                _frameRuleBase.componentOnset = 0
+                _frameRuleBase.componentBinEnergy = 0
+            }
+        }
 
         // ── Smart bucket count ───────────────────────────────────────────
         // If spawn/line rules don't reference any per-bin variable, every

@@ -833,6 +833,41 @@
       "label": "Percussive Energy",
       "technicalName": "percussiveEnergy",
       "description": "Instantaneous (percussive) energy after HPSS median filtering across frequency bins. Strong for drums, plucks, transients."
+    },
+    {
+      "id": "iterativeSourceCount",
+      "group": "overall",
+      "label": "Iterative Source Count",
+      "technicalName": "iterativeSourceCount",
+      "description": "Number of dominant tonal sources discovered by iterative time-domain subtraction."
+    },
+    {
+      "id": "iterativeSourceF0",
+      "group": "detail",
+      "label": "Iterative Source F0",
+      "technicalName": "iterativeSourceF0",
+      "description": "Fundamental frequency of the dominant extracted source in Hz."
+    },
+    {
+      "id": "iterativeSourceVolume",
+      "group": "detail",
+      "label": "Iterative Source Volume",
+      "technicalName": "iterativeSourceVolume",
+      "description": "RMS volume of the extracted source waveform (0-1)."
+    },
+    {
+      "id": "iterativeSourceCrest",
+      "group": "detail",
+      "label": "Iterative Source Crest Factor",
+      "technicalName": "iterativeSourceCrest",
+      "description": "Crest factor of the extracted waveform — high values indicate impulsive/bright sources."
+    },
+    {
+      "id": "iterativeSourceSymmetry",
+      "group": "detail",
+      "label": "Iterative Source Symmetry",
+      "technicalName": "iterativeSourceSymmetry",
+      "description": "Waveform symmetry (0=asymmetric, 1=perfectly symmetric). Impacts resulting visual shape."
     }
   ]
 }

@@ -109,6 +109,48 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
     registerSync(syncRegistry, syncFftDropdowns, ['frequencyFftSize', 'rhythmFftSize'])
     syncFftDropdowns()
 
-    panel.append(sliderSection, modeSection, fftSection, rangeSection)
+    // ── Iterative Subtraction (Time-Domain Source Separation) ──
+    const sepSection = el('section', 'cp-section')
+    sepSection.appendChild(el('h3', 'cp-section-title', { text: 'Source Separation' }))
+
+    const sepModeRow = el('div', 'cp-setting-row')
+    const sepModeLabel = el('label', 'cp-setting-label', { text: 'Mode' })
+    const sepModeSelect = el('select', 'cp-input-select')
+    sepModeSelect.appendChild(createSelectOptions([
+        { value: 'none', label: 'None' },
+        { value: 'iterative', label: 'Iterative Subtraction' },
+    ], String(params.separationMode ?? 'none')))
+    sepModeRow.append(sepModeLabel, sepModeSelect)
+    sepSection.appendChild(sepModeRow)
+
+    const sepThresholdRow = el('div', 'cp-setting-row')
+    sepThresholdRow.id = 'sep-threshold-row'
+    const sepThresholdLabel = el('label', 'cp-setting-label', { text: 'Threshold' })
+    const sepThresholdInput = el('input', 'cp-input-range')
+    sepThresholdInput.type = 'range'
+    sepThresholdInput.min = '0.05'
+    sepThresholdInput.max = '0.5'
+    sepThresholdInput.step = '0.01'
+    sepThresholdInput.value = String(params.separationThreshold ?? 0.2)
+    const sepThresholdVal = el('span', 'cp-setting-value', { text: sepThresholdInput.value })
+    sepThresholdRow.append(sepThresholdLabel, sepThresholdInput, sepThresholdVal)
+    sepSection.appendChild(sepThresholdRow)
+
+    // Show/hide threshold based on mode
+    const updateSepVisibility = () => {
+        const isIter = (params.separationMode ?? 'none') === 'iterative'
+        sepThresholdRow.style.display = isIter ? '' : 'none'
+        sepModeSelect.value = String(params.separationMode ?? 'none')
+    }
+    registerSync(syncRegistry, updateSepVisibility, ['separationMode', 'separationThreshold'])
+    updateSepVisibility()
+
+    sepModeSelect.addEventListener('change', () => set('separationMode', sepModeSelect.value))
+    sepThresholdInput.addEventListener('input', () => {
+        sepThresholdVal.textContent = sepThresholdInput.value
+        set('separationThreshold', Number(sepThresholdInput.value))
+    })
+
+    panel.append(sliderSection, modeSection, fftSection, sepSection, rangeSection)
     body.appendChild(panel)
 }

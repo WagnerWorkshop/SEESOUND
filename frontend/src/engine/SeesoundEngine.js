@@ -71,6 +71,9 @@ export class SeesoundEngine {
                 console.log('[Engine] param changed:', key, '→ recompiling')
                 this._syncParticleRules()
             }
+            if (key === 'separationMode' || key === 'separationThreshold') {
+                this._syncIterativeConfig()
+            }
         })
     }
 
@@ -482,6 +485,34 @@ export class SeesoundEngine {
         }
 
         this._bootstrapCount++
+        // Sync iterative subtraction config after every rule sync
+        this._syncIterativeConfig()
+    }
+
+    /** Sync iterative subtraction worklet config with current param values. */
+    _syncIterativeConfig() {
+        if (!this._ae) return
+        const mode = String(params.separationMode ?? 'none').trim()
+        if (mode === 'iterative') {
+            const threshold = Number(params.separationThreshold ?? 0.2)
+            console.log('[Engine] iterative subtraction: ENABLED, threshold=' + threshold.toFixed(2))
+            // Force-enable the worklet and configure threshold
+            if (!this._ae._calcUsage) this._ae._calcUsage = {}
+            this._ae._calcUsage.needIterativeSubtraction = true
+            this._ae.setIterativeConfig({ threshold, maxSources: 16 })
+            // Ensure worklet is loading if context exists
+            if (this._ae.ctx && !this._ae._iterativeWorkletReady) {
+                this._ae._ensureIterativeWorkletLoaded()
+            }
+        } else {
+            if (this._ae._calcUsage) {
+                this._ae._calcUsage.needIterativeSubtraction = false
+            }
+            this._ae.setIterativeConfig({ enabled: false })
+            // Clear stale data
+            this._ae._iterativeSources = null
+            this._ae._iterativeSourceCount = 0
+        }
     }
 
     _flattenRules(entities, globals) {

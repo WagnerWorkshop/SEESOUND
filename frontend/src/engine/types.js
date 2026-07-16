@@ -63,7 +63,9 @@
  * @property {boolean} worklet.needPitchBrain - 16384-window pitch FFT.
  * @property {boolean} worklet.needRhythmBrain - 1024-window transient detection.
  * @property {boolean} worklet.needTrackerBrain - Frame-to-frame object tracking.
+ * @property {boolean} worklet.needIterativeSubtraction - Time-domain waveform subtraction.
  * @property {Object} engine - Flags for main-thread feature computation.
+ * @property {boolean} engine.needIterativeSubtraction - Time-domain waveform subtraction.
  * @property {boolean} engine.needRms - Global RMS energy.
  * @property {boolean} engine.needSpectralCentroid - Spectral centroid.
  * @property {boolean} engine.needGlobalSpectralFlux - Global spectral flux.
@@ -93,6 +95,17 @@
  * @property {number} temporalGroupId - Transient-group identifier (0 if none).
  * @property {number} streamId - Persistent tracker ID across frames (0 if unassigned).
  * @property {number} objectAge - Frames since first detection.
+ */
+
+/**
+ * An individual source extracted by iterative time-domain subtraction.
+ * @typedef {Object} IterativeSource
+ * @property {number} f0 - Fundamental frequency in Hz.
+ * @property {number} period - Period in samples (may be fractional).
+ * @property {number} confidence - YIN periodicity confidence (0-1).
+ * @property {number} volume - RMS volume of extracted waveform.
+ * @property {number} streamId - Persistent tracking ID across frames.
+ * @property {number} age - Frames since first detection.
  */
 
 /**

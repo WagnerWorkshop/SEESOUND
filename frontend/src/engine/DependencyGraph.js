@@ -67,6 +67,12 @@ const MODE_GATED_VARS = new Map([
     ['fundamentalNote', new Set(['cloud'])],
     ['objectAge', new Set(['cloud'])],
     ['streamId', new Set(['cloud'])],
+    // Iterative subtraction variables — available in all modes
+    ['iterativeSourceCount', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['iterativeSourceF0', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['iterativeSourceVolume', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['iterativeSourceCrest', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['iterativeSourceSymmetry', new Set(['particle', 'cloud', 'tracing', 'lines'])],
     // isFundamental is legal in all modes (flagged at spawn/harmonic time)
     // globalTransient is available in all modes
     // ['globalTransient', new Set(['cloud'])],
@@ -102,6 +108,7 @@ const WORKLET_FEATURE_TRIGGERS = {
     needPhase: new Set(['binPhase']),
     needEnvelope: new Set(['binEnvelope', 'binEnvelopeState']),
     needAttackTime: new Set(['binAttackTime']),
+    needIterativeSubtraction: new Set(['iterativeSourceCount', 'iterativeSourceF0', 'iterativeSourceVolume', 'iterativeSourceCrest', 'iterativeSourceSymmetry']),
 }
 
 // ── Engine feature triggers (computed on main thread from high FFT)
@@ -258,6 +265,7 @@ export function buildAudioUsage(referencedIds, mode) {
             objectMode: mode,
         },
         engine: {
+            needIterativeSubtraction: engine.needIterativeSubtraction ?? false,
             needRms: engine.needRms ?? false,
             needSpectralCentroid: engine.needSpectralCentroid ?? false,
             needGlobalSpectralFlux: engine.needGlobalSpectralFlux ?? false,
