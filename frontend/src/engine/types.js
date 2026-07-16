@@ -99,14 +99,7 @@
 
 /**
  * An individual source extracted by iterative time-domain subtraction.
- * @typedef {Object} IterativeSource
- * @property {number} f0 - Fundamental frequency in Hz.
- * @property {number} period - Period in samples (may be fractional).
- * @property {number} confidence - YIN periodicity confidence (0-1).
- * @property {number} volume - RMS volume of extracted waveform.
- * @property {number} streamId - Persistent tracking ID across frames.
- * @property {number} age - Frames since first detection.
- */
+
 
 /**
  * A compiled rule block with its layer metadata.

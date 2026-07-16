@@ -73,6 +73,19 @@ const MODE_GATED_VARS = new Map([
     ['iterativeSourceVolume', new Set(['particle', 'cloud', 'tracing', 'lines'])],
     ['iterativeSourceCrest', new Set(['particle', 'cloud', 'tracing', 'lines'])],
     ['iterativeSourceSymmetry', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeSine', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeTriangle', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeSawtooth', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeSquare', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeNoise', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapePinkNoise', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeTransient', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapePad', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeBuzzy', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeBass', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeDominant', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    ['shapeDominantValue', new Set(['particle', 'cloud', 'tracing', 'lines'])],
+    // Shape activation variables — available in all modes
     // isFundamental is legal in all modes (flagged at spawn/harmonic time)
     // globalTransient is available in all modes
     // ['globalTransient', new Set(['cloud'])],
@@ -92,7 +105,10 @@ const MODE_GATED_VARS = new Map([
 
 // ── Variables that, when used, trigger a specific brain in the worklet
 const BRAIN_TRIGGERS = {
-    pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote']),
+    pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote',
+        'shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
+        'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad',
+        'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue']),
     // textureBrain removed — clouds now use component variables instead
     rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState']),
     trackerBrain: new Set(['objectAge', 'streamId']),
@@ -108,7 +124,6 @@ const WORKLET_FEATURE_TRIGGERS = {
     needPhase: new Set(['binPhase']),
     needEnvelope: new Set(['binEnvelope', 'binEnvelopeState']),
     needAttackTime: new Set(['binAttackTime']),
-    needIterativeSubtraction: new Set(['iterativeSourceCount', 'iterativeSourceF0', 'iterativeSourceVolume', 'iterativeSourceCrest', 'iterativeSourceSymmetry']),
 }
 
 // ── Engine feature triggers (computed on main thread from high FFT)
@@ -124,6 +139,7 @@ const ENGINE_FEATURE_TRIGGERS = {
     needSpectralSpread: new Set(['spectralSpread']),
     needSpectralSkewness: new Set(['spectralSkewness']),
     needChromagram: new Set(['chromagram']),
+    needShapeActivations: new Set(['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue']),
 }
 
 /**
@@ -265,7 +281,6 @@ export function buildAudioUsage(referencedIds, mode) {
             objectMode: mode,
         },
         engine: {
-            needIterativeSubtraction: engine.needIterativeSubtraction ?? false,
             needRms: engine.needRms ?? false,
             needSpectralCentroid: engine.needSpectralCentroid ?? false,
             needGlobalSpectralFlux: engine.needGlobalSpectralFlux ?? false,

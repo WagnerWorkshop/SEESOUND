@@ -25,6 +25,7 @@ import { getInputDictionary } from './rules/RuleDictionary.js'
 import { resolveDependencyGraph, buildAudioUsage, isVariableLegalInMode, AXIOMATIC_VARS } from './DependencyGraph.js'
 import { GraphSolver } from './rules/GraphSolver.js'
 import { EngineEvent, createDefaultConfig } from './types.js'
+import { SupervisedNMF } from './audio/SupervisedNMF.js'
 
 export class SeesoundEngine {
     /**
@@ -39,6 +40,8 @@ export class SeesoundEngine {
         this._cloudPositioning = cfg.cloudPositioning
         /** @type {GraphSolver} */
         this._graphSolver = new GraphSolver()
+        /** @type {SupervisedNMF} */
+        this._shapeSolver = new SupervisedNMF()
         /** @type {Object|null} */
         this._graphPositions = null
         /** @type {string} */
@@ -67,6 +70,9 @@ export class SeesoundEngine {
 
         // Param subscription — recompile rules when layer/global rules change
         this._unsubscribeParams = paramSubscribe((_, key) => {
+            if (key === 'shapeSparsityTopN' || key === 'shapeSmoothingAlpha') {
+                this._shapeSolver.setParams(params.shapeSparsityTopN, params.shapeSmoothingAlpha)
+            }
             if (key === 'ruleLayers' || key === 'ruleGlobalBlocks' || key === 'ruleEngineEnabled') {
                 console.log('[Engine] param changed:', key, '→ recompiling')
                 this._syncParticleRules()
@@ -432,7 +438,7 @@ export class SeesoundEngine {
         const entities = Array.isArray(params.ruleLayers) ? params.ruleLayers : []
         const enabledLayers = entities.filter((e) => e?.enabled !== false)
         const renderLayers = enabledLayers.filter((e) => e?.layerShapeType !== 'camera' && e?.layerShapeType !== 'background')
-        const hasCloud = renderLayers.some((e) => e?.layerShapeType === 'cloud')
+        const hasCloud = renderLayers.some((e) => e?.layerShapeType === 'cloud' || e?.layerShapeType === 'shapeEntity')
         const hasNetwork = renderLayers.some((e) => e?.spacingMode === 'network' && e?.layerShapeType === 'cloud')
 
         const derivedMode = hasCloud ? 'cloud' : 'particle'

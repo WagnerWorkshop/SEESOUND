@@ -466,7 +466,8 @@
         "camera.targetY": "Target Y",
         "camera.targetZ": "Target Z",
         "camera.angleOfView": "Angle Of View"
-      }
+      },
+      "shapeEntity": "Shape Entity"
     }
   },
   "ruleVariables": [

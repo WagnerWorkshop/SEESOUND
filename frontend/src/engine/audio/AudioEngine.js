@@ -26,11 +26,9 @@ function defaultUsage() {
             needPitchBrain: false,
             needRhythmBrain: false,
             needTrackerBrain: false,
-            needIterativeSubtraction: false,
             objectMode: 'particle',
         },
         engine: {
-            needIterativeSubtraction: false,
             needRms: true,
             needSpectralCentroid: false,
             needGlobalSpectralFlux: false,
@@ -144,14 +142,13 @@ export class AudioEngine {
         this._harmonicObjects = null
         this.featureSmoothingAlpha = 0.2
 
-        // ── Iterative subtraction (time-domain source separation) ──
-        this._iterativeSources = null
-        this._iterativeSourceCount = 0
-        this._iterativeResidualEnergy = 0
-        this._iterativeNode = null
-        this._iterativeWorkletConnected = false
-        this._iterativeWorkletReady = false
-        this._iterativeWorkletLoadPromise = null
+
+        // ── Shape activation (supervised NMF, set by SeesoundEngine) ──
+        /** @type {Float32Array} 10-shape activation vector */
+        this._globalShapeActivations = new Float32Array(10)
+        /** @type {Array<Object>} Enriched harmonic objects with shape activations */
+        this._enrichedObjects = []
+
 
         this.bass = 0; this.mid = 0; this.high = 0
         this.amplitude = 0; this.peakFreq = 0; this.peakByte = 0; this.pan = 0
@@ -292,76 +289,27 @@ export class AudioEngine {
         }
     }
 
-    // ── Iterative Subtraction Worklet ────────────────────────────────────────
 
-    _initIterativeSubtractionNode() {
-        if (!this.ctx) return null
-        const node = new AudioWorkletNode(this.ctx, 'iterative-subtraction-processor', {
-            numberOfInputs: 1,
-            numberOfOutputs: 0,
-            processorOptions: {
-                threshold: this._iterativeConfig?.threshold ?? 0.2,
-                maxSources: this._iterativeConfig?.maxSources ?? 16,
-                minF0: this._iterativeConfig?.minF0 ?? 30,
-                maxF0: this._iterativeConfig?.maxF0 ?? 2000,
-                yinThreshold: this._iterativeConfig?.yinThreshold ?? 0.1,
-            },
-        })
-        node.port.onmessage = (event) => {
-            const msg = event.data || {}
-            if (msg.type === 'iterativeSources') {
-                this._iterativeSources = msg.sources || null
-                this._iterativeSourceCount = msg.sourceCount || 0
-                this._iterativeResidualEnergy = msg.residualEnergy || 0
-            } else if (msg.type === 'iterativeDebug') {
-                console.log('[IterativeSubtraction] worklet debug:', msg.msg, msg)
-            }
-        }
-        return node
+    // ── Shape Activation Accessors ───────────────────────────────────────────
+
+    /**
+     * Get the global 10-shape activation vector (frame-level, averaged across all objects).
+     * Set by SeesoundEngine each frame.
+     * @returns {Float32Array}
+     */
+    getGlobalShapeActivations() {
+        return this._globalShapeActivations
     }
 
-    _ensureIterativeWorkletLoaded() {
-        if (!this.ctx || this._iterativeWorkletReady) return
-        if (!this._iterativeWorkletLoadPromise) {
-            const moduleUrl = new URL('./IterativeSubtractionWorklet.js', import.meta.url)
-            this._iterativeWorkletLoadPromise = this.ctx.audioWorklet.addModule(moduleUrl)
-                .then(() => {
-                    this._iterativeNode = this._initIterativeSubtractionNode()
-                    this._iterativeWorkletReady = true
-                    this._connectSourceToIterativeWorklet()
-                    this._postIterativeConfig()
-                })
-                .catch((err) => {
-                    console.warn('[AudioWorklet] Failed to load iterative subtraction worklet:', err)
-                })
-        }
+    /**
+     * Get enriched harmonic objects with per-object shape activations.
+     * Set by SeesoundEngine each frame.
+     * @returns {Array<Object>}
+     */
+    getEnrichedObjects() {
+        return this._enrichedObjects
     }
 
-    _postIterativeConfig() {
-        if (!this._iterativeNode) return
-        this._iterativeNode.port.postMessage({
-            type: 'config',
-            config: {
-                enabled: !!this._calcUsage?.needIterativeSubtraction,
-                threshold: this._iterativeConfig?.threshold ?? 0.2,
-                maxSources: this._iterativeConfig?.maxSources ?? 16,
-                yinThreshold: this._iterativeConfig?.yinThreshold ?? 0.1,
-            },
-        })
-    }
-
-    _connectSourceToIterativeWorklet() {
-        if (!this._iterativeNode) return false
-        if (!this._fadeGain) return false
-        if (this._iterativeWorkletConnected) return true
-        try {
-            this._fadeGain.connect(this._iterativeNode)
-            this._iterativeWorkletConnected = true
-            return true
-        } catch {
-            return false
-        }
-    }
 
     setRuleInputUsage(requiredInputsByTarget = null) {
         const usage = this._deriveAudioUsage(requiredInputsByTarget)
@@ -375,11 +323,9 @@ export class AudioEngine {
         this._workletConfig.needPitchBrain = usage.worklet.needPitchBrain
         this._workletConfig.needRhythmBrain = true // always on for transient detection
         this._workletConfig.needTrackerBrain = usage.worklet.needTrackerBrain
-        this._workletConfig.needIterativeSubtraction = usage.worklet.needIterativeSubtraction
         this._workletConfig.objectMode = usage.worklet.objectMode || 'particle'
         this._calcUsage = usage.engine
         this._postWorkletConfig()
-        this._postIterativeConfig()
     }
 
     setFluxWindowFrames(nextValue) {
@@ -467,7 +413,6 @@ export class AudioEngine {
             this._fadeGain = this.ctx.createGain()
             this._fadeGain.gain.value = 0
             this._ensureWorkletLoaded()
-            this._ensureIterativeWorkletLoaded()
         }
         // If already connected to this audio element, skip reconnection
         if (el === this.audioEl && (this.source || this.streamSource)) {
@@ -855,11 +800,6 @@ export class AudioEngine {
         this._prevFrequencyDataBins.set(this.frequencyData)
 
         // ── Reset iterative subtraction state if not active ──
-        if (!this._calcUsage?.needIterativeSubtraction) {
-            this._iterativeSources = null
-            this._iterativeSourceCount = 0
-            this._iterativeResidualEnergy = 0
-        }
 
         let sq = 0; for (const b of this.timeDomainData) sq += ((b - 128) / 128) ** 2
         this.amplitude = Math.sqrt(sq / this.timeDomainData.length)
@@ -930,37 +870,5 @@ export class AudioEngine {
     /** @returns {import('../types').HarmonicObject[]|null} */
     getHarmonicObjects() {
         return this._harmonicObjects
-    }
-
-    // ── Iterative Subtraction Getters ────────────────────────────────────────
-
-    /** @returns {Array<{f0:number,period:number,confidence:number,volume:number,streamId:number,age:number}>|null} */
-    getIterativeSources() {
-        return this._iterativeSources
-    }
-
-    /** @returns {number} */
-    getIterativeSourceCount() {
-        return this._iterativeSourceCount
-    }
-
-    /** @returns {number} */
-    getIterativeResidualEnergy() {
-        return this._iterativeResidualEnergy
-    }
-
-    /**
-     * Configure iterative subtraction parameters.
-     * @param {object} config
-     * @param {number} [config.threshold=0.2] — termination confidence threshold
-     * @param {number} [config.maxSources=16] — max sources to extract
-     * @param {number} [config.yinThreshold=0.1] — YIN dip detection threshold
-     */
-    setIterativeConfig(config = {}) {
-        this._iterativeConfig = this._iterativeConfig || {}
-        if (Number.isFinite(config.threshold)) this._iterativeConfig.threshold = Math.max(0.05, Math.min(0.95, config.threshold))
-        if (Number.isFinite(config.maxSources)) this._iterativeConfig.maxSources = Math.max(1, Math.min(32, Math.floor(config.maxSources)))
-        if (Number.isFinite(config.yinThreshold)) this._iterativeConfig.yinThreshold = Math.max(0.01, Math.min(0.5, config.yinThreshold))
-        this._postIterativeConfig()
     }
 }

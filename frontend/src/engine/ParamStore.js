@@ -55,7 +55,7 @@ function _coerceRuleLayer(raw, index) {
     const enabled = source.enabled !== false
     const order = Number.isFinite(source.order) ? Number(source.order) : index
     const definitionsMode = source.definitionsMode === 'special' ? 'special' : 'all'
-    const layerShapeType = (source.layerShapeType === 'cloud' || source.layerShapeType === 'line' || source.layerShapeType === 'camera' || source.layerShapeType === 'background')
+    const layerShapeType = (source.layerShapeType === 'cloud' || source.layerShapeType === 'line' || source.layerShapeType === 'shapeEntity' || source.layerShapeType === 'camera' || source.layerShapeType === 'background')
         ? source.layerShapeType
         : 'particle'
     const spacingMode = layerShapeType === 'cloud'
@@ -725,6 +725,25 @@ const PARAMS_BASE = [
         key: 'trackingInterval', group: 'mixing', label: 'Tracking Interval',
         min: 0.1, max: 2, step: 0.1, default: 0.5, unit: 's',
         desc: '⚠ NOT YET WIRED — currently has no effect on the render pipeline.',
+        canDisable: false,
+    },
+    {
+        key: 'shapeSparsityTopN', group: 'inputProcessing', label: 'Shape Sparsity Top N',
+        min: 1, max: 10, step: 1, default: 3, unit: '',
+        desc: 'Number of dominant shapes to keep per frame. Prevents visual mud during complex audio.',
+        isDropdown: true,
+        dropdownOptions: [
+            { label: '1', value: 1 },
+            { label: '2', value: 2 },
+            { label: '3', value: 3 },
+            { label: '5', value: 5 },
+            { label: 'All (10)', value: 10 },
+        ],
+    },
+    {
+        key: 'shapeSmoothingAlpha', group: 'inputProcessing', label: 'Shape Smoothing',
+        min: 0.05, max: 0.5, step: 0.01, default: 0.18, unit: '',
+        desc: 'EMA smoothing for shape activations. Lower = smoother, less responsive.',
         canDisable: false,
     },
     {

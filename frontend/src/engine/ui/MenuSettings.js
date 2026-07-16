@@ -151,6 +151,6 @@ export function buildSettingsMenu(body, syncRegistry, deps) {
         set('separationThreshold', Number(sepThresholdInput.value))
     })
 
-    panel.append(sliderSection, modeSection, fftSection, sepSection, rangeSection)
+    panel.append(sliderSection, modeSection, fftSection, rangeSection)
     body.appendChild(panel)
 }
