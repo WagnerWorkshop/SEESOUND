@@ -1039,23 +1039,28 @@ export class ParticleSystem {
             this.percussiveEnergy = hpssOut.percussive;
         }
 
-        // ── Iterative Subtraction (Time-Domain Source Separation) ──────
-        // Read organically-discovered tonal sources from the AudioEngine.
-        // Each source has f0, volume, crest factor, symmetry — stored per-frame
-        // and exposed as global rule variables so rules can react to source count
-        // and the dominant source's characteristics.
-        {
-            const iterSources = ae.getIterativeSources?.() ?? null
-            const iterCount = ae.getIterativeSourceCount?.() ?? 0
-            this._iterSourceCount = iterCount
-            if (Array.isArray(iterSources) && iterSources.length > 0) {
-                this._iterFirstF0 = iterSources[0].f0 ?? 0
-                this._iterFirstVol = iterSources[0].volume ?? 0
-                this._iterFirstCrest = iterSources[0].crest ?? 0
-                this._iterFirstSym = iterSources[0].symmetry ?? 0
-            } else {
-                                            }
+        // ── Per-bin shape classification data ──────────────────────
+        // Read per-bin shape arrays set by SeesoundEngine.tick() from PitchFirstClassifier
+        this._binShapeData = ae._binShapeData ?? null
+        this._binFundamentalHz = ae._binFundamentalHz ?? null
+        this._binDominantValue = ae._binDominantValue ?? null
+        // Also cache global averages for frameBinInputs
+        const gsa = ae.getGlobalShapeActivations?.()
+        const shapeIds = ['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass']
+        if (gsa) {
+            for (let s = 0; s < shapeIds.length; s++) this['_' + shapeIds[s]] = gsa[s] || 0
         }
+        this._SHAPE_COUNT = 10
+        this._shapeDominant = 'Sine'; this._shapeDominantValue = 0
+        if (gsa) {
+            for (let s = 0; s < shapeIds.length; s++) {
+                if (gsa[s] > this._shapeDominantValue) {
+                    this._shapeDominantValue = gsa[s]
+                    this._shapeDominant = shapeIds[s].substring(5)
+                }
+            }
+        }
+
 
         // Adjust Three.js blending mode
         if (!luminousMode) {
@@ -1179,12 +1184,19 @@ export class ParticleSystem {
             spectralSpread: clamp01(ae.spectralSpread),
             spectralSkewness: clamp01(ae.spectralSkewness),
             chromagram: clamp01(ae.chromagram),
-            // Iterative subtraction (time-domain source separation)
-            iterativeSourceCount: this._iterSourceCount ?? 0,
-            iterativeSourceF0: this._iterFirstF0 ?? 0,
-            iterativeSourceVolume: this._iterFirstVol ?? 0,
-            iterativeSourceCrest: this._iterFirstCrest ?? 0,
-            iterativeSourceSymmetry: this._iterFirstSym ?? 0,
+            // Shape activation variables (supervised NMF)
+            shapeSine: this._shapeSine ?? 0,
+            shapeTriangle: this._shapeTriangle ?? 0,
+            shapeSawtooth: this._shapeSawtooth ?? 0,
+            shapeSquare: this._shapeSquare ?? 0,
+            shapeNoise: this._shapeNoise ?? 0,
+            shapePinkNoise: this._shapePinkNoise ?? 0,
+            shapeTransient: this._shapeTransient ?? 0,
+            shapePad: this._shapePad ?? 0,
+            shapeBuzzy: this._shapeBuzzy ?? 0,
+            shapeBass: this._shapeBass ?? 0,
+            shapeDominant: this._shapeDominant ?? 'Sine',
+            shapeDominantValue: this._shapeDominantValue ?? 0,
         }
         frameBinInputs.amplitude = frameBinInputs.globalRmsEnergy
         const frameBinScanLength = Math.max(
@@ -1375,6 +1387,7 @@ export class ParticleSystem {
             const compBinEnergy = Number.isFinite(bucket.compBinEnergy) ? bucket.compBinEnergy : undefined
             const harmonicEnergy = Number.isFinite(bucket.harmonicEnergy) ? bucket.harmonicEnergy : undefined
             const percussiveEnergy = Number.isFinite(bucket.percussiveEnergy) ? bucket.percussiveEnergy : undefined
+
             const y = (freqNorm * 2 - 1) * hh
 
             const x = 0
@@ -1416,6 +1429,7 @@ export class ParticleSystem {
                             percussiveEnergy,
                             notePitchClass: midiToPitchClass(frequencyToMidi(hz)),
                             octave: midiToOctave(frequencyToMidi(hz)),
+                            age: 0,
                         }
                         if (compId >= 0) o.componentId = compId
                         if (Number.isFinite(compCentroid)) o.componentCentroid = compCentroid
@@ -1424,6 +1438,8 @@ export class ParticleSystem {
                         if (Number.isFinite(compOnset)) o.componentOnset = compOnset
                         if (compCount > 0) o.componentCount = compCount
                         if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
+                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine:0,binShapeTriangle:0,binShapeSawtooth:0,binShapeSquare:0,binShapeNoise:0,binShapePinkNoise:0,binShapeTransient:0,binShapePad:0,binShapeBuzzy:0,binShapeBass:0,binFundamentalHz:0,binDominantValue:0 }
+                        o.binShapeSine = _sh.binShapeSine; o.binShapeTriangle = _sh.binShapeTriangle; o.binShapeSawtooth = _sh.binShapeSawtooth; o.binShapeSquare = _sh.binShapeSquare; o.binShapeNoise = _sh.binShapeNoise; o.binShapePinkNoise = _sh.binShapePinkNoise; o.binShapeTransient = _sh.binShapeTransient; o.binShapePad = _sh.binShapePad; o.binShapeBuzzy = _sh.binShapeBuzzy; o.binShapeBass = _sh.binShapeBass; o.binFundamentalHz = _sh.binFundamentalHz; o.binDominantValue = _sh.binDominantValue
                         return o
                     })()),
                     particle,
@@ -1563,6 +1579,8 @@ export class ParticleSystem {
                         if (Number.isFinite(compOnset)) o.componentOnset = compOnset
                         if (compCount > 0) o.componentCount = compCount
                         if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
+                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine:0,binShapeTriangle:0,binShapeSawtooth:0,binShapeSquare:0,binShapeNoise:0,binShapePinkNoise:0,binShapeTransient:0,binShapePad:0,binShapeBuzzy:0,binShapeBass:0,binFundamentalHz:0,binDominantValue:0 }
+                        o.binShapeSine = _sh.binShapeSine; o.binShapeTriangle = _sh.binShapeTriangle; o.binShapeSawtooth = _sh.binShapeSawtooth; o.binShapeSquare = _sh.binShapeSquare; o.binShapeNoise = _sh.binShapeNoise; o.binShapePinkNoise = _sh.binShapePinkNoise; o.binShapeTransient = _sh.binShapeTransient; o.binShapePad = _sh.binShapePad; o.binShapeBuzzy = _sh.binShapeBuzzy; o.binShapeBass = _sh.binShapeBass; o.binFundamentalHz = _sh.binFundamentalHz; o.binDominantValue = _sh.binDominantValue
                         return o
                     })()),
                 }, line)
@@ -2156,4 +2174,38 @@ export class ParticleSystem {
         this._lineMesh.geometry.dispose()
         this._lineMat.dispose()
     }
+}
+
+/** Get per-bin shape activations for a given CQT bin index. */
+const _getBinShapeMetrics = (cqtBinIdx) => {
+    const bs = this._binShapeData
+    const bfh = this._binFundamentalHz
+    const bdv = this._binDominantValue
+    const sc = this._SHAPE_COUNT || 10
+    if (!bs || cqtBinIdx < 0 || cqtBinIdx * sc >= bs.length) {
+        return { binShapeSine: 0, binShapeTriangle: 0, binShapeSawtooth: 0, binShapeSquare: 0, binShapeNoise: 0, binShapePinkNoise: 0, binShapeTransient: 0, binShapePad: 0, binShapeBuzzy: 0, binShapeBass: 0, binFundamentalHz: 0, binDominantValue: 0 }
+    }
+    const base = cqtBinIdx * sc
+    return {
+        binShapeSine: bs[base] || 0,
+        binShapeTriangle: bs[base + 1] || 0,
+        binShapeSawtooth: bs[base + 2] || 0,
+        binShapeSquare: bs[base + 3] || 0,
+        binShapeNoise: bs[base + 4] || 0,
+        binShapePinkNoise: bs[base + 5] || 0,
+        binShapeTransient: bs[base + 6] || 0,
+        binShapePad: bs[base + 7] || 0,
+        binShapeBuzzy: bs[base + 8] || 0,
+        binShapeBass: bs[base + 9] || 0,
+        binFundamentalHz: (bfh && cqtBinIdx < bfh.length) ? (bfh[cqtBinIdx] || 0) : 0,
+        binDominantValue: (bdv && cqtBinIdx < bdv.length) ? (bdv[cqtBinIdx] || 0) : 0,
+    }
+}
+
+/** Convert Hz to approximate CQT bin index. */
+const _hzToCqtBin = (hz) => {
+    const minHz = 40, maxHz = 16000
+    const t = (Math.log2(Math.max(minHz, Math.min(maxHz, hz))) - Math.log2(minHz)) / (Math.log2(maxHz) - Math.log2(minHz))
+    const cqtBins = this._binFundamentalHz ? this._binFundamentalHz.length : this._binShapeData ? (this._binShapeData.length / (this._SHAPE_COUNT || 10)) : 0
+    return cqtBins > 0 ? Math.round(t * (cqtBins - 1)) : -1
 }

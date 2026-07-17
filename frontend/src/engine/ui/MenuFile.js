@@ -185,9 +185,22 @@ export function buildFileMenu(body, syncRegistry, deps) {
     presetActions.style.gridTemplateColumns = '1fr 1fr'
     const addPresetBtn = el('button', 'cp-btn', { type: 'button', title: 'Save current settings as a new preset' })
     applyButtonIcon(addPresetBtn, BUTTON_ICON_MAP.add, 'New Preset')
+    const btnOpenPreset = el('button', 'cp-btn', { type: 'button', title: 'Open a preset JSON file' })
+    applyButtonIcon(btnOpenPreset, BUTTON_ICON_MAP.load, UI_TEXT.file?.presetUpload || 'Open')
+    btnOpenPreset.addEventListener('click', () => {
+        const input = document.createElement('input')
+        input.type = 'file'; input.accept = '.json'; input.style.display = 'none'
+        input.addEventListener('change', () => {
+            const file = input.files?.[0]
+            if (!file) return
+            window.dispatchEvent(new CustomEvent('seesound:preset-file-opened', { detail: { file } }))
+            input.remove()
+        })
+        document.body.appendChild(input); input.click()
+    })
     const btnExportPreset = el('button', 'cp-btn', { type: 'button', title: 'Export current preset as a file' })
     applyButtonIcon(btnExportPreset, BUTTON_ICON_MAP.export, 'Export Preset')
-    presetActions.append(addPresetBtn, btnExportPreset)
+    presetActions.append(addPresetBtn, btnOpenPreset, btnExportPreset)
     presetSection.appendChild(presetActions)
 
     const presetGrid = el('div', 'cp-template-grid')

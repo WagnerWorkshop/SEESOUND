@@ -1568,10 +1568,7 @@ function insertVariablePillAtCursor(editor, variableId) {
     const pill = createRuleExpressionPill(variableId)
     range.insertNode(pill)
 
-    const spacer = document.createTextNode(' ')
-    pill.after(spacer)
-
-    range.setStartAfter(spacer)
+    range.setStartAfter(pill)
     range.collapse(true)
     selection.removeAllRanges()
     selection.addRange(range)

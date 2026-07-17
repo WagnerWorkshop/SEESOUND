@@ -203,7 +203,7 @@ export class AudioEngine {
     }
 
     /** Number of frames to suppress worklet transient after fade events */
-    static get TRANSIENT_SUPPRESS_FRAMES() { return 12 }
+    static get TRANSIENT_SUPPRESS_FRAMES() { return 45 }
 
     _createBinAnalysisNode() {
         if (!this.ctx) return null
@@ -508,7 +508,7 @@ export class AudioEngine {
         // will sync prev buffers to current data before computing flux.
         this._fadeRampWasActive = true
         // Suppress cold-start transient for several frames (50ms ramp + settling)
-        this._coldStartSuppressFrames = 6
+        this._coldStartSuppressFrames = 15
         // Suppress worklet transient while fade completes
         this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
@@ -597,6 +597,13 @@ export class AudioEngine {
                 const rhythmLen = this._rhythmFrequencyData.length
                 if (this._coldStartSuppressFrames > 0) {
                     this._coldStartSuppressFrames--
+                    // Force-sync prev buffers so the flux delta stays zero
+                    if (this._prevRhythmData && this._rhythmFrequencyData) {
+                        this._prevRhythmData.set(this._rhythmFrequencyData)
+                    }
+                    if (this._prevFrequencyDataBins && this.frequencyData) {
+                        this._prevFrequencyDataBins.set(this.frequencyData)
+                    }
                     this._rhythmTransient = 0
                     this.globalTransient = 0
                 } else {

@@ -25,7 +25,7 @@ import { getInputDictionary } from './rules/RuleDictionary.js'
 import { resolveDependencyGraph, buildAudioUsage, isVariableLegalInMode, AXIOMATIC_VARS } from './DependencyGraph.js'
 import { GraphSolver } from './rules/GraphSolver.js'
 import { EngineEvent, createDefaultConfig } from './types.js'
-import { SupervisedNMF } from './audio/SupervisedNMF.js'
+import { PitchFirstClassifier } from './audio/PitchFirstClassifier.js'
 
 export class SeesoundEngine {
     /**
@@ -40,8 +40,8 @@ export class SeesoundEngine {
         this._cloudPositioning = cfg.cloudPositioning
         /** @type {GraphSolver} */
         this._graphSolver = new GraphSolver()
-        /** @type {SupervisedNMF} */
-        this._shapeSolver = new SupervisedNMF()
+        /** @type {PitchFirstClassifier} */
+        this._shapeSolver = new PitchFirstClassifier()
         /** @type {Object|null} */
         this._graphPositions = null
         /** @type {string} */
@@ -340,20 +340,26 @@ export class SeesoundEngine {
             this._graphPositions = null
         }
 
-        // ── Supervised NMF shape classification (runs regardless of mode) ──
-        const ho = engine.getHarmonicObjects?.() ?? null
-        if (!engine._workletConfig.needPitchBrain || engine._workletConfig.objectMode !== 'cloud') {
-            engine._workletConfig.needPitchBrain = true
-            engine._workletConfig.objectMode = 'cloud'
+        // ── Pitch-first shape classification from CQT data (main thread, no worklet overhead) ──
+        // Force magnitude data to flow — shape classifier always runs
+        if (!engine._workletConfig.needMagnitude) {
+            engine._workletConfig.needMagnitude = true
             engine._postWorkletConfig()
         }
-        if (ho && ho.length > 0) {
-            this._shapeSolver.classifyObjects(ho)
-            engine._enrichedObjects = this._shapeSolver.enrichedObjects
-            engine._globalShapeActivations = this._shapeSolver.globalActivations
-        } else {
+        const cqtMags = engine.getBinMagnitude?.() ?? null
+        if (cqtMags && cqtMags.length > 0) {
+            const result = this._shapeSolver.classifyCqtFrame(cqtMags)
+            engine._binShapeData = result.binShapeData
+            engine._binFundamentalHz = result.binFundamentalHz
+            engine._binDominantValue = result.binDominantValue
+            engine._globalShapeActivations = result.globalActivations
             engine._enrichedObjects = []
+        } else {
+            engine._binShapeData = null
+            engine._binFundamentalHz = null
+            engine._binDominantValue = null
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)
+            engine._enrichedObjects = []
         }
 
     }

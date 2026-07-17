@@ -62,35 +62,35 @@ const EPS = 1e-6
 
 /** @type {Object<string, Float32Array>} */
 const TEMPLATES = {
-    // Pure Sine — fundamental only, virtually no overtones
-    shapeSine: buildTemplate([1.0, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS]),
+    // Pure Sine — ONLY fundamental, zero elsewhere. True delta.
+    shapeSine: buildTemplate([1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
 
-    // Triangle — odd harmonics only, falling as 1/k², zero even harmonics
-    shapeTriangle: buildTemplate([0.7, 0, 0.175, 0, 0.07, 0, 0.036, 0, 0.022, 0, 0.014, 0, 0.01, 0, 0.007, 0]),
+    // Triangle — weak fundamental, odd harmonics 1/k²
+    shapeTriangle: buildTemplate([0.35, 0, 0.25, 0, 0.18, 0, 0.13, 0, 0.09, 0, 0.07, 0, 0.05, 0, 0.04, 0]),
 
-    // Sawtooth — all harmonics falling as 1/k
-    shapeSawtooth: buildTemplate([0.5, 0.25, 0.167, 0.125, 0.1, 0.083, 0.071, 0.0625, 0.056, 0.05, 0.045, 0.042, 0.038, 0.036, 0.033, 0.031]),
+    // Sawtooth — ALL harmonics 1/k, brighter fundamental than triangle
+    shapeSawtooth: buildTemplate([0.5, 0.25, 0.167, 0.125, 0.1, 0.083, 0.071, 0.062, 0.056, 0.05, 0.045, 0.042, 0.038, 0.036, 0.033, 0.031]),
 
-    // Square — odd harmonics only, falling as 1/k, zero even
-    shapeSquare: buildTemplate([0.7, 0, 0.233, 0, 0.14, 0, 0.1, 0, 0.078, 0, 0.064, 0, 0.054, 0, 0.047, 0]),
+    // Square — weak fundamental, odd harmonics only 1/k
+    shapeSquare: buildTemplate([0.25, 0, 0.35, 0, 0.22, 0, 0.16, 0, 0.12, 0, 0.09, 0, 0.07, 0, 0.06, 0]),
 
-    // White Noise — flat across all harmonics (all equal energy)
+    // White Noise — flat, equal across all 16
     shapeNoise: buildTemplate([0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]),
 
-    // Pink Noise — decays as 1/√k
-    shapePinkNoise: buildTemplate([0.4, 0.283, 0.231, 0.2, 0.179, 0.163, 0.151, 0.141, 0.133, 0.126, 0.12, 0.115, 0.111, 0.107, 0.103, 0.1]),
+    // Pink Noise — 1/√k decay from index 1, flatter at low end
+    shapePinkNoise: buildTemplate([0.15, 0.28, 0.23, 0.2, 0.18, 0.16, 0.15, 0.14, 0.13, 0.126, 0.12, 0.115, 0.11, 0.107, 0.103, 0.1]),
 
-    // Transient — rises with harmonic index (energy at high harmonics)
-    shapeTransient: buildTemplate([0.02, 0.04, 0.07, 0.12, 0.2, 0.32, 0.5, 0.65, 0.7, 0.55, 0.35, 0.18, 0.09, 0.04, 0.02, 0.01]),
+    // Transient — RISING with k (dominant at high harmonics)
+    shapeTransient: buildTemplate([0.02, 0.03, 0.05, 0.08, 0.15, 0.25, 0.42, 0.6, 0.7, 0.55, 0.35, 0.18, 0.09, 0.04, 0.02, 0.01]),
 
-    // Warm Pad — moderate fundamental, rapid decay after k=3
-    shapePad: buildTemplate([0.6, 0.32, 0.12, 0.04, 0.015, 0.006, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS]),
+    // Warm Pad — moderate fundamental, FAST decay
+    shapePad: buildTemplate([0.45, 0.35, 0.15, 0.05, 0.02, 0.01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
 
-    // Buzzy — emphasis at harmonics k=3-5 (typical brass/distortion formant region)
-    shapeBuzzy: buildTemplate([0.35, 0.22, 0.42, 0.6, 0.48, 0.28, 0.14, 0.07, 0.035, 0.018, 0.009, EPS, EPS, EPS, EPS, EPS]),
+    // Buzzy — EMPHASIS at k=3-5 (brass formant), weak fundamental
+    shapeBuzzy: buildTemplate([0.15, 0.1, 0.4, 0.65, 0.5, 0.28, 0.14, 0.07, 0.03, 0.015, 0.008, 0, 0, 0, 0, 0]),
 
-    // Sub Bass — heavy fundamental, extremely fast decay
-    shapeBass: buildTemplate([0.92, 0.28, 0.06, 0.015, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS, EPS]),
+    // Sub Bass — HEAVY fundamental, almost nothing else
+    shapeBass: buildTemplate([0.95, 0.2, 0.05, 0.01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
 }
 
 // ── Metadata ─────────────────────────────────────────────────────────────────

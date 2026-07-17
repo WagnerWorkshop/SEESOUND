@@ -449,7 +449,6 @@ function tickCameraRules() {
     let posChanged = false
     const EPS = 0.001
 
-    // Instant position assignment (no lerp — reactive to rule output)
     if (t.x !== null && Math.abs(camera.position.x - t.x) > EPS) {
         camera.position.x = t.x
         posChanged = true
@@ -462,7 +461,6 @@ function tickCameraRules() {
         camera.position.z = t.z
         posChanged = true
     }
-    // Instant orbit target
     if (t.targetX !== null && Math.abs(orbitTarget.x - t.targetX) > EPS) {
         orbitTarget.x = t.targetX
         posChanged = true
@@ -981,11 +979,10 @@ function animate() {
         },
     }))
 
-    if (isActuallyPlaying) {
-        // Emit probe inputs for UI — SeesoundEngine handles normalization
-        const cameraUnitData = { w: cameraUnits.w, h: cameraUnits.h }
-        window.__seesoundEngine?.tick({ ae, ps, canvasW: w, canvasH: h, cameraUnitData })
-    }
+    // Always run — shape classification needs CQT data every frame
+    // Emit probe inputs for UI — SeesoundEngine handles normalization
+    const cameraUnitData = { w: cameraUnits.w, h: cameraUnits.h }
+    window.__seesoundEngine?.tick({ ae, ps, canvasW: w, canvasH: h, cameraUnitData })
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
@@ -1653,13 +1650,6 @@ animate()
                 }],
             })
             if (!handle) return false
-
-            if (resetState) {
-                const defaults = getDefaultProjectDefinition()
-                setMany(defaults.params)
-                await _replacePresetLibrary(defaults.presetLibrary)
-            }
-
             projectFileHandle = handle
             projectFileName = String(handle.name || suggestedName).trim()
             await saveProject()
@@ -2064,6 +2054,10 @@ subscribe((_, key) => {
         ae.setFftSizes(freq, rhythm)
     }
     if (key === 'ruleBlocks' || key === 'ruleLayers' || key === 'ruleGlobalBlocks') {
+        // Skip rebuild during undo intermediate empty state
+        const _blk = Array.isArray(params.ruleBlocks) ? params.ruleBlocks : []
+        const _lay = Array.isArray(params.ruleLayers) ? params.ruleLayers : []
+        if (_blk.length === 0 && _lay.length === 0) return
         // Rebuild all layers from current layer definitions
         ps.rebuild({
             ruleLayers: params.ruleLayers ?? [],
@@ -2164,4 +2158,4 @@ if (headlessMode) {
         console.log(`[RuleStatus] entities=${entities.length} totalRules=${liveCount} S=${spawned} L=${living} lines=${lines} bg=${bg} cam=${cam} | compiled=${state?.compileStatus || '?'} livingActive=${state?.livingRuleCount > 0 && visible > 0} visible=${visible}`)
     }, 3000)
 }
-
+

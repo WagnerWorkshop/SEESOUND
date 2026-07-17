@@ -145,8 +145,10 @@ export class HarmonicPercussiveSplitter {
         }
 
         // ── Vertical median filter (across bins) → Percussive ──
-        // Use the current frame from the ring buffer.
-        const newestIdx = (this._writeIdx - 1 + this._bufferCapacity) % this._bufferCapacity;
+        // Use the newest frame from the ring buffer.
+        const newestIdx = filled < this._bufferCapacity
+            ? filled - 1
+            : (this._writeIdx - 1 + this._bufferCapacity) % this._bufferCapacity;
         const currentFrame = this._buffer[newestIdx];
         const halfWin = this._verticalHalfWin;
         const maxWin = halfWin * 2 + 1;
