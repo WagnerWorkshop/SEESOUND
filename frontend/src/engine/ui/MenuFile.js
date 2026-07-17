@@ -36,16 +36,6 @@ export function buildFileMenu(body, syncRegistry, deps) {
                 label: labels.exportObjOption || '3D mesh (.ply)',
                 hint: labels.exportHintObj || 'Scene geometry',
             },
-            {
-                value: 'project-file',
-                label: labels.exportProjectJson || 'Project (.ssp)',
-                hint: labels.exportHintProjectFile || 'Project file with all settings',
-            },
-            {
-                value: 'settings-json',
-                label: labels.exportSettingsJson || 'Settings (.json)',
-                hint: labels.exportHintSettingsJson || 'Current parameter and rule settings',
-            },
         ]
     }
 
@@ -91,75 +81,39 @@ export function buildFileMenu(body, syncRegistry, deps) {
             .replaceAll('{project}', projectName || (UI_TEXT?.file?.projectNew || 'New Project'))
     }
 
-    const projectNameFromFile = (rawName = '') => {
-        const fileName = String(rawName || '').trim()
-        if (!fileName) return ''
-        if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
-        return fileName.replace(/\.[^./\\]+$/g, '')
+    // ═══════════════════════════════════════════════════════════════════
+    // Projects section (merged project + presets)
+    // ═══════════════════════════════════════════════════════════════════
+    const projectsSection = el('section', 'cp-section')
+    const projectsTitleRow = el('div', 'cp-section-title-row')
+    const projectsTitle = el('h3', 'cp-section-title', { text: 'Projects' })
+    const projectsNameLabel = el('span', 'cp-project-name')
+    const defaultProjectLabel = 'New Project'
+    let currentProjectName = ''
+
+    const updateProjectsTitle = (name) => {
+        const shown = String(name || '').trim() || defaultProjectLabel
+        currentProjectName = shown !== defaultProjectLabel ? shown : ''
+        projectsNameLabel.textContent = shown
+        projectsNameLabel.title = shown
     }
+    updateProjectsTitle()
+    projectsTitleRow.append(projectsTitle, projectsNameLabel)
+    projectsSection.appendChild(projectsTitleRow)
 
-    const projectSection = el('section', 'cp-section')
-    const projectTitleRow = el('div', 'cp-section-title-row')
-    const projectTitle = el('h3', 'cp-section-title', { text: UI_TEXT.file.myProject || UI_TEXT.file.project })
-    const projectNameLabel = el('span', 'cp-project-name')
-    const defaultProjectLabel = UI_TEXT.file.projectNew || 'New Project'
-    const updateProjectTitle = (detail = {}) => {
-        const rawProjectName = String(detail?.projectName || '').trim()
-        const rawFileName = String(detail?.fileName || '').trim()
-        const shownName = rawProjectName || shortNameFromFile(rawFileName) || defaultProjectLabel
-        projectNameLabel.textContent = shownName
-        projectNameLabel.title = shownName
-    }
-    updateProjectTitle()
-    projectTitleRow.append(projectTitle, projectNameLabel)
-    projectSection.appendChild(projectTitleRow)
-    const projectActions = el('div', 'cp-button-grid cp-start-project-actions')
-    const btnNewProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectNew })
-    const btnLoadProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectOpen || UI_TEXT.file.projectLoad })
-    const btnSaveProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSave })
-    const btnSaveAsProject = el('button', 'cp-btn', { text: UI_TEXT.file.projectSaveAs })
-    applyButtonIcon(btnNewProject, BUTTON_ICON_MAP.add, UI_TEXT.file.projectNew)
-    applyButtonIcon(btnLoadProject, BUTTON_ICON_MAP.load, UI_TEXT.file.projectOpen || UI_TEXT.file.projectLoad)
-    applyButtonIcon(btnSaveProject, BUTTON_ICON_MAP.save, UI_TEXT.file.projectSave)
-    applyButtonIcon(btnSaveAsProject, BUTTON_ICON_MAP.saveAs, UI_TEXT.file.projectSaveAs)
-    projectActions.append(btnNewProject, btnLoadProject, btnSaveProject, btnSaveAsProject)
-    projectSection.appendChild(projectActions)
+    // Action buttons: New, Open, Save
+    const projectsActions = el('div', 'cp-button-grid cp-start-project-actions')
+    projectsActions.style.gridTemplateColumns = 'repeat(3, 1fr)'
+    const btnNewProject = el('button', 'cp-btn', { text: 'New' })
+    const btnOpenProject = el('button', 'cp-btn', { text: 'Open' })
+    const btnSaveProject = el('button', 'cp-btn', { text: 'Save' })
+    applyButtonIcon(btnNewProject, BUTTON_ICON_MAP.add, 'New')
+    applyButtonIcon(btnOpenProject, BUTTON_ICON_MAP.load, 'Open')
+    applyButtonIcon(btnSaveProject, BUTTON_ICON_MAP.save, 'Save')
+    projectsActions.append(btnNewProject, btnOpenProject, btnSaveProject)
+    projectsSection.appendChild(projectsActions)
 
-    const projectNameModal = el('div', 'cp-project-modal')
-    const projectNamePanel = el('div', 'cp-project-modal-panel')
-    const projectNameHeader = el('div', 'cp-project-modal-header')
-    const projectNameTitle = el('div', 'cp-project-modal-title', {
-        text: UI_TEXT?.file?.projectNameTitle || UI_TEXT?.file?.projectNew || 'New Project',
-    })
-    const projectNameClose = el('button', 'cp-btn cp-btn-danger cp-project-modal-close', { type: 'button' })
-    applyButtonIcon(projectNameClose, BUTTON_ICON_MAP.close || BUTTON_ICON_MAP.clear, UI_TEXT?.file?.close || 'Close')
-    projectNameHeader.append(projectNameTitle, projectNameClose)
-
-    const projectNameBody = el('div', 'cp-project-modal-body')
-    const projectNamePromptLabel = el('label', 'cp-setting-label', {
-        text: UI_TEXT?.file?.projectNamePrompt || 'Project name',
-    })
-    const projectNameInput = el('input', 'cp-input-text', {
-        type: 'text',
-        placeholder: UI_TEXT?.file?.projectNamePlaceholder || UI_TEXT?.file?.projectNew || 'New Project',
-    })
-    projectNameBody.append(projectNamePromptLabel, projectNameInput)
-
-    const projectNameActions = el('div', 'cp-project-modal-actions')
-    const projectNameCancel = el('button', 'cp-btn cp-btn-danger', {
-        type: 'button',
-        text: UI_TEXT?.file?.projectNameCancel || UI_TEXT?.file?.recoveryDismiss || 'Cancel',
-    })
-    const projectNameConfirm = el('button', 'cp-btn', {
-        type: 'button',
-        text: UI_TEXT?.file?.projectNameConfirm || UI_TEXT?.file?.projectNew || 'Create',
-    })
-    applyButtonIcon(projectNameConfirm, BUTTON_ICON_MAP.add, projectNameConfirm.textContent)
-    projectNameActions.append(projectNameCancel, projectNameConfirm)
-
-    projectNamePanel.append(projectNameHeader, projectNameBody, projectNameActions)
-    projectNameModal.appendChild(projectNamePanel)
-
+    // Export As row (only image + 3D options)
     const exportRow = el('div', 'cp-start-export-row')
     const exportSelect = el('select', 'cp-input-select')
     for (const entry of buildExportOptions()) {
@@ -172,59 +126,10 @@ export function buildFileMenu(body, syncRegistry, deps) {
     const btnExportAs = el('button', 'cp-btn', { text: UI_TEXT.file.exportAsAction || UI_TEXT.file.export })
     applyButtonIcon(btnExportAs, BUTTON_ICON_MAP.export, UI_TEXT.file.exportAsAction || UI_TEXT.file.export)
     exportRow.append(exportSelect, btnExportAs)
-    projectSection.appendChild(exportRow)
+    projectsSection.appendChild(exportRow)
 
-    // ── Presets ──
-    const presetSection = el('section', 'cp-section')
-    const presetTitleRow = el('div', 'cp-section-title-row')
-    const presetTitle = el('h3', 'cp-section-title', { text: 'Presets' })
-    const presetNameLabel = el('span', 'cp-project-name', { text: UI_TEXT.file?.projectNew || 'None' })
-    presetTitleRow.append(presetTitle, presetNameLabel)
-    presetSection.appendChild(presetTitleRow)
-    const presetActions = el('div', 'cp-button-grid')
-    presetActions.style.gridTemplateColumns = '1fr 1fr'
-    const addPresetBtn = el('button', 'cp-btn', { type: 'button', title: 'Save current settings as a new preset' })
-    applyButtonIcon(addPresetBtn, BUTTON_ICON_MAP.add, 'New Preset')
-    const btnOpenPreset = el('button', 'cp-btn', { type: 'button', title: 'Open a preset JSON file' })
-    applyButtonIcon(btnOpenPreset, BUTTON_ICON_MAP.load, UI_TEXT.file?.presetUpload || 'Open')
-    btnOpenPreset.addEventListener('click', () => {
-        const input = document.createElement('input')
-        input.type = 'file'; input.accept = '.json'; input.style.display = 'none'
-        input.addEventListener('change', () => {
-            const file = input.files?.[0]
-            if (!file) return
-            window.dispatchEvent(new CustomEvent('seesound:preset-file-opened', { detail: { file } }))
-            input.remove()
-        })
-        document.body.appendChild(input); input.click()
-    })
-    const btnExportPreset = el('button', 'cp-btn', { type: 'button', title: 'Export current preset as a file' })
-    applyButtonIcon(btnExportPreset, BUTTON_ICON_MAP.export, 'Export Preset')
-    presetActions.append(addPresetBtn, btnOpenPreset, btnExportPreset)
-    presetSection.appendChild(presetActions)
-
-    const presetGrid = el('div', 'cp-template-grid')
-
-    const updatePresetNameLabel = (name) => {
-        const shown = String(name || '').trim() || UI_TEXT.file?.projectNew || 'None'
-        presetNameLabel.textContent = shown
-        presetNameLabel.title = shown
-    }
-
-    window.addEventListener('seesound:preset-load-request', (e) => {
-        const presetName = String(e?.detail?.presetName || '').trim()
-        if (presetName) updatePresetNameLabel(presetName)
-    })
-
-    window.addEventListener('seesound:project-loaded', (e) => {
-        const presetName = String(e?.detail?.presetName || '').trim()
-        if (presetName) updatePresetNameLabel(presetName)
-    })
-
-    window.addEventListener('seesound:factory-template-load-request', (e) => {
-        const title = String(e?.detail?.title || e?.detail?.presetName || '').trim()
-        if (title) updatePresetNameLabel(title)
-    })
+    // Project grid (list of saved projects/presets)
+    const projectGrid = el('div', 'cp-template-grid')
 
     const formatPresetThumbnail = (data) => {
         if (!data?.thumbnail) return null
@@ -237,10 +142,10 @@ export function buildFileMenu(body, syncRegistry, deps) {
         return img
     }
 
-    const renderPresets = () => {
+    const renderProjects = () => {
         import('../ParamStore.js').then(({ listPresets, loadPreset, savePreset, deletePreset }) => {
             listPresets().then(names => {
-                presetGrid.innerHTML = ''
+                projectGrid.innerHTML = ''
 
                 for (const name of names) {
                     const card = el('button', 'cp-template-card', { type: 'button', 'data-preset-name': name })
@@ -264,16 +169,36 @@ export function buildFileMenu(body, syncRegistry, deps) {
                         menu.style.top = `${e.clientY}px`
 
                         const renameItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Rename' })
+                        const saveItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Save to File' })
+                        const duplicateItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Duplicate' })
                         const thumbnailItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Set Thumbnail' })
                         const clearThumbItem = el('button', 'cp-preset-context-item', { type: 'button', text: 'Clear Thumbnail' })
                         const deleteItem = el('button', 'cp-preset-context-item cp-preset-context-item--danger', { type: 'button', text: 'Delete' })
 
                         renameItem.addEventListener('click', () => {
                             menu.remove()
-                            const newName = prompt('Rename preset:', name)
+                            const newName = prompt('Rename project:', name)
                             if (newName && newName.trim() && newName.trim() !== name) {
                                 loadPreset(name).then(data => {
-                                    if (data) { savePreset(newName.trim(), { ...data.params, presetThumbnail: data.params?.presetThumbnail || '' }); deletePreset(name); renderPresets() }
+                                    if (data) { savePreset(newName.trim(), { ...data.params, presetThumbnail: data.params?.presetThumbnail || '' }); deletePreset(name); renderProjects() }
+                                })
+                            }
+                        })
+
+                        saveItem.addEventListener('click', () => {
+                            menu.remove()
+                            window.dispatchEvent(new CustomEvent('seesound:project-save-to-file', { detail: { presetName: name } }))
+                        })
+
+                        duplicateItem.addEventListener('click', () => {
+                            menu.remove()
+                            const dupName = prompt('Duplicate as:', `${name} (copy)`)
+                            if (dupName && dupName.trim()) {
+                                loadPreset(name).then(data => {
+                                    if (data) {
+                                        savePreset(dupName.trim(), { ...data.params, presetThumbnail: data.params?.presetThumbnail || '' })
+                                        renderProjects()
+                                    }
                                 })
                             }
                         })
@@ -291,7 +216,7 @@ export function buildFileMenu(body, syncRegistry, deps) {
                                     loadPreset(name).then(data => {
                                         if (data) {
                                             savePreset(name, { ...data.params, presetThumbnail: base64 })
-                                            renderPresets()
+                                            renderProjects()
                                         }
                                     })
                                     input.remove()
@@ -307,20 +232,20 @@ export function buildFileMenu(body, syncRegistry, deps) {
                                 if (data) {
                                     const { presetThumbnail, ...rest } = data.params
                                     savePreset(name, rest)
-                                    renderPresets()
+                                    renderProjects()
                                 }
                             })
                         })
 
                         deleteItem.addEventListener('click', () => {
                             menu.remove()
-                            if (confirm(`Delete preset "${name}"?`)) {
+                            if (confirm(`Delete project "${name}"?`)) {
                                 deletePreset(name)
-                                renderPresets()
+                                renderProjects()
                             }
                         })
 
-                        menu.append(renameItem, thumbnailItem, clearThumbItem, deleteItem)
+                        menu.append(renameItem, saveItem, duplicateItem, thumbnailItem, clearThumbItem, deleteItem)
                         document.body.appendChild(menu)
 
                         const closeMenu = (ev) => {
@@ -328,40 +253,75 @@ export function buildFileMenu(body, syncRegistry, deps) {
                         }
                         setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
                     })
+
                     // Left-click: load
                     card.addEventListener('click', () => {
-                        window.dispatchEvent(new CustomEvent('seesound:preset-load-request', { detail: { presetName: name } }))
+                        window.dispatchEvent(new CustomEvent('seesound:project-load-request', { detail: { presetName: name } }))
                     })
-                    presetGrid.appendChild(card)
+                    projectGrid.appendChild(card)
                 }
             })
         })
     }
-    addPresetBtn.addEventListener('click', () => {
+
+    // New: save current to browser memory, then reset to blank
+    btnNewProject.addEventListener('click', () => {
         import('../ParamStore.js').then(async ({ savePreset, resetToDefaults }) => {
-            const currentPresetName = presetNameLabel.textContent || ''
-            const saveName = (currentPresetName && currentPresetName !== 'None' && currentPresetName !== (UI_TEXT.file?.projectNew || 'New Project'))
-                ? currentPresetName
-                : ''
-            // 1. Auto-save current state into the existing preset (if one is loaded)
-            if (saveName) {
-                await savePreset(saveName, params)
+            // Save current state if there's a current project name
+            if (currentProjectName) {
+                await savePreset(currentProjectName, params)
             }
-            // 2. Reset to defaults (wipes rules, tuners, all params)
             resetToDefaults()
-            // 3. Update UI — blank state
-            updatePresetNameLabel('')
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+            updateProjectsTitle('')
+            window.dispatchEvent(new CustomEvent('seesound:project-library-changed'))
+            window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+                detail: { projectName: '', presetName: '' },
+            }))
         })
     })
-    btnExportPreset.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:preset-export-request'))
-    })
-    presetSection.appendChild(presetGrid)
-    renderPresets()
-    window.addEventListener('seesound:preset-library-changed', renderPresets)
 
-    // ── Preset Tuners ──
+    // Open: file picker for .ssp or .json
+    btnOpenProject.addEventListener('click', () => {
+        const input = document.createElement('input')
+        input.type = 'file'; input.accept = '.ssp,.json'; input.style.display = 'none'
+        input.addEventListener('change', () => {
+            const file = input.files?.[0]
+            if (!file) { input.remove(); return }
+            window.dispatchEvent(new CustomEvent('seesound:project-file-opened', { detail: { file } }))
+            input.remove()
+        })
+        document.body.appendChild(input); input.click()
+    })
+
+    // Save: opens file save picker (SSP)
+    btnSaveProject.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-save-to-file', { detail: { presetName: currentProjectName || '' } }))
+    })
+
+    // Export As
+    btnExportAs.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:project-export-request', {
+            detail: { format: String(exportSelect.value || 'png') },
+        }))
+    })
+
+    window.addEventListener('seesound:project-loaded', (e) => {
+        const presetName = String(e?.detail?.presetName || e?.detail?.projectName || '').trim()
+        if (presetName) updateProjectsTitle(presetName)
+    })
+
+    window.addEventListener('seesound:factory-template-load-request', (e) => {
+        const title = String(e?.detail?.title || e?.detail?.presetName || '').trim()
+        if (title) updateProjectsTitle(title)
+    })
+
+    projectsSection.appendChild(projectGrid)
+    renderProjects()
+    window.addEventListener('seesound:project-library-changed', renderProjects)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Tuners section
+    // ═══════════════════════════════════════════════════════════════════
     const tunerSection = el('section', 'cp-section cp-tuner-section')
     const tunerTitleRow = el('div', 'cp-section-title-row')
     const tunerTitle = el('h3', 'cp-section-title', { text: 'Tuners' })
@@ -372,7 +332,6 @@ export function buildFileMenu(body, syncRegistry, deps) {
     let tunerDisposeFns = []
 
     const buildTunerUI = () => {
-        // Clean up previous
         for (const fn of tunerDisposeFns) fn()
         tunerDisposeFns = []
         tunerGrid.innerHTML = ''
@@ -428,7 +387,6 @@ export function buildFileMenu(body, syncRegistry, deps) {
             slider.addEventListener('input', syncFromSlider)
             valueDisplay.addEventListener('change', syncFromNumber)
 
-            // Right-click: show original rule slider
             row.addEventListener('contextmenu', (e) => {
                 e.preventDefault()
                 const menu = el('div', 'cp-preset-context-menu')
@@ -451,7 +409,6 @@ export function buildFileMenu(body, syncRegistry, deps) {
             })
 
             tunerDisposeFns.push(() => {
-                // Save current value back to params.tuners
                 const currentTuners = Array.isArray(params.tuners) ? [...params.tuners] : []
                 const idx = currentTuners.findIndex(t => (t.id === tuner.id || t.sliderId === tuner.sliderId))
                 if (idx >= 0) {
@@ -464,12 +421,9 @@ export function buildFileMenu(body, syncRegistry, deps) {
         }
     }
 
-    // Initial build
     buildTunerUI()
 
-    // Subscribe to tuner changes
     const tunerCleanup = () => {
-        // Save tuner values on cleanup
         const currentTuners = Array.isArray(params.tuners) ? [...params.tuners] : []
         tunerGrid.querySelectorAll('.cp-tuner-row').forEach((row, idx) => {
             const valInput = row.querySelector('.cp-tuner-value')
@@ -481,9 +435,7 @@ export function buildFileMenu(body, syncRegistry, deps) {
     window.addEventListener('seesound:before-menu-close', tunerCleanup)
     tunerDisposeFns.push(() => window.removeEventListener('seesound:before-menu-close', tunerCleanup))
 
-    // Rebuild tuner UI when params change
     const tunerSync = () => {
-        // Debounced rebuild - check if tuners array changed
         const currentTuners = Array.isArray(params.tuners) ? params.tuners : []
         const hasTuners = currentTuners.length > 0
         tunerSection.style.display = hasTuners ? '' : 'none'
@@ -492,71 +444,9 @@ export function buildFileMenu(body, syncRegistry, deps) {
     registerSync(syncRegistry, tunerSync, ['tuners'])
     tunerSync()
 
-    // ── End Preset Tuners ──
-
-    const setProjectNameModalOpen = (open) => {
-        const isOpen = !!open
-        projectNameModal.classList.toggle('is-open', isOpen)
-        if (isOpen) {
-            const defaultName = projectNameFromFile(projectNameLabel.textContent)
-                || projectNameFromFile(projectNameInput.placeholder)
-                || UI_TEXT?.file?.projectNew
-                || 'New Project'
-            projectNameInput.value = defaultName
-            projectNameInput.focus()
-            projectNameInput.select()
-        }
-    }
-
-    const confirmProjectName = () => {
-        const value = String(projectNameInput.value || '').trim()
-        if (!value) {
-            projectNameInput.focus()
-            return
-        }
-        setProjectNameModalOpen(false)
-        window.dispatchEvent(new CustomEvent('seesound:project-new-request', {
-            detail: { projectName: value },
-        }))
-    }
-
-    btnNewProject.addEventListener('click', () => setProjectNameModalOpen(true))
-    btnLoadProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-open-request')))
-    btnSaveProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-request')))
-    btnSaveAsProject.addEventListener('click', () => window.dispatchEvent(new CustomEvent('seesound:project-save-as-request')))
-    btnExportAs.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('seesound:project-export-request', {
-            detail: { format: String(exportSelect.value || 'project-file') },
-        }))
-    })
-
-    projectNameModal.addEventListener('click', (event) => {
-        if (event.target === projectNameModal) setProjectNameModalOpen(false)
-    })
-    projectNameClose.addEventListener('click', () => setProjectNameModalOpen(false))
-    projectNameCancel.addEventListener('click', () => setProjectNameModalOpen(false))
-    projectNameConfirm.addEventListener('click', confirmProjectName)
-    projectNameInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-            event.preventDefault()
-            confirmProjectName()
-        }
-        if (event.key === 'Escape') {
-            event.preventDefault()
-            setProjectNameModalOpen(false)
-        }
-    })
-
-    window.addEventListener('seesound:project-file-state', (e) => {
-        updateProjectTitle(e?.detail || {})
-    })
-    window.addEventListener('seesound:project-loaded', (e) => {
-        updateProjectTitle(e?.detail || {})
-    })
-    window.addEventListener('seesound:project-autosaved', (e) => {
-        updateProjectTitle(e?.detail || {})
-    })
-
+    // ═══════════════════════════════════════════════════════════════════
+    // Templates section
+    // ═══════════════════════════════════════════════════════════════════
     const templatesSection = el('section', 'cp-section')
     templatesSection.appendChild(el('h3', 'cp-section-title', {
         text: UI_TEXT.file.factoryTemplates || UI_TEXT.file.presets,
@@ -582,15 +472,14 @@ export function buildFileMenu(body, syncRegistry, deps) {
                 createTemplateThumb(template, title),
                 el('span', 'cp-template-card-title', { text: title }),
             )
-            // Add a "copy to presets" overlay
             const copyBtn = el('button', 'cp-template-copy-btn', { type: 'button', text: '+' })
-            copyBtn.title = 'Add to My Presets'
+            copyBtn.title = 'Add to My Projects'
             copyBtn.addEventListener('click', (e) => {
                 e.stopPropagation()
-                const presetName = prompt('Save as preset name:', title)
-                if (presetName && presetName.trim()) {
+                const projectName = prompt('Save as project name:', title)
+                if (projectName && projectName.trim()) {
                     window.dispatchEvent(new CustomEvent('seesound:factory-template-copy-request', {
-                        detail: { presetPath: template.presetPath, presetName: presetName.trim() }
+                        detail: { presetPath: template.presetPath, presetName: projectName.trim() }
                     }))
                 }
             })
@@ -628,6 +517,9 @@ export function buildFileMenu(body, syncRegistry, deps) {
         renderTemplateList(templates)
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // Recovery toast
+    // ═══════════════════════════════════════════════════════════════════
     const recoveryToast = el('section', 'cp-recovery-toast is-hidden')
     const recoveryTitle = el('div', 'cp-recovery-toast__title', {
         text: UI_TEXT.file.recoveryTitle || 'Recover Project',
@@ -661,7 +553,7 @@ export function buildFileMenu(body, syncRegistry, deps) {
         window.dispatchEvent(new CustomEvent('seesound:project-recovery-dismiss'))
     })
 
-    panel.append(projectSection, presetSection, tunerSection, templatesSection, recoveryToast, projectNameModal)
+    panel.append(projectsSection, tunerSection, templatesSection, recoveryToast)
     body.appendChild(panel)
 
     void loadFactoryTemplates()

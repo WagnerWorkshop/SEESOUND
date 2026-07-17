@@ -1107,9 +1107,7 @@ animate()
     })
     emitMuteState(playerEl, monitorMuted)
 
-    let projectFileHandle = null
     let projectFileName = ''
-    let projectAutoSaveTimer = null
     let projectLoadInProgress = false
     let projectLocalSaveTimer = null
     let pendingRecoveryDraft = null
@@ -1178,89 +1176,15 @@ animate()
         })
     }
 
-    const emitProjectFileState = () => {
-        window.dispatchEvent(new CustomEvent('seesound:project-file-state', {
-            detail: { fileName: String(projectFileName || '').trim() },
-        }))
-    }
-
-    const _collectPresetLibrary = async () => {
-        const names = await listPresets()
-        const out = []
-        for (const name of names) {
-            const data = await loadPreset(name)
-            if (!data?.params || typeof data.params !== 'object') continue
-            out.push({ name: String(name || ''), params: data.params })
-        }
-        return out
-    }
-
-    const _ensureAtLeastOnePreset = async () => {
-        // No-op: presets are only created by the user
-        return
-    }
-
-    const _clearUserPresets = async () => {
-        const names = await listPresets()
-        for (const name of names) {
-            await deletePreset(name)
-        }
-    }
-
-    const _restorePresetLibrary = async (presetLibrary) => {
-        if (!Array.isArray(presetLibrary)) return
-        for (const entry of presetLibrary) {
-            const name = String(entry?.name || '').trim()
-            const presetParams = entry?.params
-            if (!name || !presetParams || typeof presetParams !== 'object') continue
-            await savePreset(name, presetParams)
-        }
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-    }
-
-    const _replacePresetLibrary = async (presetLibrary) => {
-        // Replace: clear all user presets, then restore from project payload
-        await _clearUserPresets()
-        await _restorePresetLibrary(presetLibrary)
-    }
-
-    const _writeProjectToHandle = async (handle, payload) => {
-        // Write project as plain JSON (.ssp). We no longer write packaged archives.
-        const json = JSON.stringify(payload, null, 2)
-        const blob = new Blob([json], { type: 'application/json' })
-        const writable = await handle.createWritable()
-        await writable.write(blob)
-        await writable.close()
-    }
-
     const _buildCurrentProjectPayload = async () => {
         const snapshot = getSnapshot()
-        const presetLibrary = await _collectPresetLibrary()
         const title = _currentPresetTitle()
         return buildProjectPayload({
             params: snapshot,
             presetName: title,
-            presetLibrary,
+            presetLibrary: [],
             projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
         })
-    }
-
-    const _captureProjectThumbnailBlob = async () => {
-        const sourceCanvas = renderer?.domElement
-        if (!(sourceCanvas instanceof HTMLCanvasElement)) return null
-        if (typeof sourceCanvas.toBlob !== 'function') return null
-        return new Promise((resolve) => {
-            sourceCanvas.toBlob((blob) => resolve(blob || null), 'image/png')
-        })
-    }
-
-    const _downloadProjectBundle = async ({ payload, fileName } = {}) => {
-        const safePayload = payload && typeof payload === 'object'
-            ? payload
-            : await _buildCurrentProjectPayload()
-        const json = JSON.stringify(safePayload, null, 2)
-        const blob = new Blob([json], { type: 'application/json' })
-        triggerBlobDownload(blob, String(fileName || _defaultProjectName()))
     }
 
     const _loadFactoryTemplateFromDetail = async (detail = {}) => {
@@ -1280,10 +1204,8 @@ animate()
                 })
                 const parsed = await parseProjectFile(sourceFile)
                 set('ruleBlocks', [])
-                projectFileHandle = null
                 projectFileName = String(sourceFile.name || `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`).trim()
                 await loadProjectFromPayload(parsed.payload)
-                emitProjectFileState()
                 return true
             }
 
@@ -1317,10 +1239,8 @@ animate()
                 projectName: templateTitle,
             })
 
-            projectFileHandle = null
             projectFileName = `${_sanitizeFilePart(templateTitle, 'Template')}${PROJECT_FILE_EXTENSION}`
             await loadProjectFromPayload(payload)
-            emitProjectFileState()
             return true
         } catch (err) {
             console.warn('[Template] load failed:', err)
@@ -1338,7 +1258,7 @@ animate()
             const draft = {
                 payload,
                 fileName: String(projectFileName || '').trim(),
-                hasBoundFile: !!projectFileHandle,
+                hasBoundFile: false,
                 updatedAt: Date.now(),
                 hasAudio: loadedAudioFile instanceof File,
             }
@@ -1375,9 +1295,7 @@ animate()
         const parsed = (draft && typeof draft === 'object') ? draft : null
         if (!parsed?.payload || typeof parsed.payload !== 'object') return false
         try {
-            projectFileHandle = null
             projectFileName = String(parsed?.fileName || getDefaultProjectDefinition().fileName || '').trim()
-            emitProjectFileState()
             await loadProjectFromPayload(parsed.payload)
 
             if (parsed?.hasAudio) {
@@ -1396,83 +1314,8 @@ animate()
         }
     }
 
-    const saveProject = async () => {
-        if (!projectFileHandle) return false
-        try {
-            const payload = await _buildCurrentProjectPayload()
-            await _writeProjectToHandle(projectFileHandle, payload)
-            window.dispatchEvent(new CustomEvent('seesound:project-autosaved', {
-                detail: { fileName: projectFileName || _defaultProjectName() },
-            }))
-            emitProjectFileState()
-            _scheduleLocalProjectDraftSave()
-            return true
-        } catch (err) {
-            console.warn('[Project] save failed:', err)
-            const errName = String(err?.name || '')
-            if (errName === 'NotAllowedError' || errName === 'InvalidStateError') {
-                projectFileHandle = null
-                emitProjectFileState()
-                alert('Project file access was lost. Use Save As to reattach autosave.')
-            }
-            return false
-        }
-    }
-
-    const _pickProjectFileWithInput = async () => {
-        if (typeof document === 'undefined') return null
-        return new Promise((resolve) => {
-            const input = document.createElement('input')
-            input.type = 'file'
-            input.accept = `${PROJECT_FILE_EXTENSION},.json`
-            input.style.display = 'none'
-            document.body.appendChild(input)
-
-            let settled = false
-            const cleanup = () => {
-                input.removeEventListener('change', onChange)
-                window.removeEventListener('focus', onFocus, true)
-                if (input.parentNode) input.parentNode.removeChild(input)
-            }
-            const finish = (file) => {
-                if (settled) return
-                settled = true
-                cleanup()
-                resolve(file || null)
-            }
-            const onChange = () => {
-                const picked = input.files?.[0] || null
-                finish(picked)
-            }
-            const onFocus = () => {
-                setTimeout(() => {
-                    if (!settled && !(input.files && input.files.length)) finish(null)
-                }, 300)
-            }
-
-            input.addEventListener('change', onChange, { once: true })
-            window.addEventListener('focus', onFocus, true)
-            input.click()
-        })
-    }
-
-    const exportSettingsJson = async () => {
-        const snapshot = getSnapshot()
-        const presetName = String(_currentPresetTitle() || '').trim() || 'settings'
-        const safeName = _sanitizeFilePart(presetName, 'settings')
-        const payload = {
-            exportedAt: new Date().toISOString(),
-            presetName,
-            params: snapshot,
-        }
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-        triggerBlobDownload(blob, `${safeName}.json`)
-        return true
-    }
-
-    const exportProjectAs = async (format = 'project-file') => {
-        const target = String(format || 'project-file')
-        const payload = await _buildCurrentProjectPayload()
+    const exportProjectAs = async (format = 'png') => {
+        const target = String(format || 'png')
 
         if (target === 'png') {
             await saveCanvasPng({ transparent: false })
@@ -1484,47 +1327,19 @@ animate()
             return true
         }
 
-        if (target === 'obj') {
+        if (target === 'ply') {
             await saveSceneObj()
             return true
         }
 
-        if (target === 'settings-json') {
-            return exportSettingsJson()
-        }
-
-        if (target === 'project-file') {
-            const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
-                ? projectFileName
-                : _defaultProjectName()
-            await _downloadProjectBundle({
-                payload,
-                fileName: suggestedName,
-                includeAudio: false,
-            })
-            _scheduleLocalProjectDraftSave()
-            return true
-        }
-
-        // No project-package support; fall through to download JSON project file
-
-        const suggestedName = String(projectFileName || '').toLowerCase().endsWith(PROJECT_FILE_EXTENSION)
-            ? projectFileName
-            : _defaultProjectName()
-        await _downloadProjectBundle({ payload, fileName: suggestedName })
-        _scheduleLocalProjectDraftSave()
+        // Fallback: png
+        await saveCanvasPng({ transparent: false })
         return true
     }
 
     const scheduleProjectAutosave = () => {
         if (projectLoadInProgress) return
         _scheduleLocalProjectDraftSave()
-        if (!projectFileHandle) return
-        if (projectAutoSaveTimer) clearTimeout(projectAutoSaveTimer)
-        projectAutoSaveTimer = setTimeout(async () => {
-            projectAutoSaveTimer = null
-            await saveProject()
-        }, 450)
     }
 
     const loadProjectFromPayload = async (payload) => {
@@ -1532,9 +1347,6 @@ animate()
             projectLoadInProgress = true
             if (payload.params && typeof payload.params === 'object') {
                 setMany(payload.params)
-            }
-            if (Array.isArray(payload.presetLibrary)) {
-                await _replacePresetLibrary(payload.presetLibrary)
             }
             window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
                 detail: {
@@ -1550,238 +1362,93 @@ animate()
         }
     }
 
-    const _importPresetFile = async (file) => {
+    const shortNameFromFile = (rawName = '') => {
+        const fileName = String(rawName || '').trim()
+        if (!fileName) return ''
+        if (/\.ssp$/i.test(fileName)) return fileName.replace(/\.ssp$/i, '')
+        return fileName.replace(/\.[^./\\]+$/g, '')
+    }
+
+    // ── Save project to .ssp file (file save picker) ─────────────────────
+    window.addEventListener('seesound:project-save-to-file', async (e) => {
+        const suggestedName = String(e?.detail?.presetName || '').trim() || _defaultProjectName()
+        const safeName = suggestedName.toLowerCase().endsWith('.ssp') ? suggestedName : `${suggestedName}.ssp`
+        const payload = await _buildCurrentProjectPayload()
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+
+        if (typeof window.showSaveFilePicker === 'function') {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: safeName,
+                    types: [{
+                        description: 'SEESOUND Project',
+                        accept: { 'application/json': ['.ssp', '.json'] },
+                    }],
+                })
+                const writable = await handle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+                return
+            } catch (err) {
+                if (err?.name === 'AbortError') return
+            }
+        }
+        // Fallback: browser download
+        triggerBlobDownload(blob, safeName)
+    })
+
+    // ── Open .ssp / .json file → save to browser projects & load ────────
+    window.addEventListener('seesound:project-file-opened', async (e) => {
+        const file = e?.detail?.file
+        if (!(file instanceof File)) return
         try {
             const text = await file.text()
             const parsed = JSON.parse(text)
-            if (!parsed || typeof parsed !== 'object') return false
-            // Only treat as preset if it has no schemaVersion (not a project file)
-            if (parsed.schemaVersion !== undefined) return false
-            const presetParams = (parsed?.params && typeof parsed.params === 'object')
+            if (!parsed || typeof parsed !== 'object') return
+
+            const projectName = _sanitizeFilePart(
+                shortNameFromFile(file.name) || 'Imported Project',
+                'Imported Project'
+            )
+            const presetParams = parsed?.params && typeof parsed.params === 'object'
                 ? parsed.params
-                : null
-            if (!presetParams || typeof presetParams !== 'object') return false
-            const name = String(parsed?.presetName || _nameWithoutExt(file.name) || 'Imported Preset').trim()
-            await savePreset(name, presetParams)
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-            // Update the preset section name label
-            window.dispatchEvent(new CustomEvent('seesound:preset-load-request', {
-                detail: { presetName: name },
+                : parsed
+
+            await savePreset(projectName, presetParams)
+            window.dispatchEvent(new CustomEvent('seesound:project-library-changed'))
+
+            // Load it
+            set('ruleBlocks', [])
+            setMany(presetParams)
+            window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+                detail: { presetName: projectName },
             }))
-            return true
         } catch (err) {
-            console.warn('[Preset] import failed:', err)
-            return false
-        }
-    }
-
-    const openProjectWithPicker = async () => {
-        try {
-            let handle = null
-            let file = null
-            if (typeof window.showOpenFilePicker === 'function') {
-                const picked = await window.showOpenFilePicker({
-                    multiple: false,
-                    excludeAcceptAllOption: false,
-                    types: [{
-                        description: 'SEESOUND Project / Preset',
-                        accept: {
-                            'application/json': [PROJECT_FILE_EXTENSION, '.json'],
-                        },
-                    }],
-                })
-                handle = picked?.[0] || null
-                if (!handle) return false
-                file = await handle.getFile()
-            } else {
-                file = await _pickProjectFileWithInput()
-                if (!(file instanceof File)) return false
-            }
-
-            // Try importing as a preset first (detect by absence of schemaVersion)
-            const presetImported = await _importPresetFile(file)
-            if (presetImported) {
-                projectFileHandle = handle
-                projectFileName = String(file.name || '').trim()
-                emitProjectFileState()
-                return true
-            }
-
-            // Otherwise treat as a full project file
-            const parsed = await parseProjectFile(file)
-            projectFileHandle = handle
-            projectFileName = String(file.name || '').trim()
-            await loadProjectFromPayload(parsed.payload)
-            emitProjectFileState()
-
-            if (parsed.audioFile instanceof File) {
-                loadFile(parsed.audioFile, parsed.audioFile.name)
-            }
-
-            return true
-        } catch (err) {
-            if (err?.name === 'AbortError') return false
             console.warn('[Project] open failed:', err)
             alert('Failed to open project file.')
-            return false
         }
-    }
-
-    const createNewProjectWithPicker = async (suggested = '', resetState = true) => {
-        if (typeof window.showSaveFilePicker !== 'function') {
-            if (resetState) {
-                const defaults = getDefaultProjectDefinition()
-                setMany(defaults.params)
-                await _replacePresetLibrary(defaults.presetLibrary)
-            }
-            projectFileHandle = null
-            projectFileName = String(suggested || getDefaultProjectDefinition().fileName || '').trim() || _defaultProjectName()
-            emitProjectFileState()
-            _scheduleLocalProjectDraftSave()
-            return true
-        }
-        try {
-            const suggestedName = String(suggested || '').trim() || _defaultProjectName()
-            const handle = await window.showSaveFilePicker({
-                suggestedName,
-                types: [{
-                    description: 'SEESOUND Project',
-                    accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
-                }],
-            })
-            if (!handle) return false
-            projectFileHandle = handle
-            projectFileName = String(handle.name || suggestedName).trim()
-            await saveProject()
-            emitProjectFileState()
-            _scheduleLocalProjectDraftSave()
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    const saveProjectAsWithPicker = async (suggested = '') => {
-        const suggestedName = String(suggested || '').trim() || _defaultProjectName()
-        const saveAsDownloadFallback = async (reason = '') => {
-            try {
-                const payload = await _buildCurrentProjectPayload()
-                await _downloadProjectBundle({
-                    payload,
-                    fileName: suggestedName,
-                    includeAudio: false,
-                })
-                projectFileHandle = null
-                projectFileName = suggestedName
-                emitProjectFileState()
-                _scheduleLocalProjectDraftSave()
-                if (reason) alert(reason)
-                return true
-            } catch (fallbackErr) {
-                console.warn('[Project] save-as download fallback failed:', fallbackErr)
-                alert('Save As failed. Please export the project manually from File menu.')
-                return false
-            }
-        }
-
-        if (typeof window.showSaveFilePicker !== 'function') {
-            return saveAsDownloadFallback('Save As file picker is unavailable here. Downloaded the project file instead.')
-        }
-        try {
-            const handle = await window.showSaveFilePicker({
-                suggestedName,
-                types: [{
-                    description: 'SEESOUND Project',
-                    accept: { 'application/json': [PROJECT_FILE_EXTENSION] },
-                }],
-            })
-            if (!handle) return false
-            projectFileHandle = handle
-            projectFileName = String(handle.name || suggestedName).trim()
-            await saveProject()
-            emitProjectFileState()
-            return true
-        } catch (err) {
-            if (err?.name === 'AbortError') return false
-            console.warn('[Project] save-as picker failed:', err)
-            return saveAsDownloadFallback('Save As file handle could not be attached. Downloaded project file instead. Autosave to file requires Save As in a supported browser.')
-        }
-    }
-
-    playerEl.addEventListener('player:saveproject', async () => {
-        if (projectFileHandle) {
-            await saveProject()
-            return
-        }
-        alert('Use Save As first to choose where this project should be saved.')
-    })
-    playerEl.addEventListener('player:loadproject', async (e) => {
-        await loadProjectFromPayload(e?.detail?.payload || {})
     })
 
-    window.addEventListener('seesound:project-save-request', async () => {
-        if (projectFileHandle) {
-            await saveProject()
-            return
-        }
-        alert('Use Save As first to choose where this project should be saved.')
+    // ── Left-click on project card → load from browser ──────────────────
+    window.addEventListener('seesound:project-load-request', async (e) => {
+        const presetName = String(e?.detail?.presetName || '').trim()
+        if (!presetName) return
+        const preset = await loadPreset(presetName)
+        if (!preset?.params || typeof preset.params !== 'object') return
+        set('ruleBlocks', [])
+        setMany(preset.params)
+        window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
+            detail: { presetName },
+        }))
+        _scheduleLocalProjectDraftSave()
     })
-    window.addEventListener('seesound:project-save-as-request', async () => {
-        const suggested = String(projectFileName || '').trim() || _defaultProjectName()
-        await saveProjectAsWithPicker(suggested)
-    })
+
+    // ── Export As (png / png-transparent / ply only) ────────────────────
     window.addEventListener('seesound:project-export-request', async (e) => {
-        const format = String(e?.detail?.format || 'project-file')
+        const format = String(e?.detail?.format || 'png')
         await exportProjectAs(format)
     })
-    window.addEventListener('seesound:preset-export-request', async () => {
-        await exportSettingsJson()
-    })
-    window.addEventListener('seesound:project-load-request', async (e) => {
-        const detail = e?.detail || {}
-        const incomingName = String(detail.fileName || '').trim()
-        if (incomingName) {
-            projectFileName = incomingName
-            emitProjectFileState()
-        }
-        await loadProjectFromPayload(detail.payload || {})
-        if (!projectFileHandle && typeof window.showSaveFilePicker === 'function') {
-            const shouldAttach = window.confirm('Attach this project to an autosave file now?')
-            if (shouldAttach) {
-                await createNewProjectWithPicker(String(detail.fileName || _defaultProjectName()), false)
-            }
-        }
-    })
-    window.addEventListener('seesound:project-open-request', async () => {
-        await openProjectWithPicker()
-    })
-    window.addEventListener('seesound:project-new-request', async (e) => {
-        const incomingName = String(e?.detail?.projectName || '').trim()
-        const fallbackName = _nameWithoutExt(getDefaultProjectDefinition().fileName || 'New Project')
-        const nextProjectName = _sanitizeFilePart(incomingName || fallbackName, fallbackName)
-        if (!nextProjectName) return
-        projectLoadInProgress = true
-        try {
-            resetToDefaults()
-            await _clearUserPresets()
-            projectFileHandle = null
-            projectFileName = `${nextProjectName}${PROJECT_FILE_EXTENSION}`
-            pendingRecoveryDraft = null
-            try { localStorage.removeItem(LOCAL_PROJECT_DRAFT_KEY) } catch { }
-            emitProjectFileState()
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-            window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
-                detail: {
-                    fileName: projectFileName,
-                    presetName: 'default',
-                },
-            }))
-            window.dispatchEvent(new CustomEvent('seesound:project-recovery-resolved'))
-        } finally {
-            projectLoadInProgress = false
-            _scheduleLocalProjectDraftSave()
-        }
-    })
+
     window.addEventListener('seesound:factory-template-load-request', async (e) => {
         await _loadFactoryTemplateFromDetail(e?.detail || {})
     })
@@ -1809,33 +1476,13 @@ animate()
                 : ((parsed && typeof parsed === 'object') ? parsed : null)
             if (!presetParams) return
             await savePreset(presetName, presetParams)
-            window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
+            window.dispatchEvent(new CustomEvent('seesound:project-library-changed'))
         } catch (err) {
-            console.warn('[Template] copy to presets failed:', err)
+            console.warn('[Template] copy failed:', err)
         }
     })
-    window.addEventListener('seesound:preset-library-changed', () => {
+    window.addEventListener('seesound:project-library-changed', () => {
         scheduleProjectAutosave()
-        _scheduleLocalProjectDraftSave()
-    })
-
-    window.addEventListener('seesound:preset-save-request', async () => {
-        const name = prompt('Save preset as:', '')
-        if (!name || !name.trim()) return
-        await savePreset(name.trim(), getSnapshot())
-        window.dispatchEvent(new CustomEvent('seesound:preset-library-changed'))
-    })
-
-    window.addEventListener('seesound:preset-load-request', async (e) => {
-        const presetName = String(e?.detail?.presetName || '').trim()
-        if (!presetName) return
-        const preset = await loadPreset(presetName)
-        if (!preset?.params || typeof preset.params !== 'object') return
-        set('ruleBlocks', [])
-        setMany(preset.params)
-        window.dispatchEvent(new CustomEvent('seesound:project-loaded', {
-            detail: { presetName },
-        }))
         _scheduleLocalProjectDraftSave()
     })
 
@@ -1874,11 +1521,9 @@ animate()
         }
         const defaults = getDefaultProjectDefinition()
         projectFileName = defaults.fileName
-        emitProjectFileState()
         await loadProjectFromPayload(_buildDefaultProjectPayload())
     }
 
-    emitProjectFileState()
     void bootstrapDefaultProject()
 
     // Save pending draft before page unload (sync to ensure it runs)
@@ -1887,17 +1532,16 @@ animate()
         projectLocalSaveTimer = null
         try {
             const snapshot = getSnapshot()
-            const presetLibrary = [] // skip async collection
             const payload = buildProjectPayload({
                 params: snapshot,
                 presetName: _currentPresetTitle(),
-                presetLibrary,
+                presetLibrary: [],
                 projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),
             })
             const draft = {
                 payload,
                 fileName: String(projectFileName || '').trim(),
-                hasBoundFile: !!projectFileHandle,
+                hasBoundFile: false,
                 updatedAt: Date.now(),
                 hasAudio: loadedAudioFile instanceof File,
             }
