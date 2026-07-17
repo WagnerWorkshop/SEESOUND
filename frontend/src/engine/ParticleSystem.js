@@ -1046,7 +1046,7 @@ export class ParticleSystem {
         this._binDominantValue = ae._binDominantValue ?? null
         // Also cache global averages for frameBinInputs
         const gsa = ae.getGlobalShapeActivations?.()
-        const shapeIds = ['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass']
+        const shapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
         if (gsa) {
             for (let s = 0; s < shapeIds.length; s++) this['_' + shapeIds[s]] = gsa[s] || 0
         }
@@ -1263,14 +1263,14 @@ export class ParticleSystem {
         // ── Populate shape activations from AudioEngine ──
         const shapeActivations = ae.getGlobalShapeActivations?.()
         if (shapeActivations) {
-            const shapeIds = ['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass']
+            const shapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
             for (let s = 0; s < shapeIds.length; s++) {
                 frameBinInputs[shapeIds[s]] = shapeActivations[s] || 0
             }
             // Dominant shape
             const enriched = ae.getEnrichedObjects?.()
             if (enriched && enriched.length > 0) {
-                frameBinInputs.shapeDominant = enriched[0].dominantShape?.replace('shape','') || 'Sine'
+                frameBinInputs.shapeDominant = enriched[0].dominantShape?.replace('shape', '') || 'Sine'
                 frameBinInputs.shapeDominantValue = enriched[0].dominantShapeValue || 0
             }
         }
@@ -1438,7 +1438,7 @@ export class ParticleSystem {
                         if (Number.isFinite(compOnset)) o.componentOnset = compOnset
                         if (compCount > 0) o.componentCount = compCount
                         if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
-                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine:0,binShapeTriangle:0,binShapeSawtooth:0,binShapeSquare:0,binShapeNoise:0,binShapePinkNoise:0,binShapeTransient:0,binShapePad:0,binShapeBuzzy:0,binShapeBass:0,binFundamentalHz:0,binDominantValue:0 }
+                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine: 0, binShapeTriangle: 0, binShapeSawtooth: 0, binShapeSquare: 0, binShapeNoise: 0, binShapePinkNoise: 0, binShapeTransient: 0, binShapePad: 0, binShapeBuzzy: 0, binShapeBass: 0, binFundamentalHz: 0, binDominantValue: 0 }
                         o.binShapeSine = _sh.binShapeSine; o.binShapeTriangle = _sh.binShapeTriangle; o.binShapeSawtooth = _sh.binShapeSawtooth; o.binShapeSquare = _sh.binShapeSquare; o.binShapeNoise = _sh.binShapeNoise; o.binShapePinkNoise = _sh.binShapePinkNoise; o.binShapeTransient = _sh.binShapeTransient; o.binShapePad = _sh.binShapePad; o.binShapeBuzzy = _sh.binShapeBuzzy; o.binShapeBass = _sh.binShapeBass; o.binFundamentalHz = _sh.binFundamentalHz; o.binDominantValue = _sh.binDominantValue
                         return o
                     })()),
@@ -1579,7 +1579,7 @@ export class ParticleSystem {
                         if (Number.isFinite(compOnset)) o.componentOnset = compOnset
                         if (compCount > 0) o.componentCount = compCount
                         if (Number.isFinite(compBinEnergy)) o.componentBinEnergy = compBinEnergy
-                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine:0,binShapeTriangle:0,binShapeSawtooth:0,binShapeSquare:0,binShapeNoise:0,binShapePinkNoise:0,binShapeTransient:0,binShapePad:0,binShapeBuzzy:0,binShapeBass:0,binFundamentalHz:0,binDominantValue:0 }
+                        const _sh = (typeof _getBinShapeMetrics === "function" && typeof _hzToCqtBin === "function") ? _getBinShapeMetrics(_hzToCqtBin(hz)) : { binShapeSine: 0, binShapeTriangle: 0, binShapeSawtooth: 0, binShapeSquare: 0, binShapeNoise: 0, binShapePinkNoise: 0, binShapeTransient: 0, binShapePad: 0, binShapeBuzzy: 0, binShapeBass: 0, binFundamentalHz: 0, binDominantValue: 0 }
                         o.binShapeSine = _sh.binShapeSine; o.binShapeTriangle = _sh.binShapeTriangle; o.binShapeSawtooth = _sh.binShapeSawtooth; o.binShapeSquare = _sh.binShapeSquare; o.binShapeNoise = _sh.binShapeNoise; o.binShapePinkNoise = _sh.binShapePinkNoise; o.binShapeTransient = _sh.binShapeTransient; o.binShapePad = _sh.binShapePad; o.binShapeBuzzy = _sh.binShapeBuzzy; o.binShapeBass = _sh.binShapeBass; o.binFundamentalHz = _sh.binFundamentalHz; o.binDominantValue = _sh.binDominantValue
                         return o
                     })()),

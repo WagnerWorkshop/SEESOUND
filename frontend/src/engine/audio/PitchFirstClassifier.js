@@ -281,8 +281,8 @@ export class PitchFirstClassifier {
                 for (let s = 0; s < SHAPE_COUNT; s++) {
                     if (!keep.has(pi + '_' + s)) {
                         const peak = peaks[pi]
-                        const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi-1].binIdx)/2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
-                        const aHigh = pi < peaks.length-1 ? Math.min(binCount-1, Math.ceil((peak.binIdx + peaks[pi+1].binIdx)/2)) : Math.min(binCount-1, Math.ceil(peak.binIdx * 1.19))
+                        const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi - 1].binIdx) / 2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
+                        const aHigh = pi < peaks.length - 1 ? Math.min(binCount - 1, Math.ceil((peak.binIdx + peaks[pi + 1].binIdx) / 2)) : Math.min(binCount - 1, Math.ceil(peak.binIdx * 1.19))
                         for (let b = aLow; b <= aHigh; b++) {
                             this.binShapeData[b * SHAPE_COUNT + s] = 0
                         }
@@ -297,8 +297,8 @@ export class PitchFirstClassifier {
         for (const peak of peaks) {
             const weight = peak.magnitude
             totalWeight += weight
-            const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi-1]?.binIdx ?? 0)/2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
-            const aHigh = pi < peaks.length-1 ? Math.min(binCount-1, Math.ceil((peak.binIdx + peaks[pi+1]?.binIdx ?? binCount-1)/2)) : Math.min(binCount-1, Math.ceil(peak.binIdx * 1.19))
+            const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi - 1]?.binIdx ?? 0) / 2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
+            const aHigh = pi < peaks.length - 1 ? Math.min(binCount - 1, Math.ceil((peak.binIdx + peaks[pi + 1]?.binIdx ?? binCount - 1) / 2)) : Math.min(binCount - 1, Math.ceil(peak.binIdx * 1.19))
             // Just use the peak's own H for the global average
             // Re-read from bin data at the peak bin
             const base = peak.binIdx * SHAPE_COUNT

@@ -5,27 +5,27 @@ import { readFileSync, writeFileSync } from 'fs';
 //    Remove force objectMode='cloud' — worklet stays in particle mode
 // ════════════════════════════════════════════════════════════════
 {
-  const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/SeesoundEngine.js';
-  let c = readFileSync(f, 'utf8');
+    const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/SeesoundEngine.js';
+    let c = readFileSync(f, 'utf8');
 
-  // Replace import
-  c = c.replace(
-    "import { SupervisedNMF } from './audio/SupervisedNMF.js'",
-    "import { PitchFirstClassifier } from './audio/PitchFirstClassifier.js'"
-  );
+    // Replace import
+    c = c.replace(
+        "import { SupervisedNMF } from './audio/SupervisedNMF.js'",
+        "import { PitchFirstClassifier } from './audio/PitchFirstClassifier.js'"
+    );
 
-  // Replace type + constructor
-  c = c.replace(
-    "/** @type {SupervisedNMF} */",
-    "/** @type {PitchFirstClassifier} */"
-  );
-  c = c.replace(
-    "this._shapeSolver = new SupervisedNMF()",
-    "this._shapeSolver = new PitchFirstClassifier()"
-  );
+    // Replace type + constructor
+    c = c.replace(
+        "/** @type {SupervisedNMF} */",
+        "/** @type {PitchFirstClassifier} */"
+    );
+    c = c.replace(
+        "this._shapeSolver = new SupervisedNMF()",
+        "this._shapeSolver = new PitchFirstClassifier()"
+    );
 
-  // Replace the tick() shape classification block — use CQT data instead of harmonic objects
-  const oldBlock = `        // ── Supervised NMF shape classification (runs regardless of mode) ──
+    // Replace the tick() shape classification block — use CQT data instead of harmonic objects
+    const oldBlock = `        // ── Supervised NMF shape classification (runs regardless of mode) ──
         const ho = engine.getHarmonicObjects?.() ?? null
         if (!engine._workletConfig.needPitchBrain || engine._workletConfig.objectMode !== 'cloud') {
             engine._workletConfig.needPitchBrain = true
@@ -41,7 +41,7 @@ import { readFileSync, writeFileSync } from 'fs';
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)
         }`;
 
-  const newBlock = `        // ── Pitch-first shape classification from CQT data (main thread, no worklet overhead) ──
+    const newBlock = `        // ── Pitch-first shape classification from CQT data (main thread, no worklet overhead) ──
         const cqtMags = engine.getBinMagnitude?.() ?? null
         if (cqtMags && cqtMags.length > 0) {
             const result = this._shapeSolver.classifyCqtFrame(cqtMags)
@@ -59,21 +59,21 @@ import { readFileSync, writeFileSync } from 'fs';
             engine._enrichedObjects = []
         }`;
 
-  c = c.replace(oldBlock, newBlock);
+    c = c.replace(oldBlock, newBlock);
 
-  writeFileSync(f, c);
-  console.log('1. SeesoundEngine: switched to PitchFirstClassifier, removed worklet overhead');
+    writeFileSync(f, c);
+    console.log('1. SeesoundEngine: switched to PitchFirstClassifier, removed worklet overhead');
 }
 
 // ════════════════════════════════════════════════════════════════
 // 2. ParticleSystem: Replace shape variable reading with per-bin data
 // ════════════════════════════════════════════════════════════════
 {
-  const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/ParticleSystem.js';
-  let c = readFileSync(f, 'utf8');
+    const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/ParticleSystem.js';
+    let c = readFileSync(f, 'utf8');
 
-  // Replace the "Supervised NMF shape activations" block 
-  const oldBlock = `        // ── Supervised NMF shape activations ──────────────────────
+    // Replace the "Supervised NMF shape activations" block 
+    const oldBlock = `        // ── Supervised NMF shape activations ──────────────────────
         // Read global shape activations from AudioEngine (set by SeesoundEngine.tick)
         {
             const gsa = ae.getGlobalShapeActivations?.()
@@ -88,7 +88,7 @@ import { readFileSync, writeFileSync } from 'fs';
             this._shapeDominantValue = enriched.length > 0 ? (enriched[0].dominantShapeValue || 0) : 0
         }`;
 
-  const newBlock = `        // ── Pitch-first shape classification ─────────────────────
+    const newBlock = `        // ── Pitch-first shape classification ─────────────────────
         // Per-bin shape data is computed by PitchFirstClassifier from CQT data.
         // Each bin has its own 10-shape activation vector + fundamental frequency.
         {
@@ -117,23 +117,23 @@ import { readFileSync, writeFileSync } from 'fs';
             this._SHAPE_COUNT = 10
         }`;
 
-  c = c.replace(oldBlock, newBlock);
+    c = c.replace(oldBlock, newBlock);
 
-  writeFileSync(f, c);
-  console.log('2. ParticleSystem: switched to per-bin shape data');
+    writeFileSync(f, c);
+    console.log('2. ParticleSystem: switched to per-bin shape data');
 }
 
 // ════════════════════════════════════════════════════════════════
 // 3. Update ShapeDebugPanel to read from PitchFirstClassifier
 // ════════════════════════════════════════════════════════════════
 {
-  const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/ui/ShapeDebugPanel.js';
-  let c = readFileSync(f, 'utf8');
-  
-  // updateShapeDebugPanel already uses ae.getGlobalShapeActivations() — works fine
-  // No changes needed
+    const f = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/engine/ui/ShapeDebugPanel.js';
+    let c = readFileSync(f, 'utf8');
 
-  console.log('3. ShapeDebugPanel: no changes needed (uses getGlobalShapeActivations)');
+    // updateShapeDebugPanel already uses ae.getGlobalShapeActivations() — works fine
+    // No changes needed
+
+    console.log('3. ShapeDebugPanel: no changes needed (uses getGlobalShapeActivations)');
 }
 
 console.log('\nAll done. Run pnpm build.');
