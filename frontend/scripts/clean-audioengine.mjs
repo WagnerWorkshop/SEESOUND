@@ -10,7 +10,7 @@ let changes = [];
 const iterativeFieldStart = lines.findIndex(l => l.includes('// ── Iterative subtraction'));
 const iterativeFieldEnd = iterativeFieldStart + 8; // 1 comment + 7 field lines
 if (iterativeFieldStart > 0) {
-    changes.push(`Removed iterative fields at lines ${iterativeFieldStart+1}-${iterativeFieldEnd+1}`);
+    changes.push(`Removed iterative fields at lines ${iterativeFieldStart + 1}-${iterativeFieldEnd + 1}`);
     lines.splice(iterativeFieldStart, iterativeFieldEnd - iterativeFieldStart);
     // Add shape activation fields in their place
     lines.splice(iterativeFieldStart, 0,
@@ -30,17 +30,17 @@ const methodEnd = lines.findIndex((l, i) => i > methodStart && l.trim() === '}//
 // Find the actual end: the closing brace of _connectSourceToIterativeWorklet
 let endIdx = methodStart;
 for (let i = methodStart; i < lines.length; i++) {
-    if (lines[i].trim() === '}' && i > methodStart + 5 && lines[i+1]?.trim() === '') {
+    if (lines[i].trim() === '}' && i > methodStart + 5 && lines[i + 1]?.trim() === '') {
         // Check if this looks like the end of the method section
-        const nextNonEmpty = lines.slice(i+1).findIndex(l => l.trim());
-        if (nextNonEmpty > 0 && lines[i+1+nextNonEmpty].includes('setRuleInputUsage')) {
+        const nextNonEmpty = lines.slice(i + 1).findIndex(l => l.trim());
+        if (nextNonEmpty > 0 && lines[i + 1 + nextNonEmpty].includes('setRuleInputUsage')) {
             endIdx = i;
             break;
         }
     }
 }
 if (endIdx > methodStart) {
-    changes.push(`Removed iterative methods at lines ${methodStart+1}-${endIdx+1}`);
+    changes.push(`Removed iterative methods at lines ${methodStart + 1}-${endIdx + 1}`);
     lines.splice(methodStart, endIdx - methodStart + 1);
     // Add shape accessors in their place
     lines.splice(methodStart, 0,
@@ -116,7 +116,7 @@ if (gettersStart > 0) {
     let gettersEnd = gettersStart;
     for (let i = gettersStart; i < lines.length; i++) {
         if (lines[i].trim() === '}' && i > gettersStart + 5) {
-            const nextNonEmpty = lines.slice(i+1).findIndex(l => l.trim() !== '');
+            const nextNonEmpty = lines.slice(i + 1).findIndex(l => l.trim() !== '');
             if (nextNonEmpty < 0 || nextNonEmpty > 5) {
                 gettersEnd = i;
                 break;

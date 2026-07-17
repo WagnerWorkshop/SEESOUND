@@ -133,7 +133,7 @@ export class GraphSolver {
         // Fallback: create placeholder nodes when no harmonic data exists
         // (particle mode, or worklet not yet producing objects)
         if (incoming.length === 0 && visibleCount > 0 && this.nodes.size < visibleCount) {
-            const needed = Math.min(visibleCount - this.nodes.size, 50) // cap at 50 fallback nodes
+            const needed = Math.min(visibleCount - this.nodes.size, 8) // cap at 50 fallback nodes
             for (let i = 0; i < needed; i++) {
                 const fid = -1 - i // negative IDs mark fallback nodes
                 if (this.nodes.has(fid)) continue

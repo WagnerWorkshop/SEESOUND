@@ -661,7 +661,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         payload.streamId = streamId
 
         // In Cloud mode, also send the full harmonic objects array
-        if (objectMode === 'cloud' && harmonicObjects && harmonicObjects.length > 0) {
+        if (harmonicObjects && harmonicObjects.length > 0) {
             this.port.postMessage({ type: 'harmonicObjects', objects: harmonicObjects })
         }
 

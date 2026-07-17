@@ -15,7 +15,7 @@ for (let i = 0; i < lines.length; i++) {
 // 2. Add init before the ready console.log
 for (let i = 0; i < lines.length; i++) {
     if (lines[i].includes("console.log('%c SEESOUND v1.0 ready '")) {
-        lines.splice(i, 0, 
+        lines.splice(i, 0,
             "// Shape debug panel (Ctrl+Shift+D to toggle)",
             "createShapeDebugPanel(() => ae)",
             "window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key === 'D') { e.preventDefault(); toggleShapeDebugPanel(); } })",
@@ -27,7 +27,7 @@ for (let i = 0; i < lines.length; i++) {
 
 // 3. Add update call in animate function after ae.update()
 for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === 'ae.update()' && lines[i+1].trim().startsWith('const isActuallyPlaying')) {
+    if (lines[i].trim() === 'ae.update()' && lines[i + 1].trim().startsWith('const isActuallyPlaying')) {
         lines.splice(i + 1, 0, '    updateShapeDebugPanel()');
         break;
     }

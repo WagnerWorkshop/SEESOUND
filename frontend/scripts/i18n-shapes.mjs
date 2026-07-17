@@ -6,7 +6,7 @@ const files = readdirSync(i18nBase).filter(f => f.endsWith('.json'));
 
 const shapeLabels = {
     shapeSine: "Pure Sine",
-    shapeTriangle: "Triangle Wave", 
+    shapeTriangle: "Triangle Wave",
     shapeSawtooth: "Sawtooth Wave",
     shapeSquare: "Square Wave",
     shapeNoise: "White Noise",

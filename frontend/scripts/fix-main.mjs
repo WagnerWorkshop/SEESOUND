@@ -5,7 +5,7 @@ let content = readFileSync(file, 'utf8');
 
 // 1. Remove iterative subtraction test hooks (exact section)
 content = content.replace(
-`// ─────────────────────────────────────────────────────────────────────────────
+    `// ─────────────────────────────────────────────────────────────────────────────
 // § 9  ITERATIVE SUBTRACTION TEST HOOK
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -33,7 +33,7 @@ window.testIterativeSubtraction = async (opts = {}) => {
     let result
     try {
         const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer.slice(0))
-        console.log(`[IterativeSubtraction] Decoded: \${audioBuffer.duration.toFixed(1)}s, \${audioBuffer.numberOfChannels}ch, \${audioBuffer.sampleRate}Hz`)
+        console.log(`[IterativeSubtraction] Decoded: \${ audioBuffer.duration.toFixed(1) }s, \${ audioBuffer.numberOfChannels }ch, \${ audioBuffer.sampleRate }Hz`)
 
         // Override default opts with console-configurable threshold
         const settings = {

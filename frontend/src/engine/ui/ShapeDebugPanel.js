@@ -73,7 +73,7 @@ export function createShapeDebugPanel(aeGetter) {
         const barOuter = document.createElement('div')
         barOuter.style.cssText = 'flex:1;height:8px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden'
         const barInner = document.createElement('div')
-        barInner.style.cssText = `height:100%;width:0%;background:rgb(${Math.round(color[0]*255)},${Math.round(color[1]*255)},${Math.round(color[2]*255)});border-radius:3px;transition:width 0.1s`
+        barInner.style.cssText = `height:100%;width:0%;background:rgb(${Math.round(color[0] * 255)},${Math.round(color[1] * 255)},${Math.round(color[2] * 255)});border-radius:3px;transition:width 0.1s`
         barOuter.appendChild(barInner)
         row.appendChild(barOuter)
 

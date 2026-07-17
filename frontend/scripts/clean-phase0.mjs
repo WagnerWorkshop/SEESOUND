@@ -18,25 +18,25 @@ const base = 'd:/3CREATIVE/Music to Picture/SEESOUND/SEESOUND v1.0/frontend/src/
 const files = readdirSync(base).filter(f => f.endsWith('.json'));
 
 const iterativeKeys = [
-  'iterativeSourceCount',
-  'iterativeSourceF0',
-  'iterativeSourceVolume',
-  'iterativeSourceCrest',
-  'iterativeSourceSymmetry',
+    'iterativeSourceCount',
+    'iterativeSourceF0',
+    'iterativeSourceVolume',
+    'iterativeSourceCrest',
+    'iterativeSourceSymmetry',
 ];
 
 files.forEach(f => {
-  let content = readFileSync(join(base, f), 'utf8');
-  for (const key of iterativeKeys) {
-    // Match the JSON entry with surrounding comma/whitespace
-    const re = new RegExp(`("${key}"\\s*:\\s*"[^"]*",?\\s*\\r?\\n)`, 'g');
-    content = content.replace(re, '');
-  }
-  // Clean up any double commas from removal
-  content = content.replace(/,(\s*\n\s*\})/g, '$1');
-  content = content.replace(/,(\s*\n\s*")/g, '\n  "$1');
-  writeFileSync(join(base, f), content);
-  console.log('i18n/' + f + ': cleaned');
+    let content = readFileSync(join(base, f), 'utf8');
+    for (const key of iterativeKeys) {
+        // Match the JSON entry with surrounding comma/whitespace
+        const re = new RegExp(`("${key}"\\s*:\\s*"[^"]*",?\\s*\\r?\\n)`, 'g');
+        content = content.replace(re, '');
+    }
+    // Clean up any double commas from removal
+    content = content.replace(/,(\s*\n\s*\})/g, '$1');
+    content = content.replace(/,(\s*\n\s*")/g, '\n  "$1');
+    writeFileSync(join(base, f), content);
+    console.log('i18n/' + f + ': cleaned');
 });
 
 console.log('Phase 0 cleanup complete!');

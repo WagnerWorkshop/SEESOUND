@@ -22,7 +22,7 @@ if (startLine >= 0 && endLine >= startLine) {
     const removeFrom = startLine - 1; // include the separator line
     lines.splice(removeFrom, endLine - removeFrom + 1);
     writeFileSync(PATH, lines.join('\n'));
-    console.log(`Removed lines ${removeFrom+1}-${endLine+1} (${endLine-removeFrom+1} lines). New length: ${lines.length} lines`);
+    console.log(`Removed lines ${removeFrom + 1}-${endLine + 1} (${endLine - removeFrom + 1} lines). New length: ${lines.length} lines`);
 } else {
     console.log('Section not found:', { startLine, endLine });
 }
