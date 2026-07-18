@@ -1632,6 +1632,37 @@ export class ParticleSystem {
         // Expose globalTransient and age in frame rule base
         _frameRuleBase.globalTransient = frameBinInputs.globalTransient
         _frameRuleBase.age = 0
+        // Fundamental from PitchFirstClassifier (log-norm 0=40Hz, 1=16000Hz)
+        _frameRuleBase.fundamentalNormHz = ae._detectedFundamentalHz > 0
+            ? Math.min(1, (Math.log2(Math.max(40, ae._detectedFundamentalHz)) - Math.log2(40)) / (Math.log2(16000) - Math.log2(40)))
+            : (typeof _n === 'function' ? _n(ae.peakFreq ?? 0, 0, 22050) : 0)
+        // Shape activations from PitchFirstClassifier (global 10-shape vector)
+        const gsa = ae.getGlobalShapeActivations?.()
+        if (gsa) {
+            _frameRuleBase.shapeSine = gsa[0] || 0
+            _frameRuleBase.shapeTriangle = gsa[1] || 0
+            _frameRuleBase.shapeSawtooth = gsa[2] || 0
+            _frameRuleBase.shapeSquare = gsa[3] || 0
+            _frameRuleBase.shapeNoise = gsa[4] || 0
+            _frameRuleBase.shapePinkNoise = gsa[5] || 0
+            _frameRuleBase.shapeTransient = gsa[6] || 0
+            _frameRuleBase.shapePad = gsa[7] || 0
+            _frameRuleBase.shapeBuzzy = gsa[8] || 0
+            _frameRuleBase.shapeBass = gsa[9] || 0
+            // Dominant shape
+            let maxS = 0, maxV = 0
+            for (let s = 0; s < 10; s++) {
+                if (gsa[s] > maxV) { maxV = gsa[s]; maxS = s }
+            }
+            const shapeNames = ['Sine', 'Triangle', 'Sawtooth', 'Square', 'Noise', 'PinkNoise', 'Transient', 'Pad', 'Buzzy', 'Bass']
+            _frameRuleBase.shapeDominant = shapeNames[maxS] || 'Sine'
+            _frameRuleBase.shapeDominantValue = maxV
+        } else {
+            _frameRuleBase.shapeSine = 0; _frameRuleBase.shapeTriangle = 0; _frameRuleBase.shapeSawtooth = 0
+            _frameRuleBase.shapeSquare = 0; _frameRuleBase.shapeNoise = 0; _frameRuleBase.shapePinkNoise = 0
+            _frameRuleBase.shapeTransient = 0; _frameRuleBase.shapePad = 0; _frameRuleBase.shapeBuzzy = 0
+            _frameRuleBase.shapeBass = 0; _frameRuleBase.shapeDominant = 'Sine'; _frameRuleBase.shapeDominantValue = 0
+        }
         // Expose componentCount as overall variable
         _frameRuleBase.componentCount = Math.max(0, this._componentTracker.componentCount)
         // Expose per-component timbre metrics as frame‑level variables

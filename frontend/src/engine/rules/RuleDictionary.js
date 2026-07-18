@@ -77,6 +77,19 @@ const _INPUT_RANGES = Object.freeze({
     // HPSS (harmonic-percussive source separation) variables
     harmonicEnergy: [0, 1],
     percussiveEnergy: [0, 1],
+    // Global shape activations from PitchFirstClassifier
+    shapeSine: [0, 1],
+    shapeTriangle: [0, 1],
+    shapeSawtooth: [0, 1],
+    shapeSquare: [0, 1],
+    shapeNoise: [0, 1],
+    shapePinkNoise: [0, 1],
+    shapeTransient: [0, 1],
+    shapePad: [0, 1],
+    shapeBuzzy: [0, 1],
+    shapeBass: [0, 1],
+    shapeDominant: ['Sine', 'Triangle', 'Sawtooth', 'Square', 'Noise', 'PinkNoise', 'Transient', 'Pad', 'Buzzy', 'Bass'],
+    shapeDominantValue: [0, 1],
     // Iterative subtraction (time-domain source separation) variables
 })
 
@@ -144,6 +157,19 @@ const _INPUT_MODES = {
     objectShapeBass: ['cloud'],
     objectDominantShape: ['cloud'],
     objectVolume: ['cloud'],
+    // Global shape activations from PitchFirstClassifier
+    shapeSine: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeTriangle: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeSawtooth: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeSquare: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeNoise: ['particle', 'cloud', 'tracing', 'lines'],
+    shapePinkNoise: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeTransient: ['particle', 'cloud', 'tracing', 'lines'],
+    shapePad: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeBuzzy: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeBass: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeDominant: ['particle', 'cloud', 'tracing', 'lines'],
+    shapeDominantValue: ['particle', 'cloud', 'tracing', 'lines'],
     // Iterative subtraction variables — available in all modes
 }
 

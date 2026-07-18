@@ -293,8 +293,33 @@ export function buildFileMenu(body, syncRegistry, deps) {
         document.body.appendChild(input); input.click()
     })
 
-    // Save: opens file save picker (SSP)
+    // Save: saves in-place to loaded project (localStorage), no file picker
     btnSaveProject.addEventListener('click', () => {
+        if (currentProjectName) {
+            import('../ParamStore.js').then(({ savePreset }) => {
+                savePreset(currentProjectName, params)
+                window.dispatchEvent(new CustomEvent('seesound:project-library-changed'))
+            })
+        } else {
+            // No loaded project — prompt for name, then save
+            const name = prompt('Save as project name:', 'My Project')
+            if (name && name.trim()) {
+                import('../ParamStore.js').then(async ({ savePreset }) => {
+                    await savePreset(name.trim(), params)
+                    updateProjectsTitle(name.trim())
+                    window.dispatchEvent(new CustomEvent('seesound:project-library-changed'))
+                    window.dispatchEvent(new CustomEvent('seesound:project-loaded', { detail: { presetName: name.trim() } }))
+                })
+            }
+        }
+    })
+
+    // Save As: opens file save picker (SSP)
+    const btnSaveAsProject = el('button', 'cp-btn', { text: 'Save As' })
+    applyButtonIcon(btnSaveAsProject, BUTTON_ICON_MAP.saveAs, 'Save As')
+    projectsActions.append(btnSaveAsProject)
+    projectsActions.style.gridTemplateColumns = 'repeat(4, 1fr)'
+    btnSaveAsProject.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('seesound:project-save-to-file', { detail: { presetName: currentProjectName || '' } }))
     })
 

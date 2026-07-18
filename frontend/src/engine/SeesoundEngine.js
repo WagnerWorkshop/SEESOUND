@@ -350,6 +350,10 @@ export class SeesoundEngine {
             const result = this._shapeSolver.detectEntities(cqtMags)
             engine._globalShapeActivations = result.globalActivations
             engine._shapeEntities = result.entities || []
+
+            // Store detected fundamental on AudioEngine for ParticleSystem._frameRuleBase
+            const firstEntity = result.entities?.[0]
+            engine._detectedFundamentalHz = firstEntity?.fundamentalHz ?? 0
             // Diagnostic log every ~60 frames
             if ((this._frameN % 60) === 0) {
                 const hasMag = cqtMags ? cqtMags.length : 0
@@ -419,8 +423,8 @@ export class SeesoundEngine {
             // Music theory
             notePitchClass: ae.fundamentalNote ?? 0,
             octave: ae.fundamentalPitch > 0 ? Math.floor(ae.fundamentalPitch / 12) - 1 : 0,
-            fundamentalNormHz: ae.fundamentalPitch > 0
-                ? Math.min(1, (440 * Math.pow(2, (ae.fundamentalPitch - 69) / 12)) / Math.max(1e-6, nyq))
+            fundamentalNormHz: ae._detectedFundamentalHz > 0
+                ? Math.min(1, (Math.log2(Math.max(40, ae._detectedFundamentalHz)) - Math.log2(40)) / (Math.log2(16000) - Math.log2(40)))
                 : _n(ae.peakFreq ?? 0, 0, nyq),
         }
     }
