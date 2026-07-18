@@ -360,8 +360,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 badgeText = 'cloud·net'
             } else if (entry.layerShapeType === 'cloud') {
                 badgeText = `cloud·${entry.cloudShape || 'cyl'}`
-            } else if (entry.layerShapeType === 'modifier' || entry.layerType === 'modifier') {
-                badgeText = 'mod'
             }
             typeBadge.textContent = badgeText
             if (isSpecial) typeBadge.style.display = 'none'
@@ -481,7 +479,13 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 })
                 // Drag events for reordering
                 row.draggable = true
-                row.addEventListener('dragstart', () => {
+                row.addEventListener('dragstart', (e) => {
+                    // Prevent drag when interacting with inputs, expression editors, or buttons
+                    const target = e.target
+                    if (target.closest('input, textarea, select, button, [contenteditable="true"], .cp-btn, .cp-rule-token-editor')) {
+                        e.preventDefault()
+                        return
+                    }
                     draggingLayerId = entry.id; row.classList.add('is-dragging')
                 })
                 row.addEventListener('dragend', () => {
@@ -665,16 +669,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         ], 'particle'))
         typeRow.append(typeLabel, typeSelect)
 
-        // Layer type (generator vs modifier)
-        const layerTypeRow = el('label', 'cp-setting-row')
-        const layerTypeLabel = el('span', 'cp-setting-label', { text: 'Layer Type' })
-        const layerTypeSelect = el('select', 'cp-input-select')
-        layerTypeSelect.appendChild(createSelectOptions([
-            { value: 'generator', label: 'Generator — spawns shapes on canvas' },
-            { value: 'modifier', label: 'Modifier — overlays on top of lower layers' },
-        ], 'generator'))
-        layerTypeRow.append(layerTypeLabel, layerTypeSelect)
-
         // Spacing mode (cloud only)
         const spacingRow = el('label', 'cp-setting-row')
         spacingRow.style.display = 'none'
@@ -711,7 +705,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             const rawName = String(nameInput.value || '').trim()
             const nextName = rawName || `Layer ${getRuleLayers().length + 1}`
             const nextType = typeSelect.value || 'particle'
-            const nextLayerType = layerTypeSelect.value || 'generator'
             const nextSpacing = spacingSelect.value || 'coordinates'
             const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
 
@@ -721,7 +714,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 enabled: true,
                 order: getRuleLayers().length,
                 layerShapeType: nextType,
-                layerType: nextLayerType,
+                layerType: 'generator',
                 spacingMode: nextType === 'cloud' ? nextSpacing : 'coordinates',
                 cloudShape: nextType === 'cloud' ? nextCloudShape : 'cylindrical',
                 audioTrackId: 'full',
@@ -734,7 +727,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         actions.append(cancelBtn, createBtn)
 
         const body = el('div', 'cp-layer-creation-body')
-        body.append(nameRow, layerTypeRow, typeRow, spacingRow, cloudShapeRow, actions)
+        body.append(nameRow, typeRow, spacingRow, cloudShapeRow, actions)
 
         const header = el('div', 'cp-layer-creation-header')
         header.append(title, closeBtn)
@@ -1075,27 +1068,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         }
     }
 
-    function updateContradictionState() {
-        const seen = new Map()
-        const conflictIds = new Set()
-        for (const rowState of orderedRows) {
-            if (!rowState?.enabled) continue
-            const action = toActionFromState(rowState)
-            if (!action) continue
-            const signature = `${rowState.definition.target}|${rowState.definition.output}|${normalizeConditionSignature(rowState)}`
-            const prior = seen.get(signature)
-            if (prior) {
-                conflictIds.add(prior.instanceId)
-                conflictIds.add(rowState.instanceId)
-                continue
-            }
-            seen.set(signature, rowState)
-        }
-        for (const rowState of orderedRows) {
-            rowState.card?.classList.toggle('is-danger', conflictIds.has(rowState.instanceId))
-        }
-    }
-
     const isSectionEnabled = (sectionName) => !(sectionEnabledState.get(sectionName) === false)
 
     const refreshRowCardState = (row) => {
@@ -1207,7 +1179,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         syncColorMode('spawnedParticles')
         syncColorMode('lines')
         syncColorMode('background')
-        updateContradictionState()
 
         const nextBlocks = []
         for (let i = 0; i < orderedRows.length; i++) {
@@ -1369,7 +1340,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 const sectionEl = sectionByName.get(sectionName)
                 if (sectionEl) sectionEl.classList.toggle('is-section-disabled', !enabled)
             }
-            updateContradictionState()
             refreshAllRowOutputs()
         } finally {
             syncingFromParamStore = false

@@ -29,7 +29,7 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 const NNLS_ITERATIONS = 5
 const EPS = 1e-12
-const PEAK_MIN_MAGNITUDE = 0.005    // minimum CQT magnitude to consider a peak
+const PEAK_MIN_MAGNITUDE = 0.001    // minimum CQT magnitude to consider a peak
 const PEAK_MIN_DISTANCE_BINS = 3    // minimum bins between peaks (suppress harmonics)
 const MAX_PEAKS = 12                 // maximum fundamentals to classify
 const DEFAULT_SMOOTHING_ALPHA = 0.18
@@ -141,6 +141,9 @@ export class PitchFirstClassifier {
 
         /** @type {Array<Object>} Detected peaks with shape data */
         this.peaks = []
+
+        /** @type {Array<Object>} Detected entities: {fundamentalHz, dominantShape, volume, shapeActivations} */
+        this.entities = []
 
         /** @type {number} Total CQT bins last frame */
         this._cqtBins = 0
@@ -416,6 +419,52 @@ export class PitchFirstClassifier {
         if (Number.isFinite(alpha)) this.smoothingAlpha = Math.max(0.05, Math.min(0.5, alpha))
     }
 
+    /**
+     * Detect sound entities from CQT data. Each entity = (fundamentalHz, shape, volume).
+     * No per-bin painting — pure list of detected sounds.
+     */
+    detectEntities(cqtMagnitudes) {
+        if (!cqtMagnitudes || cqtMagnitudes.length < 4) {
+            this.globalActivations.fill(0); this.entities = []
+            return { entities: [], globalActivations: this.globalActivations }
+        }
+        const binCount = cqtMagnitudes.length
+        const peaks = this._findPeaks(cqtMagnitudes, binCount)
+        this.peaks = peaks
+        if (peaks.length === 0) {
+            this.globalActivations.fill(0); this.entities = []
+            return { entities: [], globalActivations: this.globalActivations }
+        }
+        const alpha = this.smoothingAlpha, oma = 1 - alpha
+        const entities = []
+        for (const peak of peaks) {
+            const f0 = peak.freqHz
+            const V = new Float64Array(MAX_HARMONICS); let sv = 0
+            for (let k = 1; k <= MAX_HARMONICS; k++) {
+                const hz = f0 * k; if (hz > 20000) break
+                const bi = Math.round(hzToCqtBin(hz, binCount, 40, 16000))
+                if (bi >= 0 && bi < binCount) { V[k - 1] = cqtMagnitudes[bi]; sv += V[k - 1] }
+            }
+            if (sv < EPS) continue
+            const H = new Float32Array(SHAPE_COUNT)
+            for (let s = 0; s < SHAPE_COUNT; s++) H[s] = 1 / SHAPE_COUNT
+            nnlsFast(this._W, V, H)
+            const fk = Math.round(f0 / 5) * 5; const pH = this._prevActivations.get(fk)
+            if (pH) { for (let s = 0; s < SHAPE_COUNT; s++) { H[s] = alpha * H[s] + oma * pH[s]; if (H[s] < 0) H[s] = 0; if (H[s] > 1) H[s] = 1 } }
+            this._prevActivations.set(fk, new Float32Array(H))
+            let ds = 0, dv = 0; for (let s = 0; s < SHAPE_COUNT; s++) { if (H[s] > dv) { dv = H[s]; ds = s } }
+            entities.push({ fundamentalHz: f0, dominantShape: SHAPE_IDS[ds], dominantShapeValue: dv, volume: Math.min(1, peak.magnitude * 3), shapeActivations: H })
+        }
+        if (this.sparsityTopN > 0 && this.sparsityTopN < entities.length) {
+            entities.sort((a, b) => b.dominantShapeValue - a.dominantShapeValue); entities.length = this.sparsityTopN
+        }
+        this.globalActivations.fill(0); let tw = 0
+        for (const e of entities) { const w = e.volume; tw += w; for (let s = 0; s < SHAPE_COUNT; s++)this.globalActivations[s] += (e.shapeActivations?.[s] || 0) * w }
+        if (tw > EPS) { const inv = 1 / tw; for (let s = 0; s < SHAPE_COUNT; s++)this.globalActivations[s] *= inv }
+        this.entities = entities; this._frameCount++
+        return { entities, globalActivations: this.globalActivations }
+    }
+
     reset() {
         this._prevActivations.clear()
         this.globalActivations.fill(0)
@@ -423,6 +472,7 @@ export class PitchFirstClassifier {
         if (this.binFundamentalHz) this.binFundamentalHz.fill(0)
         if (this.binDominantValue) this.binDominantValue.fill(0)
         this.peaks = []
+        this.entities = []
         this._frameCount = 0
     }
 }

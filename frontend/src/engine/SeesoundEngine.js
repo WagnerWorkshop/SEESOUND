@@ -340,26 +340,19 @@ export class SeesoundEngine {
             this._graphPositions = null
         }
 
-        // ── Pitch-first shape classification from CQT data (main thread, no worklet overhead) ──
-        // Force magnitude data to flow — shape classifier always runs
+        // ── Pitch-first shape classification (always runs) ──
         if (!engine._workletConfig.needMagnitude) {
             engine._workletConfig.needMagnitude = true
             engine._postWorkletConfig()
         }
         const cqtMags = engine.getBinMagnitude?.() ?? null
         if (cqtMags && cqtMags.length > 0) {
-            const result = this._shapeSolver.classifyCqtFrame(cqtMags)
-            engine._binShapeData = result.binShapeData
-            engine._binFundamentalHz = result.binFundamentalHz
-            engine._binDominantValue = result.binDominantValue
+            const result = this._shapeSolver.detectEntities(cqtMags)
             engine._globalShapeActivations = result.globalActivations
-            engine._enrichedObjects = []
+            engine._shapeEntities = result.entities || []
         } else {
-            engine._binShapeData = null
-            engine._binFundamentalHz = null
-            engine._binDominantValue = null
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)
-            engine._enrichedObjects = []
+            engine._shapeEntities = []
         }
 
     }
@@ -415,6 +408,9 @@ export class SeesoundEngine {
             // Music theory
             notePitchClass: ae.fundamentalNote ?? 0,
             octave: ae.fundamentalPitch > 0 ? Math.floor(ae.fundamentalPitch / 12) - 1 : 0,
+            fundamentalNormHz: ae.fundamentalPitch > 0
+                ? Math.min(1, (440 * Math.pow(2, (ae.fundamentalPitch - 69) / 12)) / Math.max(1e-6, nyq))
+                : _n(ae.peakFreq ?? 0, 0, nyq),
         }
     }
 

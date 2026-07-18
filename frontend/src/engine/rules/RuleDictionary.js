@@ -37,6 +37,7 @@ const _INPUT_RANGES = Object.freeze({
     fundamentalHz: [0, 22050],
     fundamentalPitch: [0, 127],
     fundamentalNote: [0, 11],
+    fundamentalNormHz: [0, 1],
     globalTransient: [0, 10],
     objectAge: [0, Number.POSITIVE_INFINITY],
     streamId: [0, 1],
@@ -83,7 +84,7 @@ const _INPUT_RANGES = Object.freeze({
     shapePad: [0, 1],
     shapeBuzzy: [0, 1],
     shapeBass: [0, 1],
-    shapeDominant: ['Sine','Triangle','Sawtooth','Square','Noise','PinkNoise','Transient','Pad','Buzzy','Bass'],
+    shapeDominant: ['Sine', 'Triangle', 'Sawtooth', 'Square', 'Noise', 'PinkNoise', 'Transient', 'Pad', 'Buzzy', 'Bass'],
     shapeDominantValue: [0, 1],
     // Per-object variables (cloud mode only)
     objectFundamentalHz: [0, 22050],
@@ -97,7 +98,7 @@ const _INPUT_RANGES = Object.freeze({
     objectShapePad: [0, 1],
     objectShapeBuzzy: [0, 1],
     objectShapeBass: [0, 1],
-    objectDominantShape: ['Sine','Triangle','Sawtooth','Square','Noise','PinkNoise','Transient','Pad','Buzzy','Bass'],
+    objectDominantShape: ['Sine', 'Triangle', 'Sawtooth', 'Square', 'Noise', 'PinkNoise', 'Transient', 'Pad', 'Buzzy', 'Bass'],
     objectVolume: [0, 1],
     // Shape activation variables
     shapeSine: [0, 1],
@@ -110,7 +111,7 @@ const _INPUT_RANGES = Object.freeze({
     shapePad: [0, 1],
     shapeBuzzy: [0, 1],
     shapeBass: [0, 1],
-    shapeDominant: ['Sine','Triangle','Sawtooth','Square','Noise','PinkNoise','Transient','Pad','Buzzy','Bass'],
+    shapeDominant: ['Sine', 'Triangle', 'Sawtooth', 'Square', 'Noise', 'PinkNoise', 'Transient', 'Pad', 'Buzzy', 'Bass'],
     shapeDominantValue: [0, 1],
     // HPSS (harmonic-percussive source separation) variables
     harmonicEnergy: [0, 1],
@@ -133,6 +134,13 @@ const _legacyInputAliases = [
         technicalName: 'canvasHeight',
         description: 'Legacy alias of canvasHeightPx.',
     },
+    {
+        id: 'fundamentalNormHz',
+        group: 'pitchBrain',
+        label: 'Fundamental Hz (normalized)',
+        technicalName: 'fundamentalNormHz',
+        description: 'Normalized fundamental frequency (0-1). Falls back to peakFreq when no fundamental is detected.',
+    },
 ]
 
 // ── Mode-gated variable definitions ───────────────────────────────────────────
@@ -154,6 +162,7 @@ const _INPUT_MODES = {
     fundamentalHz: ['cloud'],
     fundamentalPitch: ['cloud'],
     fundamentalNote: ['cloud'],
+    fundamentalNormHz: ['particle', 'cloud', 'tracing', 'lines'],
     // globalTransient is available in all modes
     globalTransient: ['particle', 'cloud', 'tracing', 'lines'],
     objectAge: ['cloud'],
@@ -426,12 +435,11 @@ function _isOutputAllowedForTarget(outputMeta, target) {
 export function validateRuleBlock(rule, dictionaries = { input: inputDictionary, output: outputDictionary }) {
     const errors = []
     const warnings = []
-    const contradictions = []
     const inMap = new Map((dictionaries.input?.entries ?? []).map((entry) => [entry.id, entry]))
     const outMap = new Map((dictionaries.output?.entries ?? []).map((entry) => [entry.id, entry]))
 
     if (!rule || typeof rule !== 'object') {
-        return { ok: false, errors: ['Rule must be an object.'], warnings, contradictions }
+        return { ok: false, errors: ['Rule must be an object.'], warnings }
     }
 
     if (!RULE_SCOPES.includes(rule.scope)) {
@@ -482,15 +490,7 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
         if (action?.operator === 'set') {
             const prior = setTargets.get(output)
             if (prior !== undefined) {
-                contradictions.push({
-                    type: 'sameRuleSetConflict',
-                    color: 'red',
-                    output,
-                    overriddenActionIndex: prior,
-                    winningActionIndex: prior,
-                    resolution: 'first-executes',
-                })
-                warnings.push(`Contradiction on ${output}: action ${prior} takes precedence; later action ${actionIndex} is ignored.`)
+                warnings.push(`Duplicate set on ${output}: action ${prior} takes precedence; later action ${actionIndex} is ignored.`)
             }
             setTargets.set(output, actionIndex)
         }
@@ -510,63 +510,6 @@ export function validateRuleBlock(rule, dictionaries = { input: inputDictionary,
         ok: errors.length === 0,
         errors,
         warnings,
-        contradictions,
-    }
-}
-
-/**
- * Annotates cross-rule contradictions for UI coloring while preserving order.
- * Deterministic resolution: first rule wins.
- */
-export function annotateRuleContradictions(ruleBlocks) {
-    const input = Array.isArray(ruleBlocks) ? ruleBlocks : []
-    const seen = new Map()
-    const redRuleIds = new Set()
-    const notes = []
-
-    input.forEach((rule, index) => {
-        if (!rule?.enabled || rule?.sectionDisabled === true) return
-        const scope = rule.scope || 'spawnedOnly'
-        const ruleId = rule.id || `rule-${index}`
-        const actions = Array.isArray(rule.actions) ? rule.actions : []
-        const always = _isAlwaysCondition(rule.condition)
-        if (!always) return
-
-        actions.forEach((action) => {
-            if (action?.operator !== 'set' || !_outputMap.has(action?.output)) return
-            const target = _normalizeTarget(rule)
-            const key = `${target}:${scope}:${action.output}`
-            const prior = seen.get(key)
-            if (prior) {
-                redRuleIds.add(prior.ruleId)
-                redRuleIds.add(ruleId)
-                notes.push({
-                    color: 'red',
-                    type: 'crossRuleConflict',
-                    scope,
-                    target,
-                    output: action.output,
-                    overriddenRuleId: prior.ruleId,
-                    winningRuleId: prior.ruleId,
-                    resolution: 'first-executes',
-                })
-            }
-            seen.set(key, { ruleId, index })
-        })
-    })
-
-    const rules = input.map((rule, index) => {
-        const id = rule?.id || `rule-${index}`
-        return {
-            ...rule,
-            uiState: redRuleIds.has(id) ? 'red' : 'normal',
-        }
-    })
-
-    return {
-        rules,
-        notes,
-        redRuleIds: [...redRuleIds],
     }
 }
 

@@ -1002,6 +1002,13 @@
       "label": "Bin Dominant Shape Value",
       "technicalName": "binDominantValue",
       "description": "Per-bin activation of the dominant shape (0-1)."
+    },
+    {
+      "id": "fundamentalNormHz",
+      "group": "overall",
+      "label": "Fundamental Norm Hz",
+      "technicalName": "fundamentalNormHz",
+      "description": "Detected fundamental frequency normalized on a logarithmic (octave) scale, 0=40Hz, 1=16000Hz."
     }
   ]
 }

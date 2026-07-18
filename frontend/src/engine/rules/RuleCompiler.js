@@ -581,9 +581,9 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
                 if (!out) continue
                 const actionPhase = _outputPhase(out)
                 if (actionPhase !== phase) continue
-                const conflictKey = `${cond}::${out}`
-                if (seenConditionOutput.has(conflictKey)) continue
-                seenConditionOutput.add(conflictKey)
+                const dedupKey = `${cond}::${out}`
+                if (seenConditionOutput.has(dedupKey)) continue
+                seenConditionOutput.add(dedupKey)
                 emittedActions.push(action)
             }
             if (emittedActions.length === 0) continue

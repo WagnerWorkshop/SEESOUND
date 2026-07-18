@@ -87,6 +87,12 @@ export function createShapeDebugPanel(aeGetter) {
     }
 
     // Top-N indicator
+        // Entity list
+    const entityList = document.createElement('div')
+    entityList.id = 'shape-debug-entities'
+    entityList.style.cssText = 'margin-top:6px;font-size:9px;color:#aaa;max-height:120px;overflow-y:auto;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px'
+    _panel.appendChild(entityList)
+
     const topN = document.createElement('div')
     topN.id = 'shape-debug-topn'
     topN.style.cssText = 'margin-top:4px;font-size:9px;color:#888;text-align:center'

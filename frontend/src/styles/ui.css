@@ -1073,6 +1073,8 @@ input[type=number]::-webkit-inner-spin-button {
     white-space: pre-wrap;
     word-break: break-word;
     cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .cp-rule-expression-number {
@@ -1659,11 +1661,6 @@ input[type=number]::-webkit-inner-spin-button {
     position: relative;
 }
 
-.cp-rule-card.is-danger {
-    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-danger) 52%, var(--color-border));
-}
-
 .cp-rule-card.is-disabled :is(.cp-rule-card-condition-builder, .cp-rule-card-expression, .cp-rule-output-row) {
     display: none;
 }
@@ -1848,10 +1845,6 @@ input[type=number]::-webkit-inner-spin-button {
     border-radius: var(--radius-s);
     justify-content: center;
     padding: 0;
-}
-
-.audio-player--collapsed .audio-player__body {
-    display: none;
 }
 
 .audio-player__collapse-btn {

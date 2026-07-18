@@ -118,7 +118,7 @@ const BRAIN_TRIGGERS = {
 // Bin magnitude and phase stay on the frequency brain (worklet CQT).
 // Flux, phase deviation, attack time, envelope moved to rhythm brain (low FFT main-thread).
 const WORKLET_FEATURE_TRIGGERS = {
-    needMagnitude: new Set(['binMagnitude', 'binEnergy', 'binRMSEnergy']),
+    needMagnitude: new Set(['binMagnitude', 'binEnergy', 'binRMSEnergy', 'shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue', 'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux', 'componentOnset', 'componentCount', 'componentBinEnergy']),
     needFlux: new Set(['binFlux']),
     needPhaseDeviation: new Set(['binPhaseDeviation']),
     needPhase: new Set(['binPhase']),
@@ -139,7 +139,7 @@ const ENGINE_FEATURE_TRIGGERS = {
     needSpectralSpread: new Set(['spectralSpread']),
     needSpectralSkewness: new Set(['spectralSkewness']),
     needChromagram: new Set(['chromagram']),
-    needShapeActivations: new Set(['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue']),
+    needShapeActivations: new Set(['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue', 'fundamentalNormHz']),
 }
 
 /**

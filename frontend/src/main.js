@@ -1424,8 +1424,8 @@ animate()
                 detail: { presetName: projectName },
             }))
         } catch (err) {
-            console.warn('[Project] open failed:', err)
-            alert('Failed to open project file.')
+            console.error('[Project] open failed:', err)
+            alert(`Failed to open project file.\n\n${err?.message || err || 'Unknown error'}`)
         }
     })
 
