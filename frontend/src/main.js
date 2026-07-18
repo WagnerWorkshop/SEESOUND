@@ -1799,7 +1799,8 @@ if (headlessMode) {
         }
         const liveCount = Array.isArray(params.ruleLayers) ? params.ruleLayers.reduce((s, e) => s + (Array.isArray(e?.rules) ? e.rules.length : 0), 0) : 0
         const visible = ps.getVisibleCount()
-        console.log(`[RuleStatus] entities=${entities.length} totalRules=${liveCount} S=${spawned} L=${living} lines=${lines} bg=${bg} cam=${cam} | compiled=${state?.compileStatus || '?'} livingActive=${state?.livingRuleCount > 0 && visible > 0} visible=${visible}`)
+        const errDetail = state?.compileError ? ` err=${String(state.compileError).substring(0, 100)}` : ''
+        console.log(`[RuleStatus] entities=${entities.length} totalRules=${liveCount} S=${spawned} L=${living} lines=${lines} bg=${bg} cam=${cam} | compiled=${state?.compileStatus || '?'}${errDetail} livingActive=${state?.livingRuleCount > 0 && visible > 0} visible=${visible}`)
     }, 3000)
 }
 

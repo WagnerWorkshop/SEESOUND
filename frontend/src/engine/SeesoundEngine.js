@@ -350,9 +350,20 @@ export class SeesoundEngine {
             const result = this._shapeSolver.detectEntities(cqtMags)
             engine._globalShapeActivations = result.globalActivations
             engine._shapeEntities = result.entities || []
+            // Diagnostic log every ~60 frames
+            if ((this._frameN % 60) === 0) {
+                const hasMag = cqtMags ? cqtMags.length : 0
+                const peakCount = this._shapeSolver.peaks?.length ?? 0
+                const entityCount = result.entities?.length ?? 0
+                const maxAct = engine._globalShapeActivations ? Math.max(...engine._globalShapeActivations) : 0
+                console.log(`[Shape] cqtBins=${hasMag} peaks=${peakCount} entities=${entityCount} maxAct=${maxAct.toFixed(3)} playing=${this._isPlaying}`)
+            }
         } else {
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)
             engine._shapeEntities = []
+            if ((this._frameN % 60) === 0) {
+                console.log(`[Shape] cqtMags=${cqtMags ? cqtMags.length : 'null'} (no data) playing=${this._isPlaying} needMag=${engine._workletConfig.needMagnitude}`)
+            }
         }
 
     }

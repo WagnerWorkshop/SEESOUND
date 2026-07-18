@@ -503,8 +503,8 @@ function _compileAction(action) {
     const rhs = _toRhs(action)
     switch (action.operator) {
         case 'set': {
-            // Guard: only assign if the RHS evaluates to a finite number
-            const rhsSafe = `(()=>{const __v=${rhs};return Number.isFinite(__v)?__v:undefined;})()`
+            // Guard: assign if RHS is a finite number OR a non-empty string/boolean (enum values)
+            const rhsSafe = `(()=>{const __v=${rhs};return (Number.isFinite(__v)||(typeof __v==='string'&&__v!=='')||typeof __v==='boolean')?__v:undefined;})()`
             return `if (${rhsSafe} !== undefined) target.${output} = ${rhsSafe};`
         }
         case 'add': {
