@@ -347,30 +347,21 @@ export class SeesoundEngine {
         }
         const cqtMags = engine.getBinMagnitude?.() ?? null
 
-        // Log-HPS fundamentals from the worklet (robust octave-error-free detection)
-        const workletFundamentals = engine.getCqtFundamentals?.() ?? null
-
         if (cqtMags && cqtMags.length > 0) {
             const result = this._shapeSolver.detectEntities(cqtMags)
             engine._globalShapeActivations = result.globalActivations
             engine._shapeEntities = result.entities || []
 
-            // Use worklet Log-HPS fundamental if available, fall back to PitchFirstClassifier
-            if (workletFundamentals && workletFundamentals.length > 0) {
-                engine._detectedFundamentalHz = workletFundamentals[0].freqHz
-            } else {
-                engine._detectedFundamentalHz = result.entities?.[0]?.fundamentalHz ?? 0
-            }
+            // Fundamental from Look-Fit-Subtract entity
+            engine._detectedFundamentalHz = result.entities?.[0]?.fundamentalHz ?? 0
             // Diagnostic log every ~60 frames
             if ((this._frameN % 60) === 0) {
                 const hasMag = cqtMags ? cqtMags.length : 0
                 const peakCount = this._shapeSolver.peaks?.length ?? 0
                 const entityCount = result.entities?.length ?? 0
                 const maxAct = engine._globalShapeActivations ? Math.max(...engine._globalShapeActivations) : 0
-                const wfLen = workletFundamentals?.length ?? 0
-                const wf0 = workletFundamentals?.[0]?.freqHz?.toFixed(1) ?? 'none'
                 const eF0 = result.entities?.[0]?.fundamentalHz?.toFixed(1) ?? 'none'
-                console.log(`[Shape] cqtBins=${hasMag} wkPeaks=${wfLen} wkF0=${wf0}Hz thPeaks=${peakCount} thF0=${eF0}Hz entities=${entityCount} maxAct=${maxAct.toFixed(3)} playing=${this._isPlaying}`)
+                console.log(`[Shape] cqtBins=${hasMag} peaks=${peakCount} f0=${eF0}Hz entities=${entityCount} maxAct=${maxAct.toFixed(3)} playing=${this._isPlaying}`)
             }
         } else {
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)

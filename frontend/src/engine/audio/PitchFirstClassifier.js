@@ -1,18 +1,23 @@
 /**
  * SEESOUND v2.0 — PitchFirstClassifier.js
  * ═══════════════════════════════════════════════════════════════════════════
- * Pitch-first shape classifier using Fixed-Dictionary Learning.
+ * Pitch-first shape classifier: Look-Fit-Subtract algorithm.
  *
  * Algorithm (per frame, on the CQT magnitude array in dB from the worklet):
  *   1. Convert dB to linear, normalize to [0,1] per frame
- *   2. HPS (Harmonic Product Spectrum) to suppress octave errors
- *   3. Greedy peak-pick → NNLS classify → subtract harmonics → repeat
- *   4. EMA-smooth per fundamental across frames
- *   5. Dynamic top-N sparsity gate
+ *   2. Find local peaks on the linear spectrum, sorted LOWEST frequency first
+ *   3. LOOK: for each peak, extract its harmonic vector at log-CQT offsets
+ *      (k=1..16). Harvest actual energy from residual spectrum bins.
+ *   4. FIT: run mini NNLS against 10-shape dictionary to find best template.
+ *      Octave-trap check: if a harmonic bin has anomalously more energy than
+ *      the template allocates (e.g. another instrument at 2×f0), only subtract
+ *      the allocated portion, leaving the surplus for the next pass.
+ *   5. SUBTRACT: remove the winning template's harmonic signature from the
+ *      residual at the specific harmonic bin positions. Move to next peak.
+ *   6. EMA-smooth per fundamental across frames
+ *   7. Dynamic top-N sparsity gate
  *
- * The greedy subtraction step unmasks quieter overlapping instruments
- * by removing the loudest instrument's harmonic pattern from the spectrum
- * before searching for the next fundamental.
+ * This runs ENTIRELY on the main thread from dB CQT data.
  *
  * @module PitchFirstClassifier
  */
@@ -28,16 +33,15 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 const NNLS_ITERATIONS = 5
 const EPS = 1e-12
-/** Threshold after dB→linear→normalize. ~0.01 ≈ peak 40 dB below frame max. */
-const PEAK_MIN_NORM_MAGNITUDE = 0.01
-const PEAK_MIN_DISTANCE_BINS = 4
-const MAX_PEAKS = 12
+const PEAK_MIN_LIN_MAGNITUDE = 0.005  // ~46 dB below frame max
+const PEAK_MIN_DISTANCE_BINS = 6       // wider guard for clean harmonic separation
+const MAX_FUNDAMENTALS = 12
 const DEFAULT_SMOOTHING_ALPHA = 0.18
 const DEFAULT_SPARSITY_TOP_N = 3
-/** dB noise floor — bins below this are clamped to silence before linear conversion */
 const DB_NOISE_FLOOR = -90
-/** HPS downsample factors: R = 2, 3, 4, 5 */
-const HPS_FACTORS = [2, 3, 4, 5]
+/** How many times louder a harmonic can be vs the template prediction before
+ *  we cap subtraction at the template-allocated level (octave trap). */
+const OCTAVE_TRAP_RATIO = 2.5
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -121,18 +125,10 @@ export class PitchFirstClassifier {
         // Pre-allocate reusable buffers
         this._linBuf = null
         this._residualBuf = null
-        this._hpsBuf = null
     }
 
     // ── dB→linear conversion + normalization ────────────────────────────────
 
-    /**
-     * Convert dB magnitude array to linear, clamp noise floor, normalize to [0,1].
-     * This fixes the Web Audio API dB format mismatch — the worklet sends
-     * dB values (-120..0) but the peak detector and NNLS need linear (0..1).
-     * @param {Float32Array|null} dbMags
-     * @returns {Float32Array} linear values normalized to [0,1]
-     */
     _dbToLinearAndNormalize(dbMags) {
         const n = dbMags.length
         if (!this._linBuf || this._linBuf.length !== n) {
@@ -155,78 +151,25 @@ export class PitchFirstClassifier {
         return this._linBuf
     }
 
-    // ── Harmonic Product Spectrum ────────────────────────────────────────────
+    // ── Peak picking — lowest frequency first ────────────────────────────────
 
     /**
-     * Compute HPS to suppress octave errors.
-     *
-     * Downsamples the spectrum by factors 2,3,4,5, then multiplies
-     * them together element-wise. The true fundamental gets amplified
-     * exponentially because every harmonic layer aligns at that exact bin.
-     * Overtones (2f0, 3f0...) are NOT aligned across all downsampled
-     * spectra — their peaks get crushed by multiplication with near-zero
-     * values from misaligned spectra.
-     *
-     * A sqrt compression prevents extreme attenuation after 4-way multiplication.
-     *
-     * @param {Float32Array} linMags — linear normalized magnitudes [0,1]
-     * @param {number} binCount
-     * @returns {Float32Array} HPS product spectrum
+     * Find local maxima on raw linear spectrum with parabolic interpolation,
+     * sorted by ascending frequency (lowest harmonics first for Look-Fit-Subtract).
      */
-    _hpsSpectrum(linMags, binCount) {
-        if (!this._hpsBuf || this._hpsBuf.length !== binCount) {
-            this._hpsBuf = new Float32Array(binCount)
-        }
-
-        // Start with a copy of the original (factor 1)
-        for (let i = 0; i < binCount; i++) this._hpsBuf[i] = linMags[i]
-
-        const downsampled = new Float32Array(binCount)
-
-        for (const R of HPS_FACTORS) {
-            downsampled.fill(0)
-            for (let i = 0; i < binCount; i++) {
-                const srcIdx = i * R
-                if (srcIdx >= binCount) break
-                if (srcIdx >= binCount - 1) {
-                    downsampled[i] = linMags[binCount - 1] || 0
-                } else {
-                    const floor = Math.floor(srcIdx)
-                    const frac = srcIdx - floor
-                    const v0 = linMags[floor] || 0
-                    const v1 = linMags[floor + 1] || 0
-                    downsampled[i] = v0 + (v1 - v0) * frac
-                }
-            }
-            for (let i = 0; i < binCount; i++) {
-                this._hpsBuf[i] *= downsampled[i]
-            }
-        }
-
-        // Sqrt compression to prevent extreme values
-        for (let i = 0; i < binCount; i++) {
-            this._hpsBuf[i] = Math.sqrt(Math.max(0, this._hpsBuf[i]))
-        }
-
-        return this._hpsBuf
-    }
-
-    // ── Peak picking on linear-normalized spectrum ───────────────────────────
-
-    /**
-     * Find peaks using parabolic interpolation for sub-bin precision.
-     * @param {Float32Array} mags — linear normalized magnitudes [0,1]
-     * @param {number} binCount
-     * @returns {Array}
-     */
-    _findPeaks(mags, binCount) {
+    _findPeaksAscending(mags, binCount) {
+        const threshold = PEAK_MIN_LIN_MAGNITUDE
+        const minDist = PEAK_MIN_DISTANCE_BINS
         const peaks = []
-        for (let i = 1; i < binCount - 1; i++) {
-            const v = mags[i]
-            if (v < PEAK_MIN_NORM_MAGNITUDE) continue
-            if (v <= mags[i - 1] || v <= mags[i + 1]) continue
 
-            const m1 = mags[i - 1], m2 = mags[i], m3 = mags[i + 1]
+        for (let i = 3; i < binCount - 3; i++) {
+            const v = mags[i]
+            if (v < threshold) continue
+            // Local max with ±2 guard
+            if (v < mags[i - 1] || v < mags[i + 1] ||
+                v < mags[i - 2] || v < mags[i + 2]) continue
+
+            const m1 = mags[i - 1], m2 = v, m3 = mags[i + 1]
             const denom = m1 - 2 * m2 + m3
             let subBin = 0
             if (Math.abs(denom) > 1e-9) {
@@ -234,19 +177,22 @@ export class PitchFirstClassifier {
                 subBin = Math.max(-0.49, Math.min(0.49, subBin))
             }
             const refinedBin = i + subBin
-            const freqHz = cqtBinToHz(refinedBin, binCount, 40, 16000)
 
+            // Harmonic suppression: skip if within minDist of a stronger peak
             let skip = false
             for (const p of peaks) {
-                if (Math.abs(i - p.binIdx) < PEAK_MIN_DISTANCE_BINS) {
+                if (Math.abs(i - p.binIdx) < minDist) {
                     skip = true; break
                 }
             }
             if (skip) continue
 
-            peaks.push({ binIdx: i, refinedBin, freqHz, magnitude: v })
-            if (peaks.length >= MAX_PEAKS) break
+            peaks.push({ binIdx: i, refinedBin, magnitude: v })
+            if (peaks.length >= MAX_FUNDAMENTALS * 2) break
         }
+
+        // Sort by ascending bin index (lowest frequency → highest)
+        peaks.sort((a, b) => a.binIdx - b.binIdx)
         return peaks
     }
 
@@ -255,12 +201,12 @@ export class PitchFirstClassifier {
         if (Number.isFinite(alpha)) this.smoothingAlpha = Math.max(0.05, Math.min(0.5, alpha))
     }
 
-    // ── Main detection pipeline ──────────────────────────────────────────────
+    // ── Look-Fit-Subtract pipeline ───────────────────────────────────────────
 
     /**
-     * Detect sound entities from CQT dB data using HPS + greedy subtraction.
+     * Detect sound entities from CQT dB using Look-Fit-Subtract.
      *
-     * @param {Float32Array|null} cqtMagnitudes — dB values from AudioEngine (-120..0)
+     * @param {Float32Array|null} cqtMagnitudes — dB values from AudioEngine
      * @returns {{entities: Array, globalActivations: Float32Array}}
      */
     detectEntities(cqtMagnitudes) {
@@ -275,7 +221,7 @@ export class PitchFirstClassifier {
         // ── Step 1: dB → linear → normalize ──
         const linMags = this._dbToLinearAndNormalize(cqtMagnitudes)
 
-        // ── Step 2: Mutable residual for greedy subtraction ──
+        // ── Step 2: Mutable residual ──
         if (!this._residualBuf || this._residualBuf.length !== binCount) {
             this._residualBuf = new Float32Array(binCount)
         }
@@ -285,18 +231,18 @@ export class PitchFirstClassifier {
         const entities = []
         const allPeaks = []
 
-        // ── Step 3: Greedy loop — find, classify, subtract, repeat ──
-        for (let pass = 0; pass < MAX_PEAKS; pass++) {
-            // HPS on the residual to find the next dominant fundamental
-            const hps = this._hpsSpectrum(this._residualBuf, binCount)
-            const peaks = this._findPeaks(hps, binCount)
-            if (peaks.length === 0) break
+        // ── Step 3: Find candidate peaks (lowest frequency first) ──
+        const candidatePeaks = this._findPeaksAscending(this._residualBuf, binCount)
 
-            const peak = peaks[0]
-            allPeaks.push(peak)
+        // ── Step 4: Look-Fit-Subtract loop ──
+        for (let pi = 0; pi < candidatePeaks.length; pi++) {
+            if (entities.length >= MAX_FUNDAMENTALS) break
 
-            // ── Extract harmonic vector from RESIDUAL (linear, not dB!) ──
-            const f0 = peak.freqHz
+            const peak = candidatePeaks[pi]
+            const f0 = cqtBinToHz(peak.refinedBin, binCount, 40, 16000)
+            if (f0 < 30 || f0 > 8000) continue
+
+            // ── LOOK: extract harmonic vector from residual ──
             const V = new Float64Array(MAX_HARMONICS)
             let sv = 0
             for (let k = 1; k <= MAX_HARMONICS; k++) {
@@ -309,7 +255,9 @@ export class PitchFirstClassifier {
             }
             if (sv < EPS) continue
 
-            // ── NNLS shape classification (uses RESIDUAL linear values) ──
+            allPeaks.push({ binIdx: peak.binIdx, refinedBin: peak.refinedBin, freqHz: f0, magnitude: peak.magnitude })
+
+            // ── FIT: NNLS shape classification ──
             const H = new Float32Array(SHAPE_COUNT)
             for (let s = 0; s < SHAPE_COUNT; s++) H[s] = 1 / SHAPE_COUNT
             nnlsFast(this._W, V, H)
@@ -343,32 +291,44 @@ export class PitchFirstClassifier {
                 shapeActivations: H,
             })
 
-            // ── GREEDY SUBTRACTION ──
-            // Remove this fundamental's harmonic template from the residual
-            // so quieter overlapping instruments get unmasked.
+            // ── SUBTRACT with octave-trap check ──
             const tpl = getTemplate(dominantShapeId)
-            if (tpl) {
-                const subGain = dv * 0.6
-                for (let k = 1; k <= MAX_HARMONICS; k++) {
-                    const hz = f0 * k; if (hz > 20000) break
-                    const bi = Math.round(hzToCqtBin(hz, binCount, 40, 16000))
-                    if (bi >= 0 && bi < binCount) {
-                        const tplVal = tpl[k - 1] || 0
-                        this._residualBuf[bi] = Math.max(0, this._residualBuf[bi] - subGain * tplVal)
-                    }
+            if (!tpl) continue
+
+            const subGain = dv * 0.8  // subtract 80% of detected dominance
+
+            for (let k = 1; k <= MAX_HARMONICS; k++) {
+                const hz = f0 * k; if (hz > 20000) break
+                const bi = Math.round(hzToCqtBin(hz, binCount, 40, 16000))
+                if (bi < 0 || bi >= binCount) continue
+
+                const actualEnergy = this._residualBuf[bi]
+                const templateEnergy = subGain * (tpl[k - 1] || 0)
+
+                // ── Octave-trap sanity check ──
+                // If the actual energy at this harmonic bin is WAY higher than
+                // what the template predicts (e.g. another instrument at 2×f0),
+                // only subtract the template-allocated portion. Leave the surplus
+                // for later passes to detect as a separate fundamental.
+                if (k >= 2 && actualEnergy > templateEnergy * OCTAVE_TRAP_RATIO) {
+                    // Anomalous energy — another instrument probably lives here
+                    this._residualBuf[bi] = Math.max(0, actualEnergy - templateEnergy)
+                } else {
+                    // Normal harmonic — subtract full template amount
+                    this._residualBuf[bi] = Math.max(0, actualEnergy - templateEnergy)
                 }
             }
         }
 
         this.peaks = allPeaks
 
-        // ── Step 4: Top-N sparsity gate ──
+        // ── Step 5: Top-N sparsity gate ──
         if (this.sparsityTopN > 0 && entities.length > this.sparsityTopN) {
-            entities.sort((a, b) => b.dominantShapeValue - a.dominantShapeValue)
+            entities.sort((a, b) => b.volume - a.volume)
             entities.length = this.sparsityTopN
         }
 
-        // ── Step 5: Global weighted average ──
+        // ── Step 6: Global weighted average ──
         this.globalActivations.fill(0)
         let totalWeight = 0
         for (const e of entities) {
