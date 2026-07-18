@@ -346,14 +346,21 @@ export class SeesoundEngine {
             engine._postWorkletConfig()
         }
         const cqtMags = engine.getBinMagnitude?.() ?? null
+
+        // Log-HPS fundamentals from the worklet (robust octave-error-free detection)
+        const workletFundamentals = engine.getCqtFundamentals?.() ?? null
+
         if (cqtMags && cqtMags.length > 0) {
             const result = this._shapeSolver.detectEntities(cqtMags)
             engine._globalShapeActivations = result.globalActivations
             engine._shapeEntities = result.entities || []
 
-            // Store detected fundamental on AudioEngine for ParticleSystem._frameRuleBase
-            const firstEntity = result.entities?.[0]
-            engine._detectedFundamentalHz = firstEntity?.fundamentalHz ?? 0
+            // Use worklet Log-HPS fundamental if available, fall back to PitchFirstClassifier
+            if (workletFundamentals && workletFundamentals.length > 0) {
+                engine._detectedFundamentalHz = workletFundamentals[0].freqHz
+            } else {
+                engine._detectedFundamentalHz = result.entities?.[0]?.fundamentalHz ?? 0
+            }
             // Diagnostic log every ~60 frames
             if ((this._frameN % 60) === 0) {
                 const hasMag = cqtMags ? cqtMags.length : 0

@@ -130,6 +130,8 @@ export class AudioEngine {
         this._binPhase = null
         this._binEnvelope = null
         this._binAttackTime = null
+        // Log-HPS CQT fundamentals from worklet
+        this._cqtFundamentals = null
         // ── Rhythm brain (low FFT) per-bin arrays ──
         this._rhythmBinFlux = null
         this._rhythmBinPhaseDeviation = null
@@ -229,6 +231,7 @@ export class AudioEngine {
                 if (msg.phase) this._binPhase = new Float32Array(msg.phase)
                 if (msg.envelope) this._binEnvelope = new Float32Array(msg.envelope)
                 if (msg.attackTime) this._binAttackTime = new Float32Array(msg.attackTime)
+                if (msg.fundamentals && Array.isArray(msg.fundamentals)) this._cqtFundamentals = msg.fundamentals
                 return
             }
             if (msg.type === 'objectMetrics') {
@@ -834,6 +837,11 @@ export class AudioEngine {
 
     getBinMagnitude() {
         return this._binMagnitude
+    }
+
+    /** @returns {Array<{binIdx: number, freqHz: number, salience: number}>|null} */
+    getCqtFundamentals() {
+        return this._cqtFundamentals
     }
 
     getBinFlux() {
