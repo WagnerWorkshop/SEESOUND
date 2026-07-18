@@ -105,10 +105,8 @@ const MODE_GATED_VARS = new Map([
 
 // ── Variables that, when used, trigger a specific brain in the worklet
 const BRAIN_TRIGGERS = {
-    pitchBrain: new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote', 'fundamentalNormHz']),
     // textureBrain removed — clouds now use component variables instead
     rhythmBrain: new Set(['globalTransient', 'spectralFlux', 'binFlux', 'binPhaseDeviation', 'binAttackTime', 'binEnvelope', 'binEnvelopeState']),
-    trackerBrain: new Set(['objectAge', 'streamId']),
 }
 
 // ── Worklet feature triggers (frequency brain — high FFT)
@@ -202,26 +200,10 @@ export function buildAudioUsage(referencedIds, mode) {
     const used = referencedIds
 
     // Detect worklet brain requirements
-    let needPitchBrain = false
     let needRhythmBrain = false
-    let needTrackerBrain = false
 
     for (const id of used) {
-        if (BRAIN_TRIGGERS.pitchBrain.has(id)) needPitchBrain = true
         if (BRAIN_TRIGGERS.rhythmBrain.has(id)) needRhythmBrain = true
-        if (BRAIN_TRIGGERS.trackerBrain.has(id)) needTrackerBrain = true
-    }
-
-    // In Cloud mode, always enable the brain pipeline
-    // (Pitch + Rhythm + Tracker) because harmonic objects
-    // are the primary output, even if no individual layer variable
-    // appears in a rule expression.
-    if (mode === 'cloud') {
-        needPitchBrain = true
-        needRhythmBrain = true
-        needTrackerBrain = true
-        // The worklet uses objectMode to decide whether to run the
-        // full harmonic association or just the single-fundamental path.
     }
 
     // Detect worklet feature requirements
@@ -255,11 +237,11 @@ export function buildAudioUsage(referencedIds, mode) {
         engine[feature] = need
     }
 
-    // Cloud mode needs the worklet enabled (for harmonic objects)
+    // Cloud mode needs the worklet enabled
     const workletEnabled = mode === 'cloud'
         || needMagnitude || needFlux || needPhaseDeviation
         || needEnvelope || needAttackTime || needPhase
-        || needPitchBrain || needRhythmBrain || needTrackerBrain
+        || needRhythmBrain
 
     return {
         used,
@@ -271,10 +253,7 @@ export function buildAudioUsage(referencedIds, mode) {
             needPhase,
             needEnvelope,
             needAttackTime,
-            needPitchBrain,
             needRhythmBrain,
-            needTrackerBrain,
-            objectMode: mode,
         },
         engine: {
             needRms: engine.needRms ?? false,

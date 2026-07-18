@@ -23,10 +23,7 @@ function defaultUsage() {
             needPhase: false,
             needEnvelope: false,
             needAttackTime: false,
-            needPitchBrain: false,
             needRhythmBrain: false,
-            needTrackerBrain: false,
-            objectMode: 'particle',
         },
         engine: {
             needRms: true,
@@ -139,15 +136,12 @@ export class AudioEngine {
         this._rhythmBinPrevPhase = null
         /** Tracks whether rhythm brain data was computed last frame */
         this._rhythmBrainActive = false
-        this._harmonicObjects = null
         this.featureSmoothingAlpha = 0.2
 
 
         // ── Shape activation (supervised NMF, set by SeesoundEngine) ──
         /** @type {Float32Array} 10-shape activation vector */
         this._globalShapeActivations = new Float32Array(10)
-        /** @type {Array<Object>} Enriched harmonic objects with shape activations */
-        this._enrichedObjects = []
 
 
         this.bass = 0; this.mid = 0; this.high = 0
@@ -166,16 +160,8 @@ export class AudioEngine {
         this.spectralSpread = 0
         this.spectralSkewness = 0
         this.chromagram = 0
-        this.fundamentalHz = 0
-        this.fundamentalPitch = 0
-        this.fundamentalNote = 0
         // Rhythm/transient metrics from the 1024-FFT
         this.globalTransient = 0
-        this._rhythmTransient = 0
-        this._rhythmEnergy = 0
-
-        this.objectAge = 0
-        this.streamId = 0
         this.ctxState = 'none'
         this.monitorMuted = false
 
@@ -232,20 +218,7 @@ export class AudioEngine {
                 return
             }
             if (msg.type === 'objectMetrics') {
-                this.fundamentalHz = Number(msg.fundamentalHz) || 0
-                this.fundamentalPitch = Number(msg.fundamentalPitch) || 0
-                this.fundamentalNote = Number.isFinite(msg.fundamentalNote) ? Number(msg.fundamentalNote) : 0
-                // Suppress worklet transient during fade ramping — the
-                // main-thread transient (globalTransient) is more reliable
-                // because it respects the fade-gate.
-                if (this._workletTransientSuppress <= 0) {
-                    this.globalTransient = Number(msg.globalTransient) || 0
-                }
-                this.objectAge = Number(msg.objectAge) || 0
-                this.streamId = Number(msg.streamId) || 0
-            }
-            if (msg.type === 'harmonicObjects') {
-                this._harmonicObjects = msg.objects || null
+                this.globalTransient = Number(msg.globalTransient) || 0
             }
         }
         return node
@@ -301,15 +274,6 @@ export class AudioEngine {
         return this._globalShapeActivations
     }
 
-    /**
-     * Get enriched harmonic objects with per-object shape activations.
-     * Set by SeesoundEngine each frame.
-     * @returns {Array<Object>}
-     */
-    getEnrichedObjects() {
-        return this._enrichedObjects
-    }
-
 
     setRuleInputUsage(requiredInputsByTarget = null) {
         const usage = this._deriveAudioUsage(requiredInputsByTarget)
@@ -320,10 +284,7 @@ export class AudioEngine {
         this._workletConfig.needPhase = usage.worklet.needPhase
         this._workletConfig.needEnvelope = usage.worklet.needEnvelope
         this._workletConfig.needAttackTime = usage.worklet.needAttackTime
-        this._workletConfig.needPitchBrain = usage.worklet.needPitchBrain
         this._workletConfig.needRhythmBrain = true // always on for transient detection
-        this._workletConfig.needTrackerBrain = usage.worklet.needTrackerBrain
-        this._workletConfig.objectMode = usage.worklet.objectMode || 'particle'
         this._calcUsage = usage.engine
         this._postWorkletConfig()
     }
@@ -872,10 +833,5 @@ export class AudioEngine {
     /** Per-bin envelope from the low-FFT rhythm analyser. */
     getRhythmBinEnvelope() {
         return this._rhythmBrainActive ? this._rhythmBinEnvelope : null
-    }
-
-    /** @returns {import('../types').HarmonicObject[]|null} */
-    getHarmonicObjects() {
-        return this._harmonicObjects
     }
 }

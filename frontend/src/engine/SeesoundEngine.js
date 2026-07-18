@@ -304,7 +304,7 @@ export class SeesoundEngine {
         // ── Cloud network graph solver ──
         const isNetwork = this._cloudPositioning === 'network'
         if (isNetwork) {
-            const harmonicObjects = engine.getHarmonicObjects?.() ?? null
+            const harmonicObjects = null
             const visibleCount = sys._visible_count || 0
             this._graphSolver.sync(harmonicObjects, visibleCount)
             let repMul = 1, cgMul = 1, tenMul = 1
@@ -421,9 +421,9 @@ export class SeesoundEngine {
             canvasWidthUnits: cu.w, canvasHeightUnits: cu.h,
             canvasWidth: Number(params.canvasWidth ?? cu.w), canvasHeight: Number(params.canvasHeight ?? cu.h),
             audioLengthSec: ae.audioEl?.duration ?? 0,
-            // Music theory
-            notePitchClass: ae.fundamentalNote ?? 0,
-            octave: ae.fundamentalPitch > 0 ? Math.floor(ae.fundamentalPitch / 12) - 1 : 0,
+            // Music theory — computed from detected fundamental, fallback to 0
+            notePitchClass: 0,
+            octave: 0,
             fundamentalNormHz: ae._detectedFundamentalHz > 0
                 ? Math.min(1, (Math.log2(Math.max(40, ae._detectedFundamentalHz)) - Math.log2(40)) / (Math.log2(16000) - Math.log2(40)))
                 : _n(ae.peakFreq ?? 0, 0, nyq),

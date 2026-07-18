@@ -844,29 +844,7 @@ export class ParticleSystem {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
 
-        // ── Build harmonic object lookup for cloud mode ──
-        // Maps fundamental frequency bins → streamId, and stores per-stream positions.
-        const harmonicObjects = ae.getHarmonicObjects?.() ?? null
         this._harmonicData = null
-        if (Array.isArray(harmonicObjects) && harmonicObjects.length > 0) {
-            const fundHzSet = new Set()      // set of fundamental Hz values
-            const fundStreamMap = new Map()   // streamId → fundamentalHz
-            const streamPositions = new Map() // streamId → {x, y, z} (to be filled during bucket loop)
-            for (const obj of harmonicObjects) {
-                const hz = obj.fundamentalHz || 0
-                if (hz > 0) {
-                    fundHzSet.add(hz)
-                    fundStreamMap.set(obj.streamId || 0, hz)
-                    streamPositions.set(obj.streamId || 0, { x: 0, y: 0, z: 0 })
-                }
-            }
-            this._harmonicData = {
-                fundHzSet,
-                fundStreamMap,
-                streamPositions,
-                objects: harmonicObjects,
-            }
-        }
 
         this._frameCounter++
         const now = performance.now()
