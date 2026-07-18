@@ -126,16 +126,6 @@ export class PitchFirstClassifier {
         /** @type {Map<string, Float32Array>} f0Key → previous smoothed H */
         this._prevActivations = new Map()
 
-        /** @type {Float32Array} Per-CQT-bin shape activations, length = binCount × SHAPE_COUNT.
-         *   Layout: binShapeData[bin * SHAPE_COUNT + shapeIndex] = activation  */
-        this.binShapeData = null
-
-        /** @type {Float32Array} Per-bin fundamental frequency (Hz), length = binCount */
-        this.binFundamentalHz = null
-
-        /** @type {Float32Array} Per-bin dominant shape value, length = binCount */
-        this.binDominantValue = null
-
         /** @type {Float32Array} Global shape activations (weighted average) */
         this.globalActivations = new Float32Array(SHAPE_COUNT)
 
@@ -150,182 +140,6 @@ export class PitchFirstClassifier {
 
         /** @type {number} */
         this._frameCount = 0
-    }
-
-    /**
-     * Process a CQT magnitude frame — pitch-first shape classification.
-     *
-     * @param {Float32Array|null} cqtMagnitudes — CQT magnitude array from AudioEngine
-     * @param {number} [cqtMinHz=40] — lowest CQT bin frequency
-     * @param {number} [cqtMaxHz=16000] — highest CQT bin frequency
-     * @param {number} [sampleRate=44100] — for Hz conversion (not critical for CQT)
-     * @returns {Object} classification results
-     */
-    classifyCqtFrame(cqtMagnitudes, cqtMinHz = 40, cqtMaxHz = 16000, sampleRate = 44100) {
-        if (!cqtMagnitudes || cqtMagnitudes.length < 4) {
-            this._resetOutputs(0)
-            return this._buildResult()
-        }
-
-        const binCount = cqtMagnitudes.length
-        this._cqtBins = binCount
-
-        // Allocate/check per-bin shape arrays
-        if (!this.binShapeData || this.binShapeData.length !== binCount * SHAPE_COUNT) {
-            this.binShapeData = new Float32Array(binCount * SHAPE_COUNT)
-        } else {
-            this.binShapeData.fill(0)
-        }
-        if (!this.binFundamentalHz || this.binFundamentalHz.length !== binCount) {
-            this.binFundamentalHz = new Float32Array(binCount)
-        } else {
-            this.binFundamentalHz.fill(0)
-        }
-        if (!this.binDominantValue || this.binDominantValue.length !== binCount) {
-            this.binDominantValue = new Float32Array(binCount)
-        } else {
-            this.binDominantValue.fill(0)
-        }
-
-        // ── Step 1: Peak picking on CQT frame ──
-        const peaks = this._findPeaks(cqtMagnitudes, binCount)
-        this.peaks = peaks
-
-        if (peaks.length === 0) {
-            this._resetOutputs(binCount)
-            return this._buildResult()
-        }
-
-        const alpha = this.smoothingAlpha
-        const oneMinusAlpha = 1 - alpha
-        const allShapes = []  // for top-N gate
-
-        // ── Step 2: For each peak, extract harmonic slice + run NNLS ──
-        for (let pi = 0; pi < peaks.length; pi++) {
-            const peak = peaks[pi]
-            const f0Hz = peak.freqHz
-
-            // Build harmonic magnitude vector
-            const V = new Float64Array(MAX_HARMONICS)
-            let sumV = 0
-            for (let k = 1; k <= MAX_HARMONICS; k++) {
-                const harmonicHz = f0Hz * k
-                if (harmonicHz > 20000) break
-                const binFrac = hzToCqtBin(harmonicHz, binCount, cqtMinHz, cqtMaxHz)
-                const binIdx = Math.round(binFrac)
-                if (binIdx >= 0 && binIdx < binCount) {
-                    V[k - 1] = cqtMagnitudes[binIdx]
-                    sumV += V[k - 1]
-                }
-            }
-            if (sumV < EPS) continue
-
-            // ── Step 3: Run NNLS ──
-            const H = new Float32Array(SHAPE_COUNT)
-            const initVal = 1 / SHAPE_COUNT
-            for (let s = 0; s < SHAPE_COUNT; s++) H[s] = initVal
-            nnlsFast(this._W, V, H)
-
-            // ── Step 4: EMA smooth (keyed by quantized f0 to nearest 5 Hz) ──
-            const f0Key = Math.round(f0Hz / 5) * 5
-            const prevH = this._prevActivations.get(f0Key)
-            if (prevH) {
-                for (let s = 0; s < SHAPE_COUNT; s++) {
-                    H[s] = alpha * H[s] + oneMinusAlpha * prevH[s]
-                    if (H[s] < 0) H[s] = 0
-                    if (H[s] > 1) H[s] = 1
-                }
-            }
-            this._prevActivations.set(f0Key, new Float32Array(H))
-
-            // Find dominant shape
-            let domS = 0, domV = 0
-            for (let s = 0; s < SHAPE_COUNT; s++) {
-                if (H[s] > domV) { domV = H[s]; domS = s }
-            }
-
-            // ── Step 5: Paint shape activations onto all bins "owned" by this fundamental ──
-            // Each fundamental owns bins within ±half an octave or until next fundamental
-            const binLow = Math.max(0, Math.floor(peak.binIdx * 0.84))  // ~minor third below
-            const binHigh = Math.min(binCount - 1, Math.ceil(peak.binIdx * 1.19)) // ~minor third above
-            // Narrower: own bins closest to this fundamental vs next
-            let actualLow = pi > 0
-                ? Math.max(binLow, Math.floor((peak.binIdx + peaks[pi - 1].binIdx) / 2))
-                : binLow
-            let actualHigh = pi < peaks.length - 1
-                ? Math.min(binHigh, Math.ceil((peak.binIdx + peaks[pi + 1].binIdx) / 2))
-                : binHigh
-
-            for (let b = actualLow; b <= actualHigh; b++) {
-                const base = b * SHAPE_COUNT
-                for (let s = 0; s < SHAPE_COUNT; s++) {
-                    this.binShapeData[base + s] = H[s]
-                }
-                this.binFundamentalHz[b] = f0Hz
-                this.binDominantValue[b] = domV
-            }
-
-            // Store for top-N gate
-            for (let s = 0; s < SHAPE_COUNT; s++) {
-                allShapes.push({ peakIdx: pi, shapeIdx: s, val: H[s], f0Hz, binRange: [actualLow, actualHigh] })
-            }
-        }
-
-        // ── Step 6: Dynamic top-N sparsity ──
-        if (this.sparsityTopN > 0 && this.sparsityTopN < allShapes.length) {
-            allShapes.sort((a, b) => b.val - a.val)
-            const keep = new Set()
-            for (let i = 0; i < Math.min(this.sparsityTopN, allShapes.length); i++) {
-                keep.add(allShapes[i].peakIdx + '_' + allShapes[i].shapeIdx)
-            }
-
-            // Zero out non-kept in bin data
-            for (let pi = 0; pi < peaks.length; pi++) {
-                for (let s = 0; s < SHAPE_COUNT; s++) {
-                    if (!keep.has(pi + '_' + s)) {
-                        const peak = peaks[pi]
-                        const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi - 1].binIdx) / 2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
-                        const aHigh = pi < peaks.length - 1 ? Math.min(binCount - 1, Math.ceil((peak.binIdx + peaks[pi + 1].binIdx) / 2)) : Math.min(binCount - 1, Math.ceil(peak.binIdx * 1.19))
-                        for (let b = aLow; b <= aHigh; b++) {
-                            this.binShapeData[b * SHAPE_COUNT + s] = 0
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Step 7: Compute global averages ──
-        this.globalActivations.fill(0)
-        let totalWeight = 0
-        for (const peak of peaks) {
-            const weight = peak.magnitude
-            totalWeight += weight
-            const aLow = pi > 0 ? Math.max(0, Math.floor((peak.binIdx + peaks[pi - 1]?.binIdx ?? 0) / 2)) : Math.max(0, Math.floor(peak.binIdx * 0.84))
-            const aHigh = pi < peaks.length - 1 ? Math.min(binCount - 1, Math.ceil((peak.binIdx + peaks[pi + 1]?.binIdx ?? binCount - 1) / 2)) : Math.min(binCount - 1, Math.ceil(peak.binIdx * 1.19))
-            // Just use the peak's own H for the global average
-            // Re-read from bin data at the peak bin
-            const base = peak.binIdx * SHAPE_COUNT
-            for (let s = 0; s < SHAPE_COUNT; s++) {
-                this.globalActivations[s] += this.binShapeData[base + s] * weight
-            }
-        }
-        if (totalWeight > EPS) {
-            const inv = 1 / totalWeight
-            for (let s = 0; s < SHAPE_COUNT; s++) {
-                this.globalActivations[s] *= inv
-            }
-        }
-
-        // Cleanup stale f0 keys
-        if (this._prevActivations.size > 64) {
-            const keys = [...this._prevActivations.keys()]
-            for (const k of keys.slice(0, keys.length - 32)) {
-                this._prevActivations.delete(k)
-            }
-        }
-
-        this._frameCount++
-        return this._buildResult()
     }
 
     /**
@@ -364,54 +178,6 @@ export class PitchFirstClassifier {
             if (peaks.length >= MAX_PEAKS) break
         }
         return peaks
-    }
-
-    _resetOutputs(binCount) {
-        if (this.binShapeData) this.binShapeData.fill(0)
-        if (this.binFundamentalHz) this.binFundamentalHz.fill(0)
-        if (this.binDominantValue) this.binDominantValue.fill(0)
-        this.globalActivations.fill(0)
-        this.peaks = []
-        this._cqtBins = binCount
-    }
-
-    _buildResult() {
-        return {
-            binShapeData: this.binShapeData,
-            binFundamentalHz: this.binFundamentalHz,
-            binDominantValue: this.binDominantValue,
-            globalActivations: this.globalActivations,
-            peaks: this.peaks,
-            cqtBins: this._cqtBins,
-        }
-    }
-
-    /**
-     * Get shape activation for a specific CQT bin and shape index.
-     * @param {number} binIdx
-     * @param {number} shapeIdx
-     * @returns {number}
-     */
-    getBinShape(binIdx, shapeIdx) {
-        if (!this.binShapeData || binIdx < 0 || binIdx >= this._cqtBins) return 0
-        return this.binShapeData[binIdx * SHAPE_COUNT + shapeIdx] || 0
-    }
-
-    /**
-     * Get all 10 shape activations for a specific CQT bin.
-     * @param {number} binIdx
-     * @param {Float32Array} [out] — optional pre-allocated output array
-     * @returns {Float32Array}
-     */
-    getBinShapes(binIdx, out) {
-        if (!out) out = new Float32Array(SHAPE_COUNT)
-        out.fill(0)
-        if (!this.binShapeData || binIdx < 0 || binIdx >= this._cqtBins) return out
-        const base = binIdx * SHAPE_COUNT
-        for (let s = 0; s < SHAPE_COUNT; s++) {
-            out[s] = this.binShapeData[base + s] || 0
-        }
-        return out
     }
 
     setParams(topN, alpha) {
@@ -468,9 +234,6 @@ export class PitchFirstClassifier {
     reset() {
         this._prevActivations.clear()
         this.globalActivations.fill(0)
-        if (this.binShapeData) this.binShapeData.fill(0)
-        if (this.binFundamentalHz) this.binFundamentalHz.fill(0)
-        if (this.binDominantValue) this.binDominantValue.fill(0)
         this.peaks = []
         this.entities = []
         this._frameCount = 0

@@ -86,8 +86,7 @@ export function createShapeDebugPanel(aeGetter) {
         _bars.push({ inner: barInner, value, shapeId })
     }
 
-    // Top-N indicator
-        // Entity list
+    // Entity list
     const entityList = document.createElement('div')
     entityList.id = 'shape-debug-entities'
     entityList.style.cssText = 'margin-top:6px;font-size:9px;color:#aaa;max-height:120px;overflow-y:auto;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px'
@@ -138,6 +137,19 @@ export function updateShapeDebugPanel() {
     const topN = document.getElementById('shape-debug-topn')
     if (topN) {
         topN.textContent = `Active: ${topNCount}/${SHAPE_COUNT}  |  Top-N: 3`
+    }
+
+    // ── Entity list ──
+    const entityList = document.getElementById('shape-debug-entities')
+    if (entityList) {
+        const entities = ae._shapeEntities || []
+        if (entities.length > 0) {
+            entityList.innerHTML = entities.slice(0, 5).map(e =>
+                `${e.fundamentalHz?.toFixed(0) || '?'}Hz ${e.dominantShape || '?'} (${(e.volume * 100).toFixed(0)}%)`
+            ).join('<br>')
+        } else {
+            entityList.textContent = '(no entities)'
+        }
     }
 }
 
