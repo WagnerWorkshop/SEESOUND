@@ -158,7 +158,15 @@ export class PitchFirstClassifier {
      * sorted by ascending frequency (lowest harmonics first for Look-Fit-Subtract).
      */
     _findPeaksAscending(mags, binCount) {
-        const threshold = PEAK_MIN_LIN_MAGNITUDE
+        // Dynamic threshold: 8% of the frame's current maximum.
+        // After subtracting a strong fundamental, the residual's max drops,
+        // so weaker peaks become proportionally detectable. A fixed threshold
+        // of 0.005 is too aggressive after subtraction.
+        let frameMax = 0
+        for (let i = 3; i < binCount - 3; i++) {
+            if (mags[i] > frameMax) frameMax = mags[i]
+        }
+        const threshold = Math.max(PEAK_MIN_LIN_MAGNITUDE, frameMax * 0.08)
         const minDist = PEAK_MIN_DISTANCE_BINS
         const peaks = []
 

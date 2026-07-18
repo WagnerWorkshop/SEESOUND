@@ -743,6 +743,7 @@ setCameraHudEnabled(false)
 // ─────────────────────────────────────────────────────────────────────────────
 
 let isPlaying = false
+let _frozenParticleData = null  // cached particle state for freeze-on-stop
 let frameN = 0
 let monitorMuted = false
 let _currentAudioFileName = ''
@@ -934,8 +935,33 @@ function animate() {
     ae.update()
     updateShapeDebugPanel()
     const isActuallyPlaying = !!(ae.audioEl && !ae.audioEl.paused && !ae.audioEl.ended)
-    if (isActuallyPlaying !== isPlaying) isPlaying = isActuallyPlaying
+    // Freeze last frame on stop — keep rendering the same particles
+    // so the visualization doesn't collapse when audio data stops arriving
+    if (isActuallyPlaying) {
+        _frozenParticleData = null  // clear freeze cache while playing
+    }
+    if (isActuallyPlaying !== isPlaying) {
+        if (!isActuallyPlaying && isPlaying) {
+            // Just stopped — save current state to freeze
+            _frozenParticleData = {
+                pos: ps._pos?.slice(), sz: ps._sz?.slice(), col: ps._col?.slice(),
+                visibleCount: ps._visible_count, paintCount: ps._paint_count,
+                insertIndex: ps._insert_index,
+            }
+        }
+        isPlaying = isActuallyPlaying
+    }
     if (isActuallyPlaying && !ae.analyser && ae.audioEl) ae.init(ae.audioEl)
+
+    // When stopped with frozen data, skip the computational update but still render
+    if (!isActuallyPlaying && _frozenParticleData) {
+        ps._geo.setDrawRange(0, _frozenParticleData.paintCount || _frozenParticleData.visibleCount)
+        const bg = ps._background
+        renderer.setClearColor(bg, 1)
+        shouldUsePostProcessing() ? composer.render() : renderer.render(scene, camera)
+        requestAnimationFrame(animate)
+        return
+    }
 
     // Always run particle update so rules-based particles render even when paused
     const w = renderer.domElement.width / window.devicePixelRatio
@@ -958,9 +984,20 @@ function animate() {
     ps.update(ae, updateParams, w, h)
     // Apply camera rules only when the user is NOT interacting with the canvas.
     // While mouse buttons are down (pan/orbit/rotate), user input takes priority.
-    // On release, the camera snaps back to rule-driven position next frame.
+    // Camera smoothing: lerp toward rule target to eliminate square-wave flicker.
     if (!pointerState.active) {
-        applyRuleCameraOutput(ps.getCameraOutput())
+        const camOut = ps.getCameraOutput()
+        if (camOut && (camOut.x != null || camOut.y != null || camOut.z != null || camOut.zoom != null || camOut.targetX != null || camOut.targetY != null || camOut.targetZ != null || camOut.angleOfView != null)) {
+            const lerpFactor = 0.12
+            if (camOut.x != null) camera.position.x += (camOut.x - camera.position.x) * lerpFactor
+            if (camOut.y != null) camera.position.y += (camOut.y - camera.position.y) * lerpFactor
+            if (camOut.z != null) camera.position.z += (camOut.z - camera.position.z) * lerpFactor
+            if (camOut.targetX != null) orbitTarget.x += (camOut.targetX - orbitTarget.x) * lerpFactor
+            if (camOut.targetY != null) orbitTarget.y += (camOut.targetY - orbitTarget.y) * lerpFactor
+            if (camOut.targetZ != null) orbitTarget.z += (camOut.targetZ - orbitTarget.z) * lerpFactor
+            if (camOut.zoom != null) camera.zoom += (camOut.zoom - camera.zoom) * lerpFactor
+            if (camOut.angleOfView != null) camera.fov += (camOut.angleOfView - camera.fov) * lerpFactor
+        }
         tickCameraRules()
     }
 

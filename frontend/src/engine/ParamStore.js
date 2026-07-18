@@ -887,8 +887,12 @@ function _deepClone(value) {
 }
 
 function _captureState() {
+    const clone = _deepClone(params)
+    // Exclude canvas size from undo history so Ctrl+Z doesn't resize the canvas
+    delete clone.canvasWidth
+    delete clone.canvasHeight
     return {
-        params: _deepClone(params),
+        params: clone,
         disabled: [...disabled],
     }
 }
@@ -903,6 +907,13 @@ function _statesEqual(a, b) {
 
 function _applyState(state) {
     const merged = migrateRuleSchema((state && typeof state === 'object' ? state.params : {}) || {})
+    // Preserve current canvas size — undo should not resize the viewport
+    if (params.canvasWidth !== undefined && !(state?.params && 'canvasWidth' in state.params)) {
+        merged.canvasWidth = params.canvasWidth
+    }
+    if (params.canvasHeight !== undefined && !(state?.params && 'canvasHeight' in state.params)) {
+        merged.canvasHeight = params.canvasHeight
+    }
     for (const key of Object.keys(params)) delete params[key]
     for (const [k, v] of Object.entries(merged)) {
         params[k] = v

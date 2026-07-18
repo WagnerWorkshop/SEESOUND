@@ -103,13 +103,32 @@ export class CameraController {
             this.orbitTarget.add(delta)
             this.syncOrbitFromCamera()
         } else if (button === 2) {
-            // Right-drag orbits the camera around the scene (consistent with left-drag)
-            this.orbitState.azimuth -= dx * 0.006
-            this.orbitState.elevation = Math.max(
-                -Math.PI * 0.49,
-                Math.min(Math.PI * 0.49, this.orbitState.elevation - dy * 0.005),
-            )
-            this.applyOrbitToCamera()
+            // Right-drag: pan the canvas
+            const viewH = Math.max(1, this.renderer.domElement.clientHeight || this.col.clientHeight || window.innerHeight)
+            const right = new THREE.Vector3()
+            const up = new THREE.Vector3()
+            const delta = new THREE.Vector3()
+
+            camera.updateMatrixWorld()
+            const m = camera.matrixWorld.elements
+            right.set(m[0], m[1], m[2]).normalize()
+            up.set(m[4], m[5], m[6]).normalize()
+
+            let unitsPerPixel = 0.01
+            if (camera.isOrthographicCamera) {
+                unitsPerPixel = (camera.top - camera.bottom) / (Math.max(0.01, camera.zoom) * viewH)
+            } else {
+                const dist = Math.max(0.001, camera.position.distanceTo(this.orbitTarget))
+                const fovRad = THREE.MathUtils.degToRad(camera.fov)
+                unitsPerPixel = (2 * Math.tan(fovRad * 0.5) * dist) / viewH
+                unitsPerPixel /= Math.max(0.01, camera.zoom)
+            }
+
+            delta.copy(right).multiplyScalar(-dx * unitsPerPixel)
+            delta.addScaledVector(up, dy * unitsPerPixel)
+            camera.position.add(delta)
+            this.orbitTarget.add(delta)
+            this.syncOrbitFromCamera()
         }
     }
 
