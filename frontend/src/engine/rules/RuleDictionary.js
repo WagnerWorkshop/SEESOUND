@@ -95,13 +95,6 @@ const _legacyInputAliases = [
         technicalName: 'canvasHeight',
         description: 'Legacy alias of canvasHeightPx.',
     },
-    {
-        id: 'fundamentalNormHz',
-        group: 'pitchBrain',
-        label: 'Fundamental Hz (norm)',
-        technicalName: 'fundamentalNormHz',
-        description: 'Normalized fundamental frequency (0-1).',
-    },
 ]
 
 // ── Mode-gated variable definitions ───────────────────────────────────────────

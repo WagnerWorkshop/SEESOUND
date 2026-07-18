@@ -252,6 +252,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             if (body) body.classList.remove('is-expanded')
             const editBtn = targetRow.querySelector('.cp-layer-expand-btn')
             if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+            targetRow.draggable = true
             popupOpen = false
             return
         }
@@ -266,6 +267,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             if (body) body.classList.remove('is-expanded')
             const editBtn = r.querySelector('.cp-layer-expand-btn')
             if (editBtn) applyIconOnlyButton(editBtn, BUTTON_ICON_MAP.edit, UI_TEXT.rules?.editLayer || 'Edit')
+            r.draggable = true
         })
         // Update active owner and re-apply rules
         activeOwner = owner
@@ -280,6 +282,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         const targetRow = document.querySelector(`.cp-styles-layer-row[data-layer-id="${CSS.escape(layerId)}"]`)
         if (!targetRow) return
         targetRow.classList.add('is-expanded')
+        targetRow.draggable = false
         const targetBody = targetRow.querySelector(`.cp-layer-rules-body`)
         if (targetBody) {
             targetBody.classList.add('is-expanded')
@@ -477,9 +480,13 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                     }
                     renderLayerList()
                 })
-                // Drag events for reordering
+                // Drag events for reordering — only allowed when layer is collapsed
                 row.draggable = true
                 row.addEventListener('dragstart', (e) => {
+                    // Only allow drag when layer is collapsed (not expanded)
+                    if (row.classList.contains('is-expanded') || rulesBody.classList.contains('is-expanded')) {
+                        e.preventDefault(); return
+                    }
                     // Prevent drag when interacting with inputs, expression editors, or buttons
                     const target = e.target
                     if (target.closest('input, textarea, select, button, [contenteditable="true"], .cp-btn, .cp-rule-token-editor')) {
@@ -574,6 +581,9 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 })
             }
         })
+
+        // Disable draggable on expanded rows (re-render resets drag state)
+        layerList.querySelectorAll('.cp-styles-layer-row.is-expanded').forEach(r => r.draggable = false)
     }
 
     function renderInlineMeta() {

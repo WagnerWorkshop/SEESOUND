@@ -546,8 +546,10 @@ function _buildFunctionSource(fnName, rules, inputIds, includeParticleArg) {
     lines.push('  const toColorVector = (value) => helpers.toColorVector(value);')
     lines.push('  const deltaTime = Number.isFinite(i.deltaTime) ? i.deltaTime : 0;')
     lines.push('  const time = Number.isFinite(i.time) ? i.time : 0;')
+    const seenIds = new Set()
     for (const id of inputIds) {
-        if (id === 'deltaTime' || id === 'time') continue
+        if (id === 'deltaTime' || id === 'time' || seenIds.has(id)) continue
+        seenIds.add(id)
         lines.push(`  const ${id} = Number.isFinite(i.${id}) ? i.${id} : 0;`)
     }
 
@@ -688,7 +690,7 @@ export function compileRules(ruleBlocks, dictionaries) {
 
     console.log('[Compiler] compileRules: spawned=', activeSpawnedRuleCount, 'living=', activeLivingRuleCount, 'bg=', activeBackgroundRuleCount, 'camera=', activeCameraRuleCount, 'total=', sortedRules.length)
 
-    const inputIds = getInputDictionary().entries.map((entry) => entry.id)
+    const inputIds = [...new Set(getInputDictionary().entries.map((entry) => entry.id))]
     const inputIdSet = new Set(inputIds)
     const requiredInputsByTarget = {
         spawnedParticles: _collectRuleInputs(spawnedRules, inputIdSet),
