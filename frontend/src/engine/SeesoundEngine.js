@@ -367,7 +367,10 @@ export class SeesoundEngine {
                 const peakCount = this._shapeSolver.peaks?.length ?? 0
                 const entityCount = result.entities?.length ?? 0
                 const maxAct = engine._globalShapeActivations ? Math.max(...engine._globalShapeActivations) : 0
-                console.log(`[Shape] cqtBins=${hasMag} peaks=${peakCount} entities=${entityCount} maxAct=${maxAct.toFixed(3)} playing=${this._isPlaying}`)
+                const wfLen = workletFundamentals?.length ?? 0
+                const wf0 = workletFundamentals?.[0]?.freqHz?.toFixed(1) ?? 'none'
+                const eF0 = result.entities?.[0]?.fundamentalHz?.toFixed(1) ?? 'none'
+                console.log(`[Shape] cqtBins=${hasMag} wkPeaks=${wfLen} wkF0=${wf0}Hz thPeaks=${peakCount} thF0=${eF0}Hz entities=${entityCount} maxAct=${maxAct.toFixed(3)} playing=${this._isPlaying}`)
             }
         } else {
             if (engine._globalShapeActivations) engine._globalShapeActivations.fill(0)

@@ -976,19 +976,20 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
     /**
      * Log-domain Harmonic Product Spectrum (Log-HPS) fundamental detector.
      *
-     * In log-frequency CQT space, harmonics are constant integer bin OFFSETS,
-     * not multipliers. For each candidate bin i, salience is:
-     *   salience[i] = mag[i] + mag[i + shift_2] + mag[i + shift_3] + ...
+     * In log-frequency CQT space, harmonics are constant integer bin OFFSETS:
+     *   shift_k = binsPerOctave × log2(k)
      *
-     * The true fundamental's harmonics STACK at its bin: mag[bin_f0] already has
-     * the fundamental energy, and mag[bin_f0 + shift_2] has the 2nd harmonic
-     * shifted back onto it. Overtones do NOT stack — their harmonics land at
-     * different bins — so they get crushed. Peak-picking on the salience array
-     * yields only true fundamentals.
+     * Classic multiplicative HPS (not additive):
+     *   salience[i] = mag[i] × mag[i + shift_2] × mag[i + shift_3] × ...
      *
-     * Assumes `linMags` is linear amplitude [0..1], not dB.
+     * The product amplifies the true fundamental exponentially (all 5 harmonics
+     * align at bin_i) while overtones get crushed (their harmonics misalign
+     * across downsampled spectra, resulting in multiplication by near-zero
+     * values from bins that don't contain harmonic energy).
      *
-     * @param {Float32Array} linMags - CQT linear magnitudes
+     * A 5th-root compresses back to [0,1] range to prevent float crushing.
+     *
+     * @param {Float32Array} linMags - CQT linear amplitudes [0..1]
      * @param {number} binCount
      * @param {number} minHz
      * @param {number} maxHz
@@ -999,29 +1000,43 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const shifts = this._hpsHarmonicShifts
         if (!shifts || !linMags || binCount === 0) return []
 
-        // ── Step 1: Generate salience array ──
+        // ── Normalize linear magnitudes to [0,1] to prevent float crushing ──
+        let maxMag = 0
+        for (let i = 0; i < binCount; i++) {
+            if (linMags[i] > maxMag) maxMag = linMags[i]
+        }
+        if (maxMag < 1e-9) return []  // silence
+
+        const normMags = new Float32Array(binCount)
+        const invMax = 1 / maxMag
+        for (let i = 0; i < binCount; i++) normMags[i] = linMags[i] * invMax
+
+        const MIN_VAL = 1e-9
         const salience = new Float32Array(binCount)
-        const numShifts = shifts.length
 
         for (let i = 0; i < binCount; i++) {
-            let sum = linMags[i]
-            for (let s = 0; s < numShifts; s++) {
+            let product = Math.max(MIN_VAL, normMags[i])
+            for (let s = 0; s < shifts.length; s++) {
                 const j = i + shifts[s]
-                if (j < binCount) sum += linMags[j]
+                if (j < binCount) {
+                    product *= Math.max(MIN_VAL, normMags[j])
+                }
             }
-            salience[i] = sum
+            salience[i] = product  // no nth-root — product IS the suppression mechanism
         }
 
-        // ── Step 2: Peak picking on salience ──
-        const threshold = 0.05
+        // ── Peak picking on salience ──
+        // Threshold is tiny because 5-way product of [0,1] values.
+        // e.g. 0.5^5 ≈ 0.031, 0.1^5 = 1e-5, 0.05^5 ≈ 3e-7
+        const threshold = 1e-6
         const peaks = []
 
-        for (let i = 1; i < binCount - 1; i++) {
+        for (let i = 3; i < binCount - 3; i++) {
             const v = salience[i]
             if (v < threshold) continue
-            if (v < salience[i - 1] || v < salience[i + 1]) continue
+            if (v < salience[i - 1] || v < salience[i + 1] ||
+                v < salience[i - 2] || v < salience[i + 2]) continue
 
-            // Parabolic interpolation for sub-bin precision
             const m1 = salience[i - 1], m2 = v, m3 = salience[i + 1]
             const denom = m1 - 2 * m2 + m3
             let subBin = 0
@@ -1078,6 +1093,8 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         if (!analyzedAny) return
 
+        const payload = { type: 'binMetrics' }
+
         // ── Log-HPS fundamental detection on CQT linear magnitudes ──
         if (cfg.needMagnitude && this._outMagnitudeLin && this.binCount > 0) {
             const binsPerOctave = (this._internalResolution || DEFAULT_CQT_DETAILS_PER_10_OCTAVES) / 10
@@ -1088,8 +1105,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                 payload.fundamentals = f0List
             }
         }
-
-        const payload = { type: 'binMetrics' }
 
         // Determine visual target bin count based on requested visual resolution
         // relative to the internal math resolution.
