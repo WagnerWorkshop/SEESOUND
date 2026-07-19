@@ -84,6 +84,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._framesUntilNextAnalysis = 0
         this.rampGain = 0.0
         this.rampStep = 1.0 / (sampleRate * 0.1)
+        this._startedRamping = false
         // Suppress transient reporting for ~200ms after ramp completes
         // to let the energy baseline stabilize. The ramp-gain causes the
         // running average to accumulate at near-zero, so when full-volume
@@ -670,15 +671,23 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         if (input && input.length) {
             const channelCount = input.length
             const sampleCount = input[0]?.length || 0
+
+            // Startup fade-in: apply per-process-block ramp to prevent
+            // Goertzel filter ringing from the step-function/impulse of audio starting.
+            // Ramp spans ~40 process blocks (~50ms at 128-sample blocks @44.1kHz).
+            if (this.rampGain < 1.0) {
+                this._startedRamping = true
+                const BLOCK_RAMP_STEP = 1.0 / 40  // ~50ms @128-sample blocks
+                this.rampGain += BLOCK_RAMP_STEP
+                if (this.rampGain > 1.0) this.rampGain = 1.0
+            }
+            const gain = this.rampGain
+
             for (let channel = 0; channel < input.length; channel++) {
                 const channelData = input[channel]
                 if (!channelData) continue
                 for (let i = 0; i < channelData.length; i++) {
-                    if (this.rampGain < 1.0) {
-                        this.rampGain += this.rampStep
-                        if (this.rampGain > 1.0) this.rampGain = 1.0
-                    }
-                    channelData[i] *= this.rampGain
+                    channelData[i] *= gain
                 }
             }
             // When the ramp gain reaches 1.0, start the post-ramp transient

@@ -1690,7 +1690,9 @@ export class ParticleSystem {
         const needsFullBucketLoop = (emitLightParticles && spawnNeedsBins) || (emitLines && lineNeedsBins)
         let effectiveBucketCount = needsFullBucketLoop ? logBucketCount : 1
         // In painting mode always use full buckets to accumulate trails
-        if (persistMode === 1) effectiveBucketCount = logBucketCount
+        // UNLESS entities were spawned — then only show entities
+        const wroteAnyEntities = wroteParticles > 0
+        if (persistMode === 1 && !wroteAnyEntities) effectiveBucketCount = logBucketCount
 
         // One-particle dedup: skip particles at the same position
         const _particleDedup = persistMode !== 1 ? new Map() : null
@@ -1765,7 +1767,7 @@ export class ParticleSystem {
                 entityInputs.shapeDominantValue = entity.dominantShapeValue || 0
                 // Shape-derived component timbre (from SHAPE_METADATA fingerprint)
                 const shapeMeta = SHAPE_METADATA[entity.dominantShape] || {}
-                entityInputs.componentCentroid = shapeMeta.typicalCentroid || 0
+                entityInputs.componentCentroid = (shapeMeta.typicalCentroid || 0) / 16000  // Normalize to [0,1]
                 entityInputs.componentFlatness = shapeMeta.typicalFlatness || 0
                 entityInputs.componentFlux = entity.volume || 0
                 entityInputs.componentOnset = entity.dominantShapeValue || 0
