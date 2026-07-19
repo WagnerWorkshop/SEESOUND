@@ -42,6 +42,12 @@ const DB_NOISE_FLOOR = -90
 /** How many times louder a harmonic can be vs the template prediction before
  *  we cap subtraction at the template-allocated level (octave trap). */
 const OCTAVE_TRAP_RATIO = 2.5
+/** Spectral flatness threshold — peaks in neighborhoods flatter than this
+ *  are treated as broadband percussion and skipped by tonal NMF. */
+const TONAL_FLATNESS_MAX = 0.35
+/** Energy ratio threshold — if the 2f peak has >= this fraction of the f0
+ *  peak's energy, it's a legitimate octave-doubled instrument, not a ghost. */
+const OCTAVE_LEGIT_RATIO = 0.55
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -209,6 +215,35 @@ export class PitchFirstClassifier {
         if (Number.isFinite(alpha)) this.smoothingAlpha = Math.max(0.05, Math.min(0.5, alpha))
     }
 
+    // ── Spectral flatness check for percussive gating ────────────────────────
+
+    /**
+     * Compute local spectral flatness around a CQT bin.
+     * Flatness = geometricMean / arithmeticMean of a ±WIDTH window.
+     * High flatness → noise/percussion. Low flatness → tonal peak.
+     * @param {Float32Array} mags — linear normalized magnitudes
+     * @param {number} binIdx — center bin
+     * @param {number} binCount
+     * @param {number} [halfWidth=4] — neighborhood half-width in bins
+     * @returns {number} flatness ratio (0=totally tonal, 1=pure noise)
+     */
+    _spectralFlatnessAt(mags, binIdx, binCount, halfWidth = 4) {
+        const lo = Math.max(0, binIdx - halfWidth)
+        const hi = Math.min(binCount - 1, binIdx + halfWidth)
+        let sum = 0, sumLog = 0, count = 0
+        const MINVAL = 1e-12
+        for (let i = lo; i <= hi; i++) {
+            const v = Math.max(MINVAL, mags[i])
+            sum += v
+            sumLog += Math.log(v)
+            count++
+        }
+        if (count === 0 || sum === 0) return 1
+        const arithMean = sum / count
+        const geoMean = Math.exp(sumLog / count)
+        return geoMean / Math.max(MINVAL, arithMean)
+    }
+
     // ── Look-Fit-Subtract pipeline ───────────────────────────────────────────
 
     /**
@@ -250,24 +285,59 @@ export class PitchFirstClassifier {
             const candidatePeaks = this._findPeaksAscending(this._residualBuf, binCount)
             if (candidatePeaks.length === 0) break
 
-            // Find the strongest remaining peak NOT already detected
+            // Find the strongest remaining peak NOT already detected,
+            // gating percussion and legitimate octave doublings
             let bestPeak = null
             for (const peak of candidatePeaks) {
                 const f0 = cqtBinToHz(peak.refinedBin, binCount, 40, 16000)
                 if (f0 < 30 || f0 > 8000) continue
 
-                // HARMONIC REJECTION: skip if within ±8% of an already-detected
-                // fundamental or its harmonics (this peak is likely a ghost)
-                let isHarmonic = false
+                // ── TONAL GATING: skip broadband percussive hits ──
+                // Percussion (taikos, snares, cymbals) has high spectral
+                // flatness — all neighboring bins have similar energy.
+                // Tonal instruments have a sharp peak surrounded by low bins.
+                const flatness = this._spectralFlatnessAt(this._residualBuf, peak.binIdx, binCount, 5)
+                if (flatness > TONAL_FLATNESS_MAX) continue
+
+                // ── OCTAVE ENERGY RATIO: distinguish legitimate octave
+                // doubling from overtone ghosts ──
+                let isOvertoneGhost = false
                 for (const uf of usedFundamentals) {
                     const ratio = f0 / uf
-                    // Within 8% of integer ratio → this is a harmonic of uf
-                    if (ratio >= 0.92 && ratio < 1.08) { isHarmonic = true; break }
-                    if (ratio >= 1.92 && ratio < 2.08) { isHarmonic = true; break }
-                    if (ratio >= 2.92 && ratio < 3.08) { isHarmonic = true; break }
-                    if (ratio >= 0.47 && ratio < 0.53) { isHarmonic = true; break }  // sub-octave
+                    // Check 1st/2nd/3rd harmonic positions
+                    if ((ratio >= 1.92 && ratio < 2.08) || (ratio >= 2.92 && ratio < 3.08)) {
+                        // f0 is at a harmonic of uf.
+                        // Measure energy: if f0 has ≥55% of uf's fundamental energy,
+                        // it's a LEGITIMATE second instrument (octave doubling).
+                        const ufBin = Math.round(hzToCqtBin(uf, binCount, 40, 16000))
+                        const ufEnergy = (ufBin >= 0 && ufBin < binCount) ? this._residualBuf[ufBin] : 0
+                        const f0Energy = this._residualBuf[peak.binIdx] || 0
+                        if (ufEnergy > 0 && f0Energy / ufEnergy >= OCTAVE_LEGIT_RATIO) {
+                            // Equal-or-greater energy = real second instrument.
+                            // Keep it (don't flag as ghost).
+                            break
+                        }
+                        // Significantly less energy = overtone ghost. Reject.
+                        isOvertoneGhost = true
+                        break
+                    }
+                    // Sub-octave: f0 is half of uf → f0 IS the true fundamental,
+                    // uf was the overtone ghost. Keep f0.
+                    if (ratio >= 0.47 && ratio < 0.53) {
+                        // f0 = sub-octave of uf. Check energy ratio for legitimacy.
+                        const ufBin = Math.round(hzToCqtBin(uf, binCount, 40, 16000))
+                        const ufEnergy = (ufBin >= 0 && ufBin < binCount) ? this._residualBuf[ufBin] : 0
+                        const f0Energy = this._residualBuf[peak.binIdx] || 0
+                        if (f0Energy >= ufEnergy * OCTAVE_LEGIT_RATIO) { break }
+                        isOvertoneGhost = true
+                        break
+                    }
+                    // Same frequency proximity — skip duplicate
+                    if (ratio >= 0.92 && ratio < 1.08) {
+                        isOvertoneGhost = true; break
+                    }
                 }
-                if (isHarmonic) continue
+                if (isOvertoneGhost) continue
 
                 // Pick the strongest VALID peak
                 if (!bestPeak || peak.magnitude > bestPeak.magnitude) {
@@ -283,14 +353,12 @@ export class PitchFirstClassifier {
             // so the NNLS gets the full signal, not the residual
             const V = new Float64Array(MAX_HARMONICS)
             let sv = 0
-            const harmonicBins = []
             for (let k = 1; k <= MAX_HARMONICS; k++) {
                 const hz = f0 * k; if (hz > 20000) break
                 const bi = Math.round(hzToCqtBin(hz, binCount, 40, 16000))
                 if (bi >= 0 && bi < binCount) {
-                    V[k - 1] = linMags[bi]  // use ORIGINAL, not residual
+                    V[k - 1] = linMags[bi]
                     sv += V[k - 1]
-                    harmonicBins.push(bi)
                 }
             }
             if (sv < EPS) continue
