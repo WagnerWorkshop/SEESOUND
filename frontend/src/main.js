@@ -1235,6 +1235,10 @@ animate()
         const template = (detail && typeof detail === 'object') ? detail : {}
         const templateTitle = String(template.title || template.id || template.presetName || UI_TEXT?.file?.projectNew || 'New Project').trim()
 
+        // Save current canvas size before loading so it survives the preset swap
+        const savedCanvasW = Number(params.canvasWidth)
+        const savedCanvasH = Number(params.canvasHeight)
+
         try {
             projectLoadInProgress = true
             if (template.projectPath) {

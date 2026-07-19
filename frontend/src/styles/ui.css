@@ -94,7 +94,7 @@
     --border-default: 1px solid var(--color-border);
     --border-strong: 3px solid var(--brand-5);
     --border-bright: 1px solid var(--brand-5);
-    --box-shadow: 0 -1px 3px hsla(0, 0%, 100%, 0.1) inset;
+    --box-shadow: 0 -1px 4px hsla(0, 0%, 100%, 0.3) inset;
     --box-shadow-glow: 0 0 10px var(--brand-3);
 
     --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -669,12 +669,12 @@ input[type=number]::-webkit-inner-spin-button {
     letter-spacing: 0.01em;
 }
 
-.cp-menu-collapse {
+.cp-btn-sm {
     background: none;
     box-shadow: none;
 }
 
-.cp-menu-collapse .cp-btn-label {
+.cp-btn-sm .cp-btn-label {
     display: none;
 }
 
@@ -922,6 +922,10 @@ input[type=number]::-webkit-inner-spin-button {
     grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
     gap: var(--gap-m);
     align-items: center;
+}
+
+.cp-setting-row-bg-image {
+    grid-template-columns: 1fr 36px;
 }
 
 .cp-setting-label-wrap {

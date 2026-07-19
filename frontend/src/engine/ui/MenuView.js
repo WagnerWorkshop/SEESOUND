@@ -35,8 +35,8 @@ export function buildViewMenu(body, syncRegistry, deps) {
     backgroundSection.appendChild(bgColorInput)
 
     // Background image upload
-    const bgImageRow = el('div', 'cp-setting-row')
-    const bgImageBtn = el('button', 'cp-btn', { type: 'button', text: 'BG Image' })
+    const bgImageRow = el('div', 'cp-setting-row cp-setting-row-bg-image')
+    const bgImageBtn = el('button', 'cp-btn', { type: 'button', text: 'Background Image' })
     const bgImageClearBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button', title: 'Remove background image', 'aria-label': 'Remove' })
     const bgClearIcon = el('span', 'cp-btn-icon')
     bgClearIcon.innerHTML = BUTTON_ICON_MAP.remove || '×'

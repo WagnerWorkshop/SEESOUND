@@ -3577,7 +3577,7 @@ function createMenuPane(item) {
     applyIconOnlyButton(redoButton, BUTTON_ICON_MAP.redo, redoLabel)
     historyGroup.append(undoButton, redoButton)
     headerActions.appendChild(historyGroup)
-    const closeButton = el('button', 'cp-btn cp-menu-collapse', { type: 'button', text: UI_TEXT.menu.collapse })
+    const closeButton = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: UI_TEXT.menu.collapse })
     applyButtonIcon(closeButton, BUTTON_ICON_MAP.close, UI_TEXT.menu.collapse)
     headerActions.appendChild(closeButton)
     header.appendChild(headerActions)

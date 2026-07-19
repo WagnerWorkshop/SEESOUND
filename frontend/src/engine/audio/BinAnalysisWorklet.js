@@ -100,8 +100,16 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._visualResolution = this._cfg.cqtDetailsPer10Octaves
 
         // Boot muzzle timer: block sending unstable initial data to the UI
-        // for ~150 worklet blocks (~400ms at 44.1kHz).
-        this.bootTimer = 150
+        // for ~400 worklet blocks (~1.1s at 44.1kHz). This covers the
+        // entire startup ramp (200 blocks) + post-ramp filter stabilization
+        // (~200 blocks for the Goertzel filters' internal state to converge).
+        this.bootTimer = 400
+
+        // Post-ramp reset: after the ramp reaches 1.0, wait this many blocks
+        // before resetting Goertzel state (prevMag, prevPhase) and allowing
+        // analysis output. This ensures the filters have converged on
+        // full-volume audio before any data leaves the worklet.
+        this._postRampResetCounter = 0
 
         this._rebuildCqtPlan()
 
@@ -520,6 +528,14 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needPhase || cfg.needEnvelope || cfg.needAttackTime
         if (!cfg.enabled || !needsAny || this.binCount === 0) return
 
+        // Boot muzzle: suppress analysis output for _bootTimer blocks at
+        // startup so Goertzel filters have time to converge from zero state.
+        // Bin data is still computed internally — it's just not sent to the UI.
+        if (this.bootTimer > 0) { this.bootTimer--; return }
+
+        // Suppress analysis during the post-ramp reset period
+        if (this._postRampResetCounter > 0) return
+
         // Skip analysis frames immediately after CQT parameter changes to allow
         // ring buffers to refill with fresh data and prevent discontinuity artifacts.
         if (this._framesUntilNextAnalysis > 0) {
@@ -674,10 +690,12 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
             // Startup fade-in: apply per-process-block ramp to prevent
             // Goertzel filter ringing from the step-function/impulse of audio starting.
-            // Ramp spans ~40 process blocks (~50ms at 128-sample blocks @44.1kHz).
+            // Ramp spans 200 blocks (~580ms at 128-sample blocks @44.1kHz).
+            // This gives the multi-rate cascaded decimator (7 levels) enough
+            // time to fill its deepest ring buffers before full-volume audio hits
+            // the lowest-frequency (longest-window) Goertzel bins.
             if (this.rampGain < 1.0) {
-                this._startedRamping = true
-                const BLOCK_RAMP_STEP = 1.0 / 40  // ~50ms @128-sample blocks
+                const BLOCK_RAMP_STEP = 1.0 / 200
                 this.rampGain += BLOCK_RAMP_STEP
                 if (this.rampGain > 1.0) this.rampGain = 1.0
             }
@@ -690,19 +708,25 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
                     channelData[i] *= gain
                 }
             }
-            // When the ramp gain reaches 1.0, start the post-ramp transient
-            // suppression counter so the energy baseline can stabilize before
-            // we report any transient events.
-            if (this.rampGain >= 1.0 && this._transientSuppressRemaining <= 0) {
-                this._transientSuppressRemaining = this._transientSuppressFrames
-                // Reset the running energy average to avoid a transient when
-                // full-volume audio arrives after the ramp-up.
-                this._rhythmEnergyAvg = 0
-                this._lastTransientFrame = 0
+            // When the ramp gain reaches 1.0, start the post-ramp
+            // stabilization period. Reset all Goertzel filter state and
+            // flux history so the first analysis frame after the ramp
+            // doesn't see a discontinuity from zero-filled prevMag.
+            if (this.rampGain >= 1.0 && this._postRampResetCounter === 0) {
+                this._postRampResetCounter = 150
+                // Reset all per-bin state so the first analysis starts from
+                // a clean baseline on stabilized full-volume audio
+                this._prevMag.fill(0)
+                this._prevPhase.fill(0)
+                this._prevPhaseDelta.fill(0)
+                this._attackElapsedMs.fill(0)
+                this._attackLastMs.fill(0)
+                this._attackActive.fill(0)
+                this._resetFluxHistoryStorage()
             }
-            // Decrement transient suppression counter
-            if (this._transientSuppressRemaining > 0) {
-                this._transientSuppressRemaining--
+            if (this._postRampResetCounter > 0) {
+                this._postRampResetCounter--
+            }
             }
             if (sampleCount > 0) {
                 for (let i = 0; i < sampleCount; i++) {

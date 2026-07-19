@@ -1837,35 +1837,21 @@ export class ParticleSystem {
                     : Math.sqrt(Math.max(freqNormMinHz, hzStart) * Math.max(freqNormMinHz, hzEnd))
 
                 // Determine if this bucket is a fundamental, harmonic, or neither
-                let isFund = 1 // default: treat as fundamental
-                let closestStreamId = -1
-                if (this._harmonicData) {
-                    const { fundHzSet, streamPositions } = this._harmonicData
-                    // Check if the bucket's frequency matches a detected fundamental (within 3%)
-                    let matchFound = false
-                    let minDist = Infinity
-                    for (const fundHz of fundHzSet) {
+                // Check against detected entities from PitchFirstClassifier
+                let isFund = 0  // default: not a fundamental
+                const shapeEntities = ae._shapeEntities || []
+                if (shapeEntities.length > 0) {
+                    for (const entity of shapeEntities) {
+                        const fundHz = entity.fundamentalHz || 0
+                        if (fundHz <= 0) continue
                         const ratio = hzCenter / Math.max(1, fundHz)
                         const dist = Math.abs(ratio - 1)
-                        if (dist < minDist) minDist = dist
-                        // Exact fundamental match (±3%) → isFundamental = 1
-                        if (dist < 0.03) {
-                            isFund = 1
-                            matchFound = true
-                            break
-                        }
-                        // Harmonic multiple (integer ratio) → isFundamental = 0, track which stream
-                        const nearestInt = Math.round(ratio)
-                        if (nearestInt >= 2 && nearestInt <= 20 && Math.abs(ratio - nearestInt) < 0.03) {
-                            isFund = 0
-                            matchFound = true
-                            break
-                        }
+                        // Exact fundamental match (±3%)
+                        if (dist < 0.03) { isFund = 1; break }
                     }
-                    if (!matchFound) {
-                        // Unclassified — nearest fundamental determines grouping
-                        isFund = 0
-                    }
+                } else {
+                    // No entities detected — treat all buckets as fundamentals (spectrogram mode)
+                    isFund = 1
                 }
 
                 const binStart = _hzToBin(hzStart)
