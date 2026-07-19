@@ -727,7 +727,6 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             if (this._postRampResetCounter > 0) {
                 this._postRampResetCounter--
             }
-            }
             if (sampleCount > 0) {
                 for (let i = 0; i < sampleCount; i++) {
                     let sum = 0

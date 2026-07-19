@@ -1850,8 +1850,8 @@ export class ParticleSystem {
                         if (dist < 0.03) { isFund = 1; break }
                     }
                 } else {
-                    // No entities detected — treat all buckets as fundamentals (spectrogram mode)
-                    isFund = 1
+                    // No entities detected — assume none are fundamentals
+                    isFund = 0
                 }
 
                 const binStart = _hzToBin(hzStart)
