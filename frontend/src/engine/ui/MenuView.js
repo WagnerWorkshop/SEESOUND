@@ -37,8 +37,10 @@ export function buildViewMenu(body, syncRegistry, deps) {
     // Background image upload
     const bgImageRow = el('div', 'cp-setting-row')
     const bgImageBtn = el('button', 'cp-btn', { type: 'button', text: 'BG Image' })
-    const bgImageClearBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: '×' })
-    bgImageClearBtn.title = 'Remove background image'
+    const bgImageClearBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button', title: 'Remove background image', 'aria-label': 'Remove' })
+    const bgClearIcon = el('span', 'cp-btn-icon')
+    bgClearIcon.innerHTML = BUTTON_ICON_MAP.remove || '×'
+    bgImageClearBtn.appendChild(bgClearIcon)
     bgImageBtn.addEventListener('click', () => {
         const input = document.createElement('input')
         input.type = 'file'; input.accept = 'image/*'; input.style.display = 'none'
