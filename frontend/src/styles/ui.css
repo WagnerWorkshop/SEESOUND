@@ -1851,6 +1851,10 @@ input[type=number]::-webkit-inner-spin-button {
     padding: 0;
 }
 
+.audio-player--collapsed .audio-player__body {
+    display: none;
+}
+
 .audio-player__collapse-btn {
     width: 22px;
     height: 22px;
@@ -2313,6 +2317,73 @@ input[type=number]::-webkit-inner-spin-button {
     gap: var(--gap-s);
 }
 
+/* ── Layer settings card (inside expanded layer body) ── */
+.cp-layer-settings-card {
+    border: var(--border-default);
+    border-radius: var(--radius-m);
+    background: var(--gradient);
+    padding: var(--padding-s);
+    gap: var(--gap-m);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.cp-layer-settings-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-m);
+}
+
+.cp-layer-settings-card-header .cp-btn {
+    padding: var(--padding-s) 0 2px;
+    box-shadow: none;
+    opacity: 0.8;
+    background: none;
+}
+
+.cp-layer-settings-card-title {
+    font-family: var(--font-display);
+    font-size: var(--fs-body);
+    color: var(--color-text);
+    font-weight: 400;
+}
+
+.cp-layer-settings-card-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-s);
+    margin-left: auto;
+}
+
+.cp-layer-settings-card-collapse .cp-btn-icon {
+    font-size: var(--fs-label);
+    line-height: 1;
+}
+
+.cp-layer-settings-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-m);
+}
+
+.cp-layer-settings-card.is-collapsed .cp-layer-settings-card-body {
+    display: none;
+}
+
+.cp-layer-settings-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-m);
+}
+
+.cp-layer-settings-toggle-label {
+    font-family: var(--font-ui);
+    font-size: var(--fs-label);
+    color: var(--color-text-muted);
+}
+
 /* ── Layer row when expanded ── */
 .cp-styles-layer-row {
     flex-wrap: wrap;
@@ -2601,25 +2672,6 @@ input[type=number]::-webkit-inner-spin-button {
 
 .cp-layer-creation-body .cp-setting-row {
     grid-template-columns: minmax(100px, 1fr) minmax(140px, 2fr);
-}
-
-/* ===== Layer eye toggle and badge ===== */
-.cp-styles-layer-badge {
-    font-family: var(--font-mono);
-    font-size: var(--fs-aux);
-    color: var(--color-text-dim);
-    white-space: nowrap;
-    background: var(--gradient);
-    padding: 1px 6px;
-    border-radius: var(--radius-s);
-    border: var(--border-soft);
-}
-
-/* Modifier layer badge — distinct color */
-.cp-styles-layer-badge.is-modifier {
-    color: var(--color-accent, #8ab4f8);
-    background: var(--gradient);
-    border-color: var(--border-soft);
 }
 
 /* Move up/down buttons */

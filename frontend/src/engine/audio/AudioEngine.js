@@ -186,6 +186,8 @@ export class AudioEngine {
         this._fadeRampWasActive = false
         /** Tracks cumulative suppressed transient from cold-start (cleared gradually) */
         this._coldStartSuppressFrames = 0
+        /** True on first audio data after fade-in — prev buffers get filled with actual data */
+        this._firstAudioData = true
     }
 
     /** Number of frames to suppress worklet transient after fade events */
@@ -468,8 +470,11 @@ export class AudioEngine {
         // Mark that a fade ramp just started so the next non-ramp frame
         // will sync prev buffers to current data before computing flux.
         this._fadeRampWasActive = true
-        // Suppress cold-start transient for several frames (50ms ramp + settling)
-        this._coldStartSuppressFrames = 15
+        // First audio data flag: fill prev buffers with actual data (not zeros)
+        this._firstAudioData = true
+        // Suppress cold-start transient for ~1.5 seconds (90 frames at 60fps)
+        // so the CQT worklet ring buffers fully stabilize before flux is computed
+        this._coldStartSuppressFrames = 90
         // Suppress worklet transient while fade completes
         this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
@@ -490,7 +495,8 @@ export class AudioEngine {
         }
         // Reset previous-frame buffers so the flux/transient computation
         // starts from a clean slate when fadeIn() restores audio.
-        // Without this, stale pre-pause data causes a transient spike on resume.
+        // Mark for first-data fill so prev buffers get actual data on next fade-in.
+        this._firstAudioData = true
         this._prevRhythmData.fill(0)
         this._prevFrequencyDataBins.fill(0)
         if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
@@ -539,15 +545,19 @@ export class AudioEngine {
                 // Skip per-bin rhythm brain arrays during ramp
                 this._rhythmBrainActive = false
                 this._fadeRampWasActive = true
+                // First-data flag handled: prev buffers now contain real data
+                if (this._firstAudioData) this._firstAudioData = false
             } else {
-                // ── Transition: first non-ramp frame after a ramp period ──
-                // Sync prev to current so the flux delta is zero. This prevents
-                // the silence→signal boundary from registering as a transient,
-                // which is the root cause of cold-start and pause/restart spikes.
-                if (this._fadeRampWasActive) {
+                // ── First audio data: fill prev buffers directly (not zeros) ──
+                if (this._firstAudioData) {
+                    this._firstAudioData = false
+                    this._prevRhythmData.set(this._rhythmFrequencyData)
+                    this._prevFrequencyDataBins.set(this.frequencyData)
+                } else if (this._fadeRampWasActive) {
+                    // ── Transition: first non-ramp frame after a ramp period ──
+                    // Sync prev to current so the flux delta is zero.
                     this._fadeRampWasActive = false
                     this._prevRhythmData.set(this._rhythmFrequencyData)
-                    // Also sync the high-FFT prev buffer (used by spectralFlux)
                     this._prevFrequencyDataBins.set(this.frequencyData)
                 }
 

@@ -214,14 +214,14 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
         if (!layer) return []
         // Merge _inactiveRules back if they've become compatible with current source/shape
-        const fundOnly = new Set(['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass','shapeDominant','shapeDominantValue','componentId','componentCentroid','componentFlatness','componentFlux','componentOnset','componentCount','componentBinEnergy','fundamentalHz','fundamentalPitch','fundamentalNote','fundamentalNormHz'])
-        const shapeOutputs = { particle: new Set(['size','shapeType','particleCount']), line: new Set(['length','direction','thickness','lineCount']), curve: new Set(['length','thickness']) }
+        const fundOnly = new Set(['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue', 'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux', 'componentOnset', 'componentCount', 'componentBinEnergy', 'fundamentalHz', 'fundamentalPitch', 'fundamentalNote', 'fundamentalNormHz'])
+        const shapeOutputs = { particle: new Set(['size', 'shapeType', 'particleCount']), line: new Set(['length', 'direction', 'thickness', 'lineCount']), curve: new Set(['length', 'thickness']) }
         const isFund = (layer.layerSource || 'spectrum') === 'fundamentals'
         const curShape = layer.layerShape || 'particle'
         const compatCheck = (r) => {
             if (!r?.actions || r.actions.length === 0) return true
             const sourceCompat = isFund ? true : !r.actions.some(a => fundOnly.has(a?.output) || (a?.input && fundOnly.has(a.input)) || (a?.expression && [...fundOnly].some(v => a.expression.includes(v))))
-            const shapeCompat = r.actions.some(a => (shapeOutputs[curShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size','shapeType','particleCount','length','direction','thickness','lineCount'].includes(a?.output))
+            const shapeCompat = r.actions.some(a => (shapeOutputs[curShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size', 'shapeType', 'particleCount', 'length', 'direction', 'thickness', 'lineCount'].includes(a?.output))
             return sourceCompat && shapeCompat
         }
         const inactive = layer._inactiveRules || []
@@ -375,13 +375,8 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 // For special entries, toggle is cosmetic only (always enabled)
             })
 
-            // Badge — hidden for special layers
-            const typeBadge = el('span', 'cp-styles-layer-badge')
-            const src = entry.layerSource || 'spectrum'
-            const shp = entry.layerShape || 'particle'
-            const pos = entry.layerPositioning || 'coordinates'
-            typeBadge.textContent = `${src}·${shp}·${pos}`
-            if (isSpecial) typeBadge.style.display = 'none'
+            // Badge — hidden for special layers (removed: select dropdowns in inline meta instead)
+            const typeBadge = null  // placeholder, not appended to row
 
             // Move Up / Down — hidden for special
             const moveUpBtn = el('button', 'cp-btn cp-btn-icon cp-styles-move-btn', {
@@ -449,7 +444,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 }
             }
 
-            row.append(toggleCheck, typeBadge, moveUpBtn, moveDownBtn, nameInput, expandBtn, removeBtn, rulesBody)
+            row.append(toggleCheck, moveUpBtn, moveDownBtn, nameInput, expandBtn, removeBtn, rulesBody)
             layerList.appendChild(row)
 
             // ── Row click → toggle expand/collapse ──
@@ -612,130 +607,162 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
     }
 
     function renderInlineMeta() {
-        // Remove any existing inline meta rendered inside expanded bodies
-        document.querySelectorAll('.cp-layer-rules-meta').forEach((el) => el.remove())
         if (!popupOpen) return
 
         const isBg = activeOwner.type === 'background'
         const isCam = activeOwner.type === 'camera'
-        const metaBody = el('div', 'cp-layer-rules-meta')
 
-        if (isBg || isCam) {
-            // Render a settings section for the global owner
-            const titleRow = el('div', 'cp-section-title-row')
-            const titleEl = el('h3', 'cp-section-title', { text: isBg ? 'Background Rules' : 'Camera Rules' })
-            const typeBadge = el('span', 'cp-styles-layer-badge', { text: isBg ? 'background' : 'camera' })
-            titleRow.append(titleEl, typeBadge)
-            metaBody.appendChild(titleRow)
-        } else {
-            const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
-            if (!layer) return
+        if (isBg || isCam) return  // Background/Camera don't have per-layer settings
 
-            const titleRow = el('div', 'cp-section-title-row')
-            const titleEl = el('h3', 'cp-section-title', { text: getLayerDisplayName(layer) })
-            const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShape || 'particle' })
-            titleRow.append(titleEl, typeBadge)
-            metaBody.appendChild(titleRow)
+        const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+        if (!layer) return
 
-            // Source select
-            const sourceRow = el('label', 'cp-setting-row')
-            const sourceLabel = el('span', 'cp-setting-label', { text: 'Source', title: 'Spectrum = all CQT bins. Fundamentals = only detected pitch particles.' })
-            const sourceSelect = el('select', 'cp-input-select')
-            sourceSelect.appendChild(createSelectOptions([
-                { value: 'spectrum', label: 'Spectrum' },
-                { value: 'fundamentals', label: 'Fundamentals' },
-            ], layer.layerSource || 'spectrum'))
-            sourceSelect.addEventListener('change', () => {
-                const nextSource = sourceSelect.value
-                setRuleLayers(getRuleLayers().map((entry) => {
-                    if (entry.id !== layer.id) return entry
-                    // Preserve incompatible rules in _inactiveRules when switching source
-                    const isFund = nextSource === 'fundamentals'
-                    const compatCheck = (r) => {
-                        if (!r?.actions || r.actions.length === 0) return true
-                        const fundOnly = new Set(['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass','shapeDominant','shapeDominantValue','componentId','componentCentroid','componentFlatness','componentFlux','componentOnset','componentCount','componentBinEnergy','fundamentalHz','fundamentalPitch','fundamentalNote','fundamentalNormHz'])
-                        return isFund ? true : !r.actions.some(a => fundOnly.has(a?.output) || fundOnly.has(a?.input) || (a?.expression && fundOnly.values().some(v => a.expression.includes(v))))
-                    }
-                    const active = (entry.rules || []).filter(compatCheck)
-                    const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
-                    return { ...entry, layerSource: nextSource, rules: active, _inactiveRules: inactive }
-                }))
-                renderLayerList()
-                applyRowsFromRuleBlocks(getActiveRules())
-                updateOwnerSectionVisibility()
-                commitRuleBlocks()
-            })
-            sourceRow.append(sourceLabel, sourceSelect)
-            metaBody.appendChild(sourceRow)
+        // Find the expanded layer row and its rules body
+        const targetRow = document.querySelector(`.cp-styles-layer-row[data-layer-id="${CSS.escape(layer.id)}"]`)
+        if (!targetRow) return
+        const rulesBody = targetRow.querySelector('.cp-layer-rules-body')
+        if (!rulesBody) return
 
-            // 3D Shape select
-            const shapeRow = el('label', 'cp-setting-row')
-            const shapeLabel = el('span', 'cp-setting-label', { text: 'Shape', title: 'What 3D geometry the layer produces.' })
-            const shapeSelect = el('select', 'cp-input-select')
-            shapeSelect.appendChild(createSelectOptions([
-                { value: 'particle', label: 'Particle' },
-                { value: 'line', label: 'Line' },
-                { value: 'curve', label: 'Curve' },
-            ], layer.layerShape || 'particle'))
-            shapeSelect.addEventListener('change', () => {
-                const nextShape = shapeSelect.value
-                setRuleLayers(getRuleLayers().map((entry) => {
-                    if (entry.id !== layer.id) return entry
-                    // Preserve incompatible rules when switching 3D shape
-                    const shapeOutputs = { particle: new Set(['size','shapeType','particleCount']), line: new Set(['length','direction','thickness','lineCount']), curve: new Set(['length','thickness']) }
-                    const compatCheck = (r) => {
-                        if (!r?.actions || r.actions.length === 0) return true
-                        return r.actions.some(a => (shapeOutputs[nextShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size','shapeType','particleCount','length','direction','thickness','lineCount'].includes(a?.output))
-                    }
-                    const active = (entry.rules || []).filter(compatCheck)
-                    const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
-                    return { ...entry, layerShape: nextShape, layerShapeType: (nextShape === 'line' || nextShape === 'curve') ? 'line' : 'particle', rules: active, _inactiveRules: inactive }
-                }))
-                renderLayerList()
-                applyRowsFromRuleBlocks(getActiveRules())
-                updateOwnerSectionVisibility()
-                commitRuleBlocks()
-            })
-            shapeRow.append(shapeLabel, shapeSelect)
-            metaBody.appendChild(shapeRow)
+        // ── Build collapsible settings card ──
+        const card = el('article', 'cp-layer-settings-card')
+        const header = el('div', 'cp-layer-settings-card-header')
+        const title = el('div', 'cp-layer-settings-card-title', { text: 'Layer Settings' })
+        const tools = el('div', 'cp-layer-settings-card-tools')
+        const collapseBtn = el('button', 'cp-btn cp-layer-settings-card-collapse', { type: 'button' })
+        const collapseIcon = el('span', 'cp-btn-icon', { text: '▼' })
+        collapseBtn.appendChild(collapseIcon)
 
-            // Positioning select
-            const positioningRow = el('label', 'cp-setting-row')
-            const positioningLabel = el('span', 'cp-setting-label', { text: 'Positioning', title: 'Coordinates = XYZ. Network = force graph. Cylindrical = r/θ/z. Spherical = ρ/θ/φ.' })
-            const positioningSelect = el('select', 'cp-input-select')
-            positioningSelect.appendChild(createSelectOptions([
-                { value: 'coordinates', label: 'Coordinates (XYZ)' },
-                { value: 'network', label: 'Network' },
-                { value: 'cylindrical', label: 'Cylindrical (r,θ,z)' },
-                { value: 'spherical', label: 'Spherical (ρ,θ,φ)' },
-            ], layer.layerPositioning || 'coordinates'))
-            positioningSelect.addEventListener('change', () => {
-                setRuleLayers(getRuleLayers().map((entry) =>
-                    entry.id === layer.id ? { ...entry, layerPositioning: positioningSelect.value } : entry
-                ))
-                commitRuleBlocks()
-            })
-            positioningRow.append(positioningLabel, positioningSelect)
-            metaBody.appendChild(positioningRow)
+        let settingsCollapsed = false
+        const setCollapseState = (collapsed) => {
+            settingsCollapsed = collapsed
+            card.classList.toggle('is-collapsed', collapsed)
+            collapseIcon.textContent = collapsed ? '▶' : '▼'
+        }
+        collapseBtn.addEventListener('click', () => setCollapseState(!settingsCollapsed))
 
-            // Audio Track Selector
-            const trackRow = el('label', 'cp-setting-row')
-            const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
-            const trackSelect = el('select', 'cp-input-select')
-            const currentTrack = layer.audioTrackId || 'full'
-            const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
-                value: id,
-                label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
+        tools.append(collapseBtn)
+        header.append(title, tools)
+
+        const body = el('div', 'cp-layer-settings-card-body')
+
+        // ── Source select ──
+        const sourceRow = el('label', 'cp-setting-row')
+        const sourceLabel = el('span', 'cp-setting-label', { text: 'Source', title: 'Spectrum = all CQT bins. Fundamentals = only detected pitch particles.' })
+        const sourceSelect = el('select', 'cp-input-select')
+        sourceSelect.appendChild(createSelectOptions([
+            { value: 'spectrum', label: 'Spectrum' },
+            { value: 'fundamentals', label: 'Fundamentals' },
+        ], layer.layerSource || 'spectrum'))
+        sourceSelect.addEventListener('change', () => {
+            const nextSource = sourceSelect.value
+            setRuleLayers(getRuleLayers().map((entry) => {
+                if (entry.id !== layer.id) return entry
+                const isFund = nextSource === 'fundamentals'
+                const compatCheck = (r) => {
+                    if (!r?.actions || r.actions.length === 0) return true
+                    const fundOnly = new Set(['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare', 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue', 'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux', 'componentOnset', 'componentCount', 'componentBinEnergy', 'fundamentalHz', 'fundamentalPitch', 'fundamentalNote', 'fundamentalNormHz'])
+                    return isFund ? true : !r.actions.some(a => fundOnly.has(a?.output) || fundOnly.has(a?.input) || (a?.expression && fundOnly.values().some(v => a.expression.includes(v))))
+                }
+                const active = (entry.rules || []).filter(compatCheck)
+                const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
+                return { ...entry, layerSource: nextSource, rules: active, _inactiveRules: inactive }
             }))
-            trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
-            trackSelect.addEventListener('change', () => {
-                const nextTrack = trackSelect.value
-                setRuleLayers(getRuleLayers().map((entry) =>
-                    entry.id === layer.id ? { ...entry, audioTrackId: nextTrack } : entry
-                ))
-            })
-            trackRow.append(trackLabel, trackSelect)
-            metaBody.appendChild(trackRow)
+            // Don't call renderLayerList() — param sync handles re-render via applyRowsFromParams()
+            commitRuleBlocks()
+        })
+        sourceRow.append(sourceLabel, sourceSelect)
+        body.appendChild(sourceRow)
+
+        // ── 3D Shape select ──
+        const shapeRow = el('label', 'cp-setting-row')
+        const shapeLabel = el('span', 'cp-setting-label', { text: 'Shape', title: 'What 3D geometry the layer produces.' })
+        const shapeSelect = el('select', 'cp-input-select')
+        shapeSelect.appendChild(createSelectOptions([
+            { value: 'particle', label: 'Particle' },
+            { value: 'line', label: 'Line' },
+            { value: 'curve', label: 'Curve' },
+        ], layer.layerShape || 'particle'))
+        shapeSelect.addEventListener('change', () => {
+            const nextShape = shapeSelect.value
+            setRuleLayers(getRuleLayers().map((entry) => {
+                if (entry.id !== layer.id) return entry
+                const shapeOutputs = { particle: new Set(['size', 'shapeType', 'particleCount']), line: new Set(['length', 'direction', 'thickness', 'lineCount']), curve: new Set(['length', 'thickness']) }
+                const compatCheck = (r) => {
+                    if (!r?.actions || r.actions.length === 0) return true
+                    return r.actions.some(a => (shapeOutputs[nextShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size', 'shapeType', 'particleCount', 'length', 'direction', 'thickness', 'lineCount'].includes(a?.output))
+                }
+                const active = (entry.rules || []).filter(compatCheck)
+                const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
+                return { ...entry, layerShape: nextShape, layerShapeType: (nextShape === 'line' || nextShape === 'curve') ? 'line' : 'particle', rules: active, _inactiveRules: inactive }
+            }))
+            commitRuleBlocks()
+        })
+        shapeRow.append(shapeLabel, shapeSelect)
+        body.appendChild(shapeRow)
+
+        // ── Positioning select ──
+        const positioningRow = el('label', 'cp-setting-row')
+        const positioningLabel = el('span', 'cp-setting-label', { text: 'Positioning', title: 'Coordinates = XYZ. Network = force graph. Cylindrical = r/θ/z. Spherical = ρ/θ/φ.' })
+        const positioningSelect = el('select', 'cp-input-select')
+        positioningSelect.appendChild(createSelectOptions([
+            { value: 'coordinates', label: 'Coordinates (XYZ)' },
+            { value: 'network', label: 'Network' },
+            { value: 'cylindrical', label: 'Cylindrical (r,θ,z)' },
+            { value: 'spherical', label: 'Spherical (ρ,θ,φ)' },
+        ], layer.layerPositioning || 'coordinates'))
+        positioningSelect.addEventListener('change', () => {
+            setRuleLayers(getRuleLayers().map((entry) =>
+                entry.id === layer.id ? { ...entry, layerPositioning: positioningSelect.value } : entry
+            ))
+            commitRuleBlocks()
+        })
+        positioningRow.append(positioningLabel, positioningSelect)
+        body.appendChild(positioningRow)
+
+        // ── Audio Track Selector ──
+        const trackRow = el('label', 'cp-setting-row')
+        const trackLabel = el('span', 'cp-setting-label', { text: 'Audio Track' })
+        const trackSelect = el('select', 'cp-input-select')
+        const currentTrack = layer.audioTrackId || 'full'
+        const trackOptions = AVAILABLE_AUDIO_TRACKS.map((id) => ({
+            value: id,
+            label: id === 'full' ? 'Full Mix' : id.charAt(0).toUpperCase() + id.slice(1),
+        }))
+        trackSelect.appendChild(createSelectOptions(trackOptions, currentTrack))
+        trackSelect.addEventListener('change', () => {
+            const nextTrack = trackSelect.value
+            setRuleLayers(getRuleLayers().map((entry) =>
+                entry.id === layer.id ? { ...entry, audioTrackId: nextTrack } : entry
+            ))
+        })
+        trackRow.append(trackLabel, trackSelect)
+        body.appendChild(trackRow)
+
+        // ── Curve Fitting toggle (Hungarian method) ──
+        const curveFitRow = el('div', 'cp-layer-settings-toggle-row')
+        const curveFitLabel = el('span', 'cp-layer-settings-toggle-label', {
+            text: 'Curve Fitting',
+            title: 'Use Hungarian algorithm to optimally assign particles to curve positions. Works with both Spectrum and Fundamentals sources.',
+        })
+        const curveFitToggle = el('input', 'cp-input-toggle', {
+            type: 'checkbox',
+            checked: layer.curveFitting === true ? 'checked' : undefined,
+        })
+        curveFitToggle.checked = layer.curveFitting === true
+        curveFitToggle.addEventListener('change', () => {
+            setRuleLayers(getRuleLayers().map((entry) =>
+                entry.id === layer.id ? { ...entry, curveFitting: curveFitToggle.checked } : entry
+            ))
+        })
+        curveFitRow.append(curveFitLabel, curveFitToggle)
+        body.appendChild(curveFitRow)
+
+        card.append(header, body)
+
+        // Insert settings card at the top of the rules body (above the wrapper/rule cards)
+        // Only insert if not already present (prevent duplication during param sync re-renders)
+        if (!rulesBody.querySelector('.cp-layer-settings-card')) {
+            rulesBody.insertBefore(card, rulesBody.firstChild)
         }
     }
 
@@ -986,8 +1013,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             actionSelect: null,
             duplicateBtn: null,
             removeBtn: null,
-            collapseBtn: null,
-            collapseIcon: null,
             titleEl: null,
             activePill: null,
             draggingPill: null,
@@ -1003,7 +1028,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
 
     function resetRowState(rowState) {
         rowState.enabled = false
-        rowState.collapsed = false
         rowState.conditionEnabled = false
         rowState.conditionOperator = 'always'
         rowState.conditionDetail = NONE_VAR
@@ -1182,9 +1206,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         if (!row?.card) return
         const activeSection = isSectionEnabled(row.definition.section)
         row.card.classList.toggle('is-disabled', !row.enabled || !activeSection)
-        row.card.classList.toggle('is-collapsed', !!row.collapsed)
         if (row.removeBtn) row.removeBtn.style.display = row.isDuplicate ? '' : 'none'
-        if (row.collapseIcon) row.collapseIcon.textContent = row.collapsed ? '▸' : '▾'
     }
 
     function updateRowTitle(rowState) {
@@ -1499,14 +1521,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         })
         applyIconOnlyButton(removeBtn, BUTTON_ICON_MAP.remove, removeDuplicateLabel)
         removeBtn.style.display = rowState.isDuplicate ? '' : 'none'
-        const collapseBtn = el('button', 'cp-btn cp-rule-card-collapse', {
-            type: 'button',
-            title: collapseRuleLabel,
-            'aria-label': collapseRuleLabel,
-        })
-        const collapseIcon = el('span', 'cp-btn-icon', { text: rowState.collapsed ? '▸' : '▾' })
-        collapseBtn.appendChild(collapseIcon)
-        headerTools.append(addConditionButton, clearTokensBtn, duplicateBtn, removeBtn, collapseBtn)
+        headerTools.append(addConditionButton, clearTokensBtn, duplicateBtn, removeBtn)
         const toggle = el('input', 'cp-input-toggle', { type: 'checkbox' })
         const title = el('div', 'cp-rule-card-title', { text: getRuleRowLabel(definition) })
         const outputDesc = el('div', 'cp-rule-output-desc', {
@@ -1922,8 +1937,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         rowState.card = card
         rowState.duplicateBtn = duplicateBtn
         rowState.removeBtn = removeBtn
-        rowState.collapseBtn = collapseBtn
-        rowState.collapseIcon = collapseIcon
         rowState.titleEl = title
         rowState.conditionRow = conditionRow
         rowState.tokenEditor = tokenEditor
@@ -1988,10 +2001,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             commitRuleBlocks()
         })
 
-        collapseBtn.addEventListener('click', () => {
-            rowState.collapsed = !rowState.collapsed
-            refreshRowCardState(rowState)
-        })
+
 
         toggle.addEventListener('change', () => {
             rowState.enabled = toggle.checked

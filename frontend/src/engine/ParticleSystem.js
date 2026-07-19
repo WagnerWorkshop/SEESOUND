@@ -275,6 +275,110 @@ void main() {
 }
 `
 
+// ── Hungarian Algorithm (Kuhn-Munkres) for Optimal Assignment ──────────────
+// Solves the assignment problem: given N workers and M jobs with a cost matrix,
+// finds the minimum-cost one-to-one matching. Used for curve-fitting particles
+// to optimal positions along a parametric curve.
+
+/**
+ * Hungarian algorithm for minimum-cost bipartite matching.
+ * @param {number[][]} costMatrix - N×M matrix where costMatrix[i][j] = cost of assigning worker i to job j
+ * @returns {{ assignment: number[], cost: number }} - assignment[i] = assigned job index, or -1 if unassigned
+ */
+function hungarianSolve(costMatrix) {
+    const n = costMatrix.length
+    if (n === 0) return { assignment: [], cost: 0 }
+    const m = Math.max(...costMatrix.map(row => row.length))
+    if (m === 0) return { assignment: new Array(n).fill(-1), cost: 0 }
+
+    // Pad to square (n × n) for standard Hungarian algorithm
+    const size = Math.max(n, m)
+    const costs = []
+    for (let i = 0; i < size; i++) {
+        const row = []
+        for (let j = 0; j < size; j++) {
+            if (i < n && j < m) {
+                row.push(costMatrix[i][j])
+            } else {
+                // High cost for dummy rows/cols — won't be selected unless forced
+                row.push(1e12)
+            }
+        }
+        costs.push(row)
+    }
+
+    // Step 1: Subtract row minima
+    const u = new Float64Array(size) // dual variables for rows
+    const v = new Float64Array(size) // dual variables for columns
+    const p = new Int32Array(size)   // matching: p[j] = row assigned to column j
+    const way = new Int32Array(size)
+
+    for (let i = 1; i <= size; i++) {
+        p[0] = i
+        let j0 = 0
+        const minv = new Float64Array(size).fill(Infinity)
+        const used = new Uint8Array(size)
+
+        let j1 = 0
+        do {
+            used[j0] = 1
+            const i0 = p[j0]
+            let delta = Infinity
+
+            for (let j = 1; j <= size; j++) {
+                if (!used[j]) {
+                    const cur = costs[i0 - 1][j - 1] - u[i0 - 1] - v[j - 1]
+                    if (cur < minv[j]) {
+                        minv[j] = cur
+                        way[j] = j0
+                    }
+                    if (minv[j] < delta) {
+                        delta = minv[j]
+                        j1 = j
+                    }
+                }
+            }
+
+            for (let j = 0; j <= size; j++) {
+                if (used[j]) {
+                    u[p[j] - 1] += delta
+                    v[j] -= delta
+                } else {
+                    minv[j] -= delta
+                }
+            }
+            j0 = j1
+        } while (p[j0] !== 0)
+
+        // Augmenting
+        do {
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+        } while (j0 !== 0)
+    }
+
+    // Build assignment: for each row i, find the column j where p[j] = i+1
+    const assignment = new Array(n).fill(-1)
+    for (let j = 0; j < size; j++) {
+        const row = p[j] - 1
+        if (row >= 0 && row < n && j < m) {
+            assignment[row] = j
+        }
+    }
+
+    // Compute total cost
+    let totalCost = 0
+    for (let i = 0; i < n; i++) {
+        const j = assignment[i]
+        if (j >= 0 && j < m) {
+            totalCost += costMatrix[i][j]
+        }
+    }
+
+    return { assignment, cost: totalCost }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class ParticleSystem {
@@ -377,6 +481,10 @@ export class ParticleSystem {
         this._lastHearingPhon = -1
         /** @type {number} Hearing blend amount (0..1), cached from params each frame */
         this._hearingAmount = 0
+
+        // ── Curve fitting (Hungarian method) ──
+        /** @type {boolean} Whether to optimally assign particles to curve positions */
+        this._curveFittingEnabled = false
     }
 
     _allocateBuffers(maxParticles) {
@@ -2092,6 +2200,11 @@ export class ParticleSystem {
             this._lineGeo.setDrawRange(0, this._lineVisibleCount * 2)
         }
 
+        // ── Curve fitting via Hungarian method ──
+        if (this._curveFittingEnabled && this._visible_count > 0) {
+            this._applyCurveFitting(hw, hh, this._visible_count)
+        }
+
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visible_count > 0
         if (livingRulesActive) {
             // Compute layer centroid from all fundamental isFundamental=1 particles
@@ -2182,5 +2295,88 @@ export class ParticleSystem {
         this._mat.dispose()
         this._lineMesh.geometry.dispose()
         this._lineMat.dispose()
+    }
+
+    /**
+     * Enable or disable curve fitting via Hungarian algorithm.
+     * When enabled, particles are optimally assigned to positions along a
+     * parametric spiral curve after each spawn frame.
+     * @param {boolean} enabled
+     */
+    setCurveFitting(enabled) {
+        this._curveFittingEnabled = !!enabled
+    }
+
+    /**
+     * Apply Hungarian curve fitting to the most recently spawned particles.
+     * Uses a sampled subset (max ~200 particles) and a frequency-preserving
+     * greedy assignment (Hungarian on small sets) to avoid OOM.
+     * @param {number} hw - Half canvas width in units
+     * @param {number} hh - Half canvas height in units
+     * @param {number} particleCount - Number of active particles to fit
+     */
+    _applyCurveFitting(hw, hh, particleCount) {
+        if (!this._curveFittingEnabled || particleCount <= 1) return
+
+        const MAX_FIT = 200
+        const total = Math.min(particleCount, this._visible_count || particleCount, this._N)
+        if (total <= 1) return
+
+        // Sample at most MAX_FIT particles evenly distributed
+        const step = Math.max(1, Math.floor(total / MAX_FIT))
+        const particles = []
+        for (let i = 0; i < total; i += step) {
+            const px = this._pos[i * 3]
+            const py = this._pos[i * 3 + 1]
+            const pz = this._pos[i * 3 + 2]
+            particles.push({ index: i, x: px, y: py, z: pz })
+            if (particles.length >= MAX_FIT) break
+        }
+        const n = particles.length
+        if (n <= 1) return
+
+        // Sort by Y (frequency) for the curve parameterization
+        particles.sort((a, b) => a.y - b.y)
+
+        // Generate target positions: frequency-ordered spiral curve
+        const targets = []
+        const spiralTurns = 2.5
+        const maxRadius = Math.min(hw, hh) * 0.7
+        for (let i = 0; i < n; i++) {
+            const t = n > 1 ? i / (n - 1) : 0.5
+            const ty = (t - 0.5) * 2 * hh
+            const angle = t * Math.PI * 2 * spiralTurns
+            const radius = maxRadius * Math.sin(t * Math.PI)
+            targets.push({ x: Math.cos(angle) * radius, y: ty, z: Math.sin(angle) * radius })
+        }
+
+        // Build cost matrix (n×n, n ≤ 200 → max 40k elements, Hungarian O(n³) ≈ 8M ops — fine)
+        const costMatrix = []
+        for (let i = 0; i < n; i++) {
+            const row = new Float64Array(n)
+            const p = particles[i]
+            for (let j = 0; j < n; j++) {
+                const t = targets[j]
+                const dx = p.x - t.x, dy = p.y - t.y, dz = p.z - t.z
+                row[j] = Math.sqrt(dx * dx + dy * dy + dz * dz)
+            }
+            costMatrix.push(Array.from(row))
+        }
+
+        const { assignment } = hungarianSolve(costMatrix)
+
+        // Apply new positions
+        for (let i = 0; i < n; i++) {
+            const targetIdx = assignment[i]
+            if (targetIdx < 0 || targetIdx >= n) continue
+            const p = particles[i]
+            const t = targets[targetIdx]
+            this._pos[p.index * 3] = t.x
+            this._pos[p.index * 3 + 1] = t.y
+            this._pos[p.index * 3 + 2] = t.z
+        }
+
+        // Mark all affected positions as dirty
+        this._aPos.needsUpdate = true
     }
 }

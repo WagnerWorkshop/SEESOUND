@@ -109,7 +109,7 @@ export function initAudioPlayer(container) {
         'aria-label': getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'),
         'title': getAudioPlayerText('collapsePlayerTitle', 'Collapse player'),
     })
-    collapseBtn.textContent = '«'
+    collapseBtn.textContent = '▼'
 
     const appRoot = document.getElementById('app')
 
@@ -119,15 +119,13 @@ export function initAudioPlayer(container) {
     }
 
     function setCollapseButtonVisual(isCollapsed) {
-        collapseBtn.classList.toggle('audio-player__collapse-btn--icon', isCollapsed)
-        if (isCollapsed) {
-            applyIcon(collapseBtn, audioIcon, getAudioPlayerText('expandPlayerAria', 'Expand player'))
-            collapseBtn.title = getAudioPlayerText('expandPlayerTitle', 'Expand player')
-        } else {
-            collapseBtn.textContent = '«'
-            collapseBtn.setAttribute('aria-label', getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'))
-            collapseBtn.title = getAudioPlayerText('collapsePlayerTitle', 'Collapse player')
-        }
+        collapseBtn.textContent = isCollapsed ? '▶' : '▼'
+        collapseBtn.setAttribute('aria-label', isCollapsed
+            ? getAudioPlayerText('expandPlayerAria', 'Expand player')
+            : getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'))
+        collapseBtn.title = isCollapsed
+            ? getAudioPlayerText('expandPlayerTitle', 'Expand player')
+            : getAudioPlayerText('collapsePlayerTitle', 'Collapse player')
         if (appRoot) appRoot.classList.toggle('audio-player-collapsed', isCollapsed)
     }
 

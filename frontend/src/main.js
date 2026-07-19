@@ -1223,8 +1223,19 @@ animate()
     const _buildCurrentProjectPayload = async () => {
         const snapshot = getSnapshot()
         const title = _currentPresetTitle()
+        // Include preset thumbnail if stored in localStorage for this preset
+        const presetSnap = { ...snapshot }
+        if (!presetSnap.presetThumbnail && title) {
+            try {
+                const { loadPreset } = await import('./engine/ParamStore.js')
+                const data = await loadPreset(title)
+                if (data?.params?.presetThumbnail) {
+                    presetSnap.presetThumbnail = data.params.presetThumbnail
+                }
+            } catch { /* no-op */ }
+        }
         return buildProjectPayload({
-            params: snapshot,
+            params: presetSnap,
             presetName: title,
             presetLibrary: [],
             projectName: _nameWithoutExt(projectFileName || _defaultProjectName()),

@@ -181,6 +181,8 @@ export class LayerManager {
                 const isModifier = layer.data?.layerType === 'modifier'
                 if (pass === 'generator' && isModifier) continue
                 if (pass === 'modifier' && !isModifier) continue
+                // Pass curve-fitting setting to the particle system
+                layer.ps.setCurveFitting(layer.data?.curveFitting === true)
                 layer.ps.update(ae, params, canvasW, canvasH)
                 if (layer.ps._compiledRules?.cameraRuleCount > 0) hasCamRules = true
             }
