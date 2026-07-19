@@ -4,6 +4,7 @@ import { ParticleArchive } from './ParticleArchive.js'
 import { createIso226CompensationLut, sampleIso226CompensationDb } from './audio/Iso226Lut.js'
 import { ComponentTracker } from './audio/ComponentTracker.js'
 import { HarmonicPercussiveSplitter } from './audio/HarmonicPercussiveSplitter.js'
+import { SHAPE_METADATA } from './audio/AcousticShapeDictionary.js'
 
 // ── Frequency axis constants (shared by both layout modes) ────────────────────
 const FREQ_MIN_HZ = 16
@@ -1762,6 +1763,15 @@ export class ParticleSystem {
                 }
                 entityInputs.shapeDominant = entity.dominantShape?.replace('shape', '') || 'Sine'
                 entityInputs.shapeDominantValue = entity.dominantShapeValue || 0
+                // Shape-derived component timbre (from SHAPE_METADATA fingerprint)
+                const shapeMeta = SHAPE_METADATA[entity.dominantShape] || {}
+                entityInputs.componentCentroid = shapeMeta.typicalCentroid || 0
+                entityInputs.componentFlatness = shapeMeta.typicalFlatness || 0
+                entityInputs.componentFlux = entity.volume || 0
+                entityInputs.componentOnset = entity.dominantShapeValue || 0
+                entityInputs.componentCount = shapeEntities.length
+                entityInputs.componentBinEnergy = entity.volume || 0
+                entityInputs.componentId = entity.dominantShapeValue > 0 ? 1 : 0
 
                 const entityParticle = {
                     x: 0, y: 0, z: 0,
