@@ -212,7 +212,26 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         if (activeOwner.type === 'background') return getRuleGlobals().background
         if (activeOwner.type === 'camera') return getRuleGlobals().camera
         const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
-        return Array.isArray(layer?.rules) ? layer.rules : []
+        if (!layer) return []
+        // Merge _inactiveRules back if they've become compatible with current source/shape
+        const fundOnly = new Set(['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass','shapeDominant','shapeDominantValue','componentId','componentCentroid','componentFlatness','componentFlux','componentOnset','componentCount','componentBinEnergy','fundamentalHz','fundamentalPitch','fundamentalNote','fundamentalNormHz'])
+        const shapeOutputs = { particle: new Set(['size','shapeType','particleCount']), line: new Set(['length','direction','thickness','lineCount']), curve: new Set(['length','thickness']) }
+        const isFund = (layer.layerSource || 'spectrum') === 'fundamentals'
+        const curShape = layer.layerShape || 'particle'
+        const compatCheck = (r) => {
+            if (!r?.actions || r.actions.length === 0) return true
+            const sourceCompat = isFund ? true : !r.actions.some(a => fundOnly.has(a?.output) || (a?.input && fundOnly.has(a.input)) || (a?.expression && [...fundOnly].some(v => a.expression.includes(v))))
+            const shapeCompat = r.actions.some(a => (shapeOutputs[curShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size','shapeType','particleCount','length','direction','thickness','lineCount'].includes(a?.output))
+            return sourceCompat && shapeCompat
+        }
+        const inactive = layer._inactiveRules || []
+        const reactivated = inactive.filter(compatCheck)
+        const stillInactive = inactive.filter(r => !compatCheck(r))
+        if (reactivated.length > 0) {
+            layer._inactiveRules = stillInactive
+            layer.rules = [...(layer.rules || []), ...reactivated]
+        }
+        return Array.isArray(layer.rules) ? layer.rules : []
     }
 
     function setActiveRules(nextRules) {
@@ -358,13 +377,10 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
 
             // Badge — hidden for special layers
             const typeBadge = el('span', 'cp-styles-layer-badge')
-            let badgeText = entry.layerShapeType || 'particle'
-            if (entry.layerShapeType === 'cloud' && entry.spacingMode === 'network') {
-                badgeText = 'cloud·net'
-            } else if (entry.layerShapeType === 'cloud') {
-                badgeText = `cloud·${entry.cloudShape || 'cyl'}`
-            }
-            typeBadge.textContent = badgeText
+            const src = entry.layerSource || 'spectrum'
+            const shp = entry.layerShape || 'particle'
+            const pos = entry.layerPositioning || 'coordinates'
+            typeBadge.textContent = `${src}·${shp}·${pos}`
             if (isSpecial) typeBadge.style.display = 'none'
 
             // Move Up / Down — hidden for special
@@ -574,7 +590,16 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                         }
                         renderLayerList()
                     })
-                    menu.append(renameItem, duplicateItem, deleteItem)
+                    menu.append(moveUpItem, moveDownItem, editItem, renameItem, duplicateItem, deleteItem)
+
+                    // New Layer item at the bottom
+                    const separator = el('div', 'cp-layer-context-separator')
+                    const newLayerItem = el('button', 'cp-layer-context-item', { type: 'button', text: 'New Layer' })
+                    newLayerItem.addEventListener('click', () => {
+                        menu.remove()
+                        openLayerCreationModal()
+                    })
+                    menu.append(separator, newLayerItem)
                     document.body.appendChild(menu)
                     const closeMenu = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', closeMenu) } }
                     setTimeout(() => document.addEventListener('pointerdown', closeMenu), 0)
@@ -621,9 +646,21 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 { value: 'fundamentals', label: 'Fundamentals' },
             ], layer.layerSource || 'spectrum'))
             sourceSelect.addEventListener('change', () => {
-                setRuleLayers(getRuleLayers().map((entry) =>
-                    entry.id === layer.id ? { ...entry, layerSource: sourceSelect.value } : entry
-                ))
+                const nextSource = sourceSelect.value
+                setRuleLayers(getRuleLayers().map((entry) => {
+                    if (entry.id !== layer.id) return entry
+                    // Preserve incompatible rules in _inactiveRules when switching source
+                    const isFund = nextSource === 'fundamentals'
+                    const compatCheck = (r) => {
+                        if (!r?.actions || r.actions.length === 0) return true
+                        const fundOnly = new Set(['shapeSine','shapeTriangle','shapeSawtooth','shapeSquare','shapeNoise','shapePinkNoise','shapeTransient','shapePad','shapeBuzzy','shapeBass','shapeDominant','shapeDominantValue','componentId','componentCentroid','componentFlatness','componentFlux','componentOnset','componentCount','componentBinEnergy','fundamentalHz','fundamentalPitch','fundamentalNote','fundamentalNormHz'])
+                        return isFund ? true : !r.actions.some(a => fundOnly.has(a?.output) || fundOnly.has(a?.input) || (a?.expression && fundOnly.values().some(v => a.expression.includes(v))))
+                    }
+                    const active = (entry.rules || []).filter(compatCheck)
+                    const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
+                    return { ...entry, layerSource: nextSource, rules: active, _inactiveRules: inactive }
+                }))
+                renderLayerList()
                 applyRowsFromRuleBlocks(getActiveRules())
                 updateOwnerSectionVisibility()
                 commitRuleBlocks()
@@ -641,9 +678,20 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 { value: 'curve', label: 'Curve' },
             ], layer.layerShape || 'particle'))
             shapeSelect.addEventListener('change', () => {
-                setRuleLayers(getRuleLayers().map((entry) =>
-                    entry.id === layer.id ? { ...entry, layerShape: shapeSelect.value, layerShapeType: (shapeSelect.value === 'line' || shapeSelect.value === 'curve') ? 'line' : 'particle' } : entry
-                ))
+                const nextShape = shapeSelect.value
+                setRuleLayers(getRuleLayers().map((entry) => {
+                    if (entry.id !== layer.id) return entry
+                    // Preserve incompatible rules when switching 3D shape
+                    const shapeOutputs = { particle: new Set(['size','shapeType','particleCount']), line: new Set(['length','direction','thickness','lineCount']), curve: new Set(['length','thickness']) }
+                    const compatCheck = (r) => {
+                        if (!r?.actions || r.actions.length === 0) return true
+                        return r.actions.some(a => (shapeOutputs[nextShape] || new Set()).has(a?.output)) || !r.actions.some(a => ['size','shapeType','particleCount','length','direction','thickness','lineCount'].includes(a?.output))
+                    }
+                    const active = (entry.rules || []).filter(compatCheck)
+                    const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
+                    return { ...entry, layerShape: nextShape, layerShapeType: (nextShape === 'line' || nextShape === 'curve') ? 'line' : 'particle', rules: active, _inactiveRules: inactive }
+                }))
+                renderLayerList()
                 applyRowsFromRuleBlocks(getActiveRules())
                 updateOwnerSectionVisibility()
                 commitRuleBlocks()

@@ -76,6 +76,7 @@ function _coerceRuleLayer(raw, index) {
         return { ...def, id: defId, name: defName, expression: defExpr }
     }).filter(Boolean) : []
     const ruleSanitization = sanitizeRuleBlocks(Array.isArray(source.rules) ? source.rules : [])
+    const inactiveRules = Array.isArray(source._inactiveRules) ? source._inactiveRules : []
     return {
         id,
         name,
@@ -88,6 +89,7 @@ function _coerceRuleLayer(raw, index) {
         layerPositioning,
         definitions,
         rules: ruleSanitization.ruleBlocks,
+        _inactiveRules: inactiveRules,
     }
 }
 
