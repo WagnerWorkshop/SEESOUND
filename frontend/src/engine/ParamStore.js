@@ -55,15 +55,18 @@ function _coerceRuleLayer(raw, index) {
     const enabled = source.enabled !== false
     const order = Number.isFinite(source.order) ? Number(source.order) : index
     const definitionsMode = source.definitionsMode === 'special' ? 'special' : 'all'
-    const layerShapeType = (source.layerShapeType === 'cloud' || source.layerShapeType === 'line' || source.layerShapeType === 'shapeEntity' || source.layerShapeType === 'camera' || source.layerShapeType === 'background')
-        ? source.layerShapeType
-        : 'particle'
-    const spacingMode = layerShapeType === 'cloud'
-        ? (source.spacingMode === 'network' ? 'network' : 'coordinates')
+    // Source: 'spectrum' = all CQT bins, 'fundamentals' = only detected pitch particles
+    const layerSource = (source.layerSource === 'fundamentals') ? 'fundamentals' : 'spectrum'
+    // Shape: particle, line, or curve
+    const layerShape = (source.layerShape === 'line' || source.layerShape === 'curve') ? source.layerShape : 'particle'
+    // Positioning: coordinates, network, cylindrical, spherical
+    const layerPositioning = (source.layerPositioning === 'network' || source.layerPositioning === 'cylindrical' || source.layerPositioning === 'spherical')
+        ? source.layerPositioning
         : 'coordinates'
-    const cloudShape = layerShapeType === 'cloud'
-        ? (source.cloudShape === 'spherical' || source.cloudShape === 'random' ? source.cloudShape : 'cylindrical')
-        : 'cylindrical'
+    // Legacy migration for camera/background
+    const layerShapeType = (source.layerShapeType === 'camera' || source.layerShapeType === 'background')
+        ? source.layerShapeType
+        : layerShape
     const definitions = Array.isArray(source.definitions) ? source.definitions.map((def, defIndex) => {
         if (typeof def === 'string') return { id: `def-${index + 1}-${defIndex + 1}`, name: def, expression: '' }
         if (!def || typeof def !== 'object') return null
@@ -79,9 +82,10 @@ function _coerceRuleLayer(raw, index) {
         enabled,
         order,
         definitionsMode,
+        layerSource,
+        layerShape,
         layerShapeType,
-        spacingMode,
-        cloudShape,
+        layerPositioning,
         definitions,
         rules: ruleSanitization.ruleBlocks,
     }

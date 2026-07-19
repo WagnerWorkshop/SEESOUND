@@ -608,9 +608,67 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
 
             const titleRow = el('div', 'cp-section-title-row')
             const titleEl = el('h3', 'cp-section-title', { text: getLayerDisplayName(layer) })
-            const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShapeType || 'particle' })
+            const typeBadge = el('span', 'cp-styles-layer-badge', { text: layer.layerShape || 'particle' })
             titleRow.append(titleEl, typeBadge)
             metaBody.appendChild(titleRow)
+
+            // Source select
+            const sourceRow = el('label', 'cp-setting-row')
+            const sourceLabel = el('span', 'cp-setting-label', { text: 'Source', title: 'Spectrum = all CQT bins. Fundamentals = only detected pitch particles.' })
+            const sourceSelect = el('select', 'cp-input-select')
+            sourceSelect.appendChild(createSelectOptions([
+                { value: 'spectrum', label: 'Spectrum' },
+                { value: 'fundamentals', label: 'Fundamentals' },
+            ], layer.layerSource || 'spectrum'))
+            sourceSelect.addEventListener('change', () => {
+                setRuleLayers(getRuleLayers().map((entry) =>
+                    entry.id === layer.id ? { ...entry, layerSource: sourceSelect.value } : entry
+                ))
+                applyRowsFromRuleBlocks(getActiveRules())
+                updateOwnerSectionVisibility()
+                commitRuleBlocks()
+            })
+            sourceRow.append(sourceLabel, sourceSelect)
+            metaBody.appendChild(sourceRow)
+
+            // 3D Shape select
+            const shapeRow = el('label', 'cp-setting-row')
+            const shapeLabel = el('span', 'cp-setting-label', { text: 'Shape', title: 'What 3D geometry the layer produces.' })
+            const shapeSelect = el('select', 'cp-input-select')
+            shapeSelect.appendChild(createSelectOptions([
+                { value: 'particle', label: 'Particle' },
+                { value: 'line', label: 'Line' },
+                { value: 'curve', label: 'Curve' },
+            ], layer.layerShape || 'particle'))
+            shapeSelect.addEventListener('change', () => {
+                setRuleLayers(getRuleLayers().map((entry) =>
+                    entry.id === layer.id ? { ...entry, layerShape: shapeSelect.value, layerShapeType: (shapeSelect.value === 'line' || shapeSelect.value === 'curve') ? 'line' : 'particle' } : entry
+                ))
+                applyRowsFromRuleBlocks(getActiveRules())
+                updateOwnerSectionVisibility()
+                commitRuleBlocks()
+            })
+            shapeRow.append(shapeLabel, shapeSelect)
+            metaBody.appendChild(shapeRow)
+
+            // Positioning select
+            const positioningRow = el('label', 'cp-setting-row')
+            const positioningLabel = el('span', 'cp-setting-label', { text: 'Positioning', title: 'Coordinates = XYZ. Network = force graph. Cylindrical = r/θ/z. Spherical = ρ/θ/φ.' })
+            const positioningSelect = el('select', 'cp-input-select')
+            positioningSelect.appendChild(createSelectOptions([
+                { value: 'coordinates', label: 'Coordinates (XYZ)' },
+                { value: 'network', label: 'Network' },
+                { value: 'cylindrical', label: 'Cylindrical (r,θ,z)' },
+                { value: 'spherical', label: 'Spherical (ρ,θ,φ)' },
+            ], layer.layerPositioning || 'coordinates'))
+            positioningSelect.addEventListener('change', () => {
+                setRuleLayers(getRuleLayers().map((entry) =>
+                    entry.id === layer.id ? { ...entry, layerPositioning: positioningSelect.value } : entry
+                ))
+                commitRuleBlocks()
+            })
+            positioningRow.append(positioningLabel, positioningSelect)
+            metaBody.appendChild(positioningRow)
 
             // Audio Track Selector
             const trackRow = el('label', 'cp-setting-row')
@@ -668,43 +726,38 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         })
         nameRow.append(nameLabel, nameInput)
 
-        // Layer type (shape type)
-        const typeRow = el('label', 'cp-setting-row')
-        const typeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.shapeType || 'Type' })
-        const typeSelect = el('select', 'cp-input-select')
-        typeSelect.appendChild(createSelectOptions([
-            { value: 'particle', label: UI_TEXT.rules?.shapeParticle || 'Particle' },
-            { value: 'cloud', label: UI_TEXT.rules?.shapeCloud || 'Cloud' },
-            { value: 'line', label: UI_TEXT.rules?.shapeLine || 'Line' },
+        // Source
+        const sourceRow = el('label', 'cp-setting-row')
+        const sourceLabel = el('span', 'cp-setting-label', { text: 'Source', title: 'Spectrum = all CQT bins. Fundamentals = only detected pitch particles.' })
+        const sourceSelect = el('select', 'cp-input-select')
+        sourceSelect.appendChild(createSelectOptions([
+            { value: 'spectrum', label: 'Spectrum' },
+            { value: 'fundamentals', label: 'Fundamentals' },
+        ], 'spectrum'))
+        sourceRow.append(sourceLabel, sourceSelect)
+
+        // 3D Shape
+        const shapeRow = el('label', 'cp-setting-row')
+        const shapeLabel = el('span', 'cp-setting-label', { text: 'Shape', title: 'What 3D geometry the layer produces.' })
+        const shapeSelect = el('select', 'cp-input-select')
+        shapeSelect.appendChild(createSelectOptions([
+            { value: 'particle', label: 'Particle' },
+            { value: 'line', label: 'Line' },
+            { value: 'curve', label: 'Curve' },
         ], 'particle'))
-        typeRow.append(typeLabel, typeSelect)
+        shapeRow.append(shapeLabel, shapeSelect)
 
-        // Spacing mode (cloud only)
-        const spacingRow = el('label', 'cp-setting-row')
-        spacingRow.style.display = 'none'
-        const spacingLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.spacingMode || 'Spacing' })
-        const spacingSelect = el('select', 'cp-input-select')
-        spacingSelect.appendChild(createSelectOptions([
-            { value: 'coordinates', label: UI_TEXT.rules?.spacingCoordinates || 'Coordinates' },
-            { value: 'network', label: UI_TEXT.rules?.spacingNetwork || 'Network' },
+        // Positioning
+        const positioningRow = el('label', 'cp-setting-row')
+        const positioningLabel = el('span', 'cp-setting-label', { text: 'Positioning', title: 'Coordinates = XYZ. Network = force graph. Cylindrical = r/θ/z. Spherical = ρ/θ/φ.' })
+        const positioningSelect = el('select', 'cp-input-select')
+        positioningSelect.appendChild(createSelectOptions([
+            { value: 'coordinates', label: 'Coordinates (XYZ)' },
+            { value: 'network', label: 'Network' },
+            { value: 'cylindrical', label: 'Cylindrical (r,θ,z)' },
+            { value: 'spherical', label: 'Spherical (ρ,θ,φ)' },
         ], 'coordinates'))
-        spacingRow.append(spacingLabel, spacingSelect)
-        typeSelect.addEventListener('change', () => {
-            spacingRow.style.display = typeSelect.value === 'cloud' ? '' : 'none'
-            cloudShapeRow.style.display = typeSelect.value === 'cloud' ? '' : 'none'
-        })
-
-        // Cloud shape (cloud only)
-        const cloudShapeRow = el('label', 'cp-setting-row')
-        cloudShapeRow.style.display = 'none'
-        const cloudShapeLabel = el('span', 'cp-setting-label', { text: UI_TEXT.rules?.cloudShape || 'Cloud Shape' })
-        const cloudShapeSelect = el('select', 'cp-input-select')
-        cloudShapeSelect.appendChild(createSelectOptions([
-            { value: 'cylindrical', label: UI_TEXT.rules?.cloudCylindrical || 'Cylindrical' },
-            { value: 'spherical', label: UI_TEXT.rules?.cloudSpherical || 'Spherical' },
-            { value: 'random', label: UI_TEXT.rules?.cloudRandom || 'Random 3D' },
-        ], 'cylindrical'))
-        cloudShapeRow.append(cloudShapeLabel, cloudShapeSelect)
+        positioningRow.append(positioningLabel, positioningSelect)
 
         const actions = el('div', 'cp-button-grid')
         const cancelBtn = el('button', 'cp-btn cp-btn-danger', { type: 'button', text: UI_TEXT.file?.projectNameCancel || 'Cancel' })
@@ -714,20 +767,17 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         createBtn.addEventListener('click', () => {
             const rawName = String(nameInput.value || '').trim()
             const nextName = rawName || `Layer ${getRuleLayers().length + 1}`
-            const nextType = typeSelect.value || 'particle'
-            const nextSpacing = spacingSelect.value || 'coordinates'
-            const nextCloudShape = cloudShapeSelect.value || 'cylindrical'
 
             const nextEntities = [...getRuleLayers(), {
                 id: `layer-${Date.now()}`,
                 name: nextName,
                 enabled: true,
                 order: getRuleLayers().length,
-                layerShapeType: nextType,
+                layerSource: sourceSelect.value || 'spectrum',
+                layerShape: shapeSelect.value || 'particle',
+                layerPositioning: positioningSelect.value || 'coordinates',
+                layerShapeType: (shapeSelect.value === 'line' || shapeSelect.value === 'curve') ? 'line' : 'particle',
                 layerType: 'generator',
-                spacingMode: nextType === 'cloud' ? nextSpacing : 'coordinates',
-                cloudShape: nextType === 'cloud' ? nextCloudShape : 'cylindrical',
-                audioTrackId: 'full',
                 rules: [],
             }]
             setRuleLayers(nextEntities)
@@ -737,7 +787,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         actions.append(cancelBtn, createBtn)
 
         const body = el('div', 'cp-layer-creation-body')
-        body.append(nameRow, typeRow, spacingRow, cloudShapeRow, actions)
+        body.append(nameRow, sourceRow, shapeRow, positioningRow, actions)
 
         const header = el('div', 'cp-layer-creation-header')
         header.append(title, closeBtn)
