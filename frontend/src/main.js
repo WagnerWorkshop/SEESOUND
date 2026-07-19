@@ -80,6 +80,8 @@ renderer.autoClear = true
 const composer = new EffectComposer(renderer)
 
 const scene = new THREE.Scene()
+const bgImageLoader = new THREE.TextureLoader()
+let bgImageTexture = null
 const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
 let originSignEnabled = true
@@ -1026,6 +1028,8 @@ function animate() {
 
     const bg = ps.getBackgroundColor()
     renderer.setClearColor(bg, 1)
+    // Background image (if set) replaces the solid background in the 2nd pass
+    scene.background = bgImageTexture || bg
     if (ps?.setFogState) {
         const postEnabled = Number(params.postProcessEnabled ?? 0) >= 0.5
         const fogEnabled = Number(params.fogEnabled ?? 1) >= 0.5
@@ -1764,6 +1768,24 @@ subscribe((_, key) => {
 window.addEventListener('seesound:view-reset-camera', resetViewCamera)
 window.addEventListener('seesound:view-fit-camera', fitViewToCanvas)
 window.addEventListener('seesound:view-clean-canvas', clearSceneElements)
+
+// ── Background image upload ─────────────────────────────────────────────
+window.addEventListener('seesound:set-background-image', (e) => {
+    const file = e?.detail?.file
+    if (!(file instanceof File)) return
+    const url = URL.createObjectURL(file)
+    bgImageLoader.load(url, (texture) => {
+        bgImageTexture = texture
+        bgImageTexture.minFilter = THREE.LinearFilter
+        bgImageTexture.magFilter = THREE.LinearFilter
+        scene.background = bgImageTexture
+        URL.revokeObjectURL(url)  // free blob after texture is loaded
+    })
+})
+window.addEventListener('seesound:clear-background-image', () => {
+    bgImageTexture = null
+    scene.background = null
+})
 
 // ── 7c  Control Panel (right panel) ──────────────────────────────────────────
 initControlPanel(document.getElementById('control-panel'))

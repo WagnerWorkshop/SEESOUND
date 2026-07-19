@@ -239,30 +239,63 @@ export class PitchFirstClassifier {
         const entities = []
         const allPeaks = []
 
-        // ── Step 3: Find candidate peaks (lowest frequency first) ──
-        const candidatePeaks = this._findPeaksAscending(this._residualBuf, binCount)
+        const usedFundamentals = []  // track detected f0 for harmonic rejection
 
-        // ── Step 4: Look-Fit-Subtract loop ──
-        for (let pi = 0; pi < candidatePeaks.length; pi++) {
+        // ── Step 3-4: Greedy look-fit-subtract with re-scan ──
+        for (let pass = 0; pass < MAX_FUNDAMENTALS; pass++) {
             if (entities.length >= MAX_FUNDAMENTALS) break
 
-            const peak = candidatePeaks[pi]
-            const f0 = cqtBinToHz(peak.refinedBin, binCount, 40, 16000)
-            if (f0 < 30 || f0 > 8000) continue
+            // Re-scan the residual on each pass — after subtracting one
+            // fundamental, new peaks become visible
+            const candidatePeaks = this._findPeaksAscending(this._residualBuf, binCount)
+            if (candidatePeaks.length === 0) break
 
-            // ── LOOK: extract harmonic vector from residual ──
+            // Find the strongest remaining peak NOT already detected
+            let bestPeak = null
+            for (const peak of candidatePeaks) {
+                const f0 = cqtBinToHz(peak.refinedBin, binCount, 40, 16000)
+                if (f0 < 30 || f0 > 8000) continue
+
+                // HARMONIC REJECTION: skip if within ±8% of an already-detected
+                // fundamental or its harmonics (this peak is likely a ghost)
+                let isHarmonic = false
+                for (const uf of usedFundamentals) {
+                    const ratio = f0 / uf
+                    // Within 8% of integer ratio → this is a harmonic of uf
+                    if (ratio >= 0.92 && ratio < 1.08) { isHarmonic = true; break }
+                    if (ratio >= 1.92 && ratio < 2.08) { isHarmonic = true; break }
+                    if (ratio >= 2.92 && ratio < 3.08) { isHarmonic = true; break }
+                    if (ratio >= 0.47 && ratio < 0.53) { isHarmonic = true; break }  // sub-octave
+                }
+                if (isHarmonic) continue
+
+                // Pick the strongest VALID peak
+                if (!bestPeak || peak.magnitude > bestPeak.magnitude) {
+                    bestPeak = peak
+                }
+            }
+            if (!bestPeak) break
+
+            const peak = bestPeak
+            const f0 = cqtBinToHz(peak.refinedBin, binCount, 40, 16000)
+
+            // ── LOOK: extract harmonic vector from original linMags (unsubtracted)
+            // so the NNLS gets the full signal, not the residual
             const V = new Float64Array(MAX_HARMONICS)
             let sv = 0
+            const harmonicBins = []
             for (let k = 1; k <= MAX_HARMONICS; k++) {
                 const hz = f0 * k; if (hz > 20000) break
                 const bi = Math.round(hzToCqtBin(hz, binCount, 40, 16000))
                 if (bi >= 0 && bi < binCount) {
-                    V[k - 1] = this._residualBuf[bi]
+                    V[k - 1] = linMags[bi]  // use ORIGINAL, not residual
                     sv += V[k - 1]
+                    harmonicBins.push(bi)
                 }
             }
             if (sv < EPS) continue
 
+            usedFundamentals.push(f0)
             allPeaks.push({ binIdx: peak.binIdx, refinedBin: peak.refinedBin, freqHz: f0, magnitude: peak.magnitude })
 
             // ── FIT: NNLS shape classification ──
@@ -299,11 +332,11 @@ export class PitchFirstClassifier {
                 shapeActivations: H,
             })
 
-            // ── SUBTRACT with octave-trap check ──
+            // ── SUBTRACT: aggressively remove this fundamental ──
             const tpl = getTemplate(dominantShapeId)
             if (!tpl) continue
 
-            const subGain = dv * 0.8  // subtract 80% of detected dominance
+            const subGain = dv * 1.2  // over-subtract slightly to prevent ghost re-detection
 
             for (let k = 1; k <= MAX_HARMONICS; k++) {
                 const hz = f0 * k; if (hz > 20000) break
@@ -313,17 +346,11 @@ export class PitchFirstClassifier {
                 const actualEnergy = this._residualBuf[bi]
                 const templateEnergy = subGain * (tpl[k - 1] || 0)
 
-                // ── Octave-trap sanity check ──
-                // If the actual energy at this harmonic bin is WAY higher than
-                // what the template predicts (e.g. another instrument at 2×f0),
-                // only subtract the template-allocated portion. Leave the surplus
-                // for later passes to detect as a separate fundamental.
+                // Octave-trap: if another instrument lives at 2×f0, don't erase it
                 if (k >= 2 && actualEnergy > templateEnergy * OCTAVE_TRAP_RATIO) {
-                    // Anomalous energy — another instrument probably lives here
                     this._residualBuf[bi] = Math.max(0, actualEnergy - templateEnergy)
                 } else {
-                    // Normal harmonic — subtract full template amount
-                    this._residualBuf[bi] = Math.max(0, actualEnergy - templateEnergy)
+                    this._residualBuf[bi] = Math.max(0, actualEnergy - templateEnergy * 1.5)
                 }
             }
         }

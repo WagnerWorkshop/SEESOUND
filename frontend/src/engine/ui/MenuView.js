@@ -34,6 +34,29 @@ export function buildViewMenu(body, syncRegistry, deps) {
     const bgColorInput = el('input', 'cp-input-color', { type: 'color' })
     backgroundSection.appendChild(bgColorInput)
 
+    // Background image upload
+    const bgImageRow = el('div', 'cp-setting-row')
+    const bgImageBtn = el('button', 'cp-btn', { type: 'button', text: 'BG Image' })
+    const bgImageClearBtn = el('button', 'cp-btn cp-btn-sm', { type: 'button', text: '×' })
+    bgImageClearBtn.title = 'Remove background image'
+    bgImageBtn.addEventListener('click', () => {
+        const input = document.createElement('input')
+        input.type = 'file'; input.accept = 'image/*'; input.style.display = 'none'
+        input.addEventListener('change', () => {
+            const file = input.files?.[0]
+            if (file) {
+                window.dispatchEvent(new CustomEvent('seesound:set-background-image', { detail: { file } }))
+            }
+            input.remove()
+        })
+        document.body.appendChild(input); input.click()
+    })
+    bgImageClearBtn.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('seesound:clear-background-image'))
+    })
+    bgImageRow.append(bgImageBtn, bgImageClearBtn)
+    backgroundSection.appendChild(bgImageRow)
+
     const cameraSection = el('section', 'cp-section')
     cameraSection.appendChild(el('h3', 'cp-section-title', { text: UI_TEXT.view.cameraPosition }))
     const camPosX = el('input', 'cp-input-number', { type: 'number', step: 1 })
