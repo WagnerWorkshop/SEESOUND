@@ -411,6 +411,20 @@ cameraController = new CameraController({
 cameraController.bindEvents()
 syncOrbitFromCamera()
 
+// ── Ctrl + mouse wheel → canvas zoom (wrapper scale) ───────────────────
+wrapper.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return  // only zoom on ctrl+scroll
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -5 : 5
+    bumpCanvasScale(delta)
+}, { passive: false })
+col.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -5 : 5
+    bumpCanvasScale(delta)
+}, { passive: false })
+
 // ── Camera rule state (persistent across frames for smoothing) ──────────
 let _cameraRuleTarget = { x: null, y: null, z: null, zoom: null, targetX: null, targetY: null, targetZ: null, angleOfView: null }
 function applyRuleCameraOutput(output) {
@@ -984,20 +998,9 @@ function animate() {
     ps.update(ae, updateParams, w, h)
     // Apply camera rules only when the user is NOT interacting with the canvas.
     // While mouse buttons are down (pan/orbit/rotate), user input takes priority.
-    // Camera smoothing: lerp toward rule target to eliminate square-wave flicker.
+    // On release, the camera snaps back to rule-driven position next frame.
     if (!pointerState.active) {
-        const camOut = ps.getCameraOutput()
-        if (camOut && (camOut.x != null || camOut.y != null || camOut.z != null || camOut.zoom != null || camOut.targetX != null || camOut.targetY != null || camOut.targetZ != null || camOut.angleOfView != null)) {
-            const lerpFactor = 0.12
-            if (camOut.x != null) camera.position.x += (camOut.x - camera.position.x) * lerpFactor
-            if (camOut.y != null) camera.position.y += (camOut.y - camera.position.y) * lerpFactor
-            if (camOut.z != null) camera.position.z += (camOut.z - camera.position.z) * lerpFactor
-            if (camOut.targetX != null) orbitTarget.x += (camOut.targetX - orbitTarget.x) * lerpFactor
-            if (camOut.targetY != null) orbitTarget.y += (camOut.targetY - orbitTarget.y) * lerpFactor
-            if (camOut.targetZ != null) orbitTarget.z += (camOut.targetZ - orbitTarget.z) * lerpFactor
-            if (camOut.zoom != null) camera.zoom += (camOut.zoom - camera.zoom) * lerpFactor
-            if (camOut.angleOfView != null) camera.fov += (camOut.angleOfView - camera.fov) * lerpFactor
-        }
+        applyRuleCameraOutput(ps.getCameraOutput())
         tickCameraRules()
     }
 

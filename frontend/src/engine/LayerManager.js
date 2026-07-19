@@ -172,7 +172,12 @@ export class LayerManager {
 
         for (const pass of ['generator', 'modifier']) {
             for (const layer of this._layers) {
-                if (layer.data?.enabled === false) continue
+                if (layer.data?.enabled === false) {
+                    // Hide disabled layer's geometry so its particles don't render
+                    if (layer.ps._geo) layer.ps._geo.setDrawRange(0, 0)
+                    if (layer.ps._lineGeo) layer.ps._lineGeo.setDrawRange(0, 0)
+                    continue
+                }
                 const isModifier = layer.data?.layerType === 'modifier'
                 if (pass === 'generator' && isModifier) continue
                 if (pass === 'modifier' && !isModifier) continue
