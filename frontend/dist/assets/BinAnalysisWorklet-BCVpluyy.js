@@ -83,13 +83,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         this._framesUntilNextAnalysis = 0
         this.rampGain = 0.0
-        this.rampStep = 1.0 / (sampleRate * 0.1)
-        this._startedRamping = false
-        // Suppress transient reporting for ~200ms after ramp completes
-        // to let the energy baseline stabilize. The ramp-gain causes the
-        // running average to accumulate at near-zero, so when full-volume
-        // audio arrives after the ramp, (energy - baseline)/baseline spikes.
-        this._transientSuppressFrames = Math.ceil(0.2 * sampleRate / 128)
+        // Short startup fade-in: apply 20 blocks (~58ms at 128-sample blocks @44.1kHz)
+        // to smooth the step function from 0→audio, preventing Goertzel filter ringing
+        // without introducing perceptible lag.
+        this._transientSuppressFrames = Math.ceil(0.05 * sampleRate / 128)
         this._transientSuppressRemaining = 0
 
         // Internal math resolution is locked once at startup. UI changes to
@@ -99,17 +96,11 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._internalResolution = DEFAULT_CQT_DETAILS_PER_10_OCTAVES
         this._visualResolution = this._cfg.cqtDetailsPer10Octaves
 
-        // Boot muzzle timer: block sending unstable initial data to the UI
-        // for ~400 worklet blocks (~1.1s at 44.1kHz). This covers the
-        // entire startup ramp (200 blocks) + post-ramp filter stabilization
-        // (~200 blocks for the Goertzel filters' internal state to converge).
-        this.bootTimer = 400
-
-        // Post-ramp reset: after the ramp reaches 1.0, wait this many blocks
-        // before resetting Goertzel state (prevMag, prevPhase) and allowing
-        // analysis output. This ensures the filters have converged on
-        // full-volume audio before any data leaves the worklet.
-        this._postRampResetCounter = 0
+        // Boot muzzle: suppress the first 2 blocks (~5ms) to avoid sending
+        // data from a completely empty ring buffer. After that, Goertzel
+        // filters receive a smooth fade-in (not a step) so their initial
+        // output is already valid.
+        this.bootTimer = 2
 
         this._rebuildCqtPlan()
 
@@ -528,13 +519,9 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const needsAny = cfg.needMagnitude || cfg.needFlux || cfg.needPhaseDeviation || cfg.needPhase || cfg.needEnvelope || cfg.needAttackTime
         if (!cfg.enabled || !needsAny || this.binCount === 0) return
 
-        // Boot muzzle: suppress analysis output for _bootTimer blocks at
-        // startup so Goertzel filters have time to converge from zero state.
-        // Bin data is still computed internally — it's just not sent to the UI.
+        // Boot muzzle: skip the first few blocks to avoid sending data
+        // from an empty ring buffer.
         if (this.bootTimer > 0) { this.bootTimer--; return }
-
-        // Suppress analysis during the post-ramp reset period
-        if (this._postRampResetCounter > 0) return
 
         // Skip analysis frames immediately after CQT parameter changes to allow
         // ring buffers to refill with fresh data and prevent discontinuity artifacts.
@@ -688,44 +675,33 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             const channelCount = input.length
             const sampleCount = input[0]?.length || 0
 
-            // Startup fade-in: apply per-process-block ramp to prevent
-            // Goertzel filter ringing from the step-function/impulse of audio starting.
-            // Ramp spans 200 blocks (~580ms at 128-sample blocks @44.1kHz).
-            // This gives the multi-rate cascaded decimator (7 levels) enough
-            // time to fill its deepest ring buffers before full-volume audio hits
-            // the lowest-frequency (longest-window) Goertzel bins.
+            // Startup fade-in: apply a short 20-block ramp (~58ms) to the
+            // incoming samples to prevent a step-function impulse from
+            // ringing through the Goertzel filters. The CQT's low-frequency
+            // kernels span thousands of samples; a hard 0→audio transition
+            // integrates as a wideband transient. A short fade-in smooths
+            // this without destroying filter convergence (never reset state).
             if (this.rampGain < 1.0) {
-                const BLOCK_RAMP_STEP = 1.0 / 200
+                const BLOCK_RAMP_STEP = 1.0 / 20
                 this.rampGain += BLOCK_RAMP_STEP
                 if (this.rampGain > 1.0) this.rampGain = 1.0
+                // While ramping, suppress transient detection — the
+                // fade-in itself looks like a flux event to the rhythm
+                // analyser. Once the ramp completes, the running energy
+                // average should stabilize within the suppression window.
+                if (this.rampGain >= 1.0) {
+                    this._transientSuppressRemaining = this._transientSuppressFrames
+                    this._rhythmEnergyAvg = 0
+                    this._lastTransientFrame = 0
+                }
             }
             const gain = this.rampGain
-
             for (let channel = 0; channel < input.length; channel++) {
                 const channelData = input[channel]
                 if (!channelData) continue
                 for (let i = 0; i < channelData.length; i++) {
                     channelData[i] *= gain
                 }
-            }
-            // When the ramp gain reaches 1.0, start the post-ramp
-            // stabilization period. Reset all Goertzel filter state and
-            // flux history so the first analysis frame after the ramp
-            // doesn't see a discontinuity from zero-filled prevMag.
-            if (this.rampGain >= 1.0 && this._postRampResetCounter === 0) {
-                this._postRampResetCounter = 150
-                // Reset all per-bin state so the first analysis starts from
-                // a clean baseline on stabilized full-volume audio
-                this._prevMag.fill(0)
-                this._prevPhase.fill(0)
-                this._prevPhaseDelta.fill(0)
-                this._attackElapsedMs.fill(0)
-                this._attackLastMs.fill(0)
-                this._attackActive.fill(0)
-                this._resetFluxHistoryStorage()
-            }
-            if (this._postRampResetCounter > 0) {
-                this._postRampResetCounter--
             }
             if (sampleCount > 0) {
                 for (let i = 0; i < sampleCount; i++) {
