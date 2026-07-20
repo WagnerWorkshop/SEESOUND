@@ -109,7 +109,7 @@ export function initAudioPlayer(container) {
         'aria-label': getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'),
         'title': getAudioPlayerText('collapsePlayerTitle', 'Collapse player'),
     })
-    collapseBtn.textContent = '▼'
+    collapseBtn.textContent = '◀'
 
     const appRoot = document.getElementById('app')
 
@@ -119,7 +119,7 @@ export function initAudioPlayer(container) {
     }
 
     function setCollapseButtonVisual(isCollapsed) {
-        collapseBtn.textContent = isCollapsed ? '▶' : '▼'
+        collapseBtn.textContent = isCollapsed ? '▶' : '◀'
         collapseBtn.setAttribute('aria-label', isCollapsed
             ? getAudioPlayerText('expandPlayerAria', 'Expand player')
             : getAudioPlayerText('collapsePlayerAria', 'Collapse audio player'))

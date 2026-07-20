@@ -103,6 +103,17 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             const cloudShape = getActiveLayerCloudShape()
             if (!definition.cloudShapes.includes(cloudShape)) return false
         }
+        // Positioning gating (non-cloud): hide x/y/z coordinate rules when
+        // positioning mode is not "coordinates" (e.g. network/cylindrical/spherical
+        // use alternative coordinate systems where direct x/y/z overrides don't apply)
+        if (shape !== 'cloud') {
+            const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+            const positioning = layer?.layerPositioning || 'coordinates'
+            if (positioning !== 'coordinates') {
+                const coordOutputs = new Set(['x', 'y', 'z'])
+                if (coordOutputs.has(definition?.output)) return false
+            }
+        }
         return true
     }
 
@@ -119,6 +130,21 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         for (const group of groups) {
             for (const entry of getRuleVariablesByGroupLocal(group)) {
                 if (entry?.id) ids.add(entry.id)
+            }
+        }
+        // Source-based filtering: hide fundamental-only variables when source is "spectrum"
+        if (activeOwner.type === 'layer') {
+            const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
+            if (layer && (layer.layerSource || 'spectrum') === 'spectrum') {
+                const fundVars = new Set([
+                    'shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
+                    'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad',
+                    'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue',
+                    'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
+                    'componentOnset', 'componentCount', 'componentBinEnergy',
+                    'fundamentalHz', 'fundamentalPitch', 'fundamentalNote', 'fundamentalNormHz',
+                ])
+                for (const v of fundVars) ids.delete(v)
             }
         }
         // Mode-gate by current engine mode (params.objectMode).
@@ -629,14 +655,14 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         const title = el('div', 'cp-layer-settings-card-title', { text: 'Layer Settings' })
         const tools = el('div', 'cp-layer-settings-card-tools')
         const collapseBtn = el('button', 'cp-btn cp-layer-settings-card-collapse', { type: 'button' })
-        const collapseIcon = el('span', 'cp-btn-icon', { text: '▼' })
+        const collapseIcon = el('span', 'cp-btn-icon', { text: '▲' })
         collapseBtn.appendChild(collapseIcon)
 
         let settingsCollapsed = false
         const setCollapseState = (collapsed) => {
             settingsCollapsed = collapsed
             card.classList.toggle('is-collapsed', collapsed)
-            collapseIcon.textContent = collapsed ? '▶' : '▼'
+            collapseIcon.textContent = collapsed ? '▼' : '▲'
         }
         collapseBtn.addEventListener('click', () => setCollapseState(!settingsCollapsed))
 
