@@ -693,8 +693,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
                 return { ...entry, layerSource: nextSource, rules: active, _inactiveRules: inactive }
             }))
-            // Don't call renderLayerList() — param sync handles re-render via applyRowsFromParams()
-            commitRuleBlocks()
         })
         sourceRow.append(sourceLabel, sourceSelect)
         body.appendChild(sourceRow)
@@ -721,7 +719,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 const inactive = [...(entry._inactiveRules || []), ...(entry.rules || []).filter(r => !compatCheck(r))]
                 return { ...entry, layerShape: nextShape, layerShapeType: (nextShape === 'line' || nextShape === 'curve') ? 'line' : 'particle', rules: active, _inactiveRules: inactive }
             }))
-            commitRuleBlocks()
         })
         shapeRow.append(shapeLabel, shapeSelect)
         body.appendChild(shapeRow)
@@ -740,7 +737,6 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             setRuleLayers(getRuleLayers().map((entry) =>
                 entry.id === layer.id ? { ...entry, layerPositioning: positioningSelect.value } : entry
             ))
-            commitRuleBlocks()
         })
         positioningRow.append(positioningLabel, positioningSelect)
         body.appendChild(positioningRow)
@@ -786,10 +782,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         card.append(header, body)
 
         // Insert settings card at the top of the rules body (above the wrapper/rule cards)
-        // Only insert if not already present (prevent duplication during param sync re-renders)
-        if (!rulesBody.querySelector('.cp-layer-settings-card')) {
-            rulesBody.insertBefore(card, rulesBody.firstChild)
-        }
+        rulesBody.insertBefore(card, rulesBody.firstChild)
     }
 
     function updateOwnerSectionVisibility() {
