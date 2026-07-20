@@ -485,10 +485,6 @@ export class ParticleSystem {
         // ── Curve fitting (Hungarian method) ──
         /** @type {boolean} Whether to optimally assign particles to curve positions */
         this._curveFittingEnabled = false
-
-        // ── Layer source (spectrum vs fundamentals) ──
-        /** @type {string} 'spectrum' spawns all CQT bins; 'fundamentals' only spawns detected pitch entities */
-        this._layerSource = 'spectrum'
     }
 
     _allocateBuffers(maxParticles) {
@@ -952,8 +948,9 @@ export class ParticleSystem {
      * @param {object}  params      Live param snapshot (from ParamStore)
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
+     * @param {string}  [layerSource='spectrum'] 'spectrum' | 'fundamentals'
      */
-    update(ae, params, canvasW, canvasH) {
+    update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
 
@@ -1851,7 +1848,7 @@ export class ParticleSystem {
                 this._geo.setDrawRange(0, count)
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
-        } else if (this._layerSource === 'fundamentals') {
+        } else if (layerSource === 'fundamentals') {
             // ── Fundamentals-only mode: spawn only detected pitch entities ──
             // Skip the full CQT bucket loop entirely. Only 1-5 particles per frame.
             const shapeEntities = ae._shapeEntities || []
@@ -2367,19 +2364,6 @@ export class ParticleSystem {
         this._mat.dispose()
         this._lineMesh.geometry.dispose()
         this._lineMat.dispose()
-    }
-
-    /**
-     * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
-     * @param {string} source
-     */
-    setLayerSource(source) {
-        this._layerSource = (source === 'fundamentals') ? 'fundamentals' : 'spectrum'
-        if (source === 'fundamentals') {
-            // Reset modifier state when switching to fundamentals — the few
-            // entity-based particles need a clean slate each frame
-            this._modifierSeeded = false
-        }
     }
 
     /**

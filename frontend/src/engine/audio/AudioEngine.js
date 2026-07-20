@@ -488,12 +488,12 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 0
         }
-        // Reset previous-frame buffers so the flux/transient computation
-        // starts from a clean slate when fadeIn() restores audio.
-        this._prevRhythmData.fill(0)
-        this._prevFrequencyDataBins.fill(0)
-        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
-        // Zero transient accumulators
+        // Zero transient accumulators so stale values don't leak into the UI
+        // during the paused period. Flux prev buffers are NOT zeroed — they
+        // hold the last valid audio frame. When fadeIn() resumes, the
+        // _fadeRampWasActive switch will sync prev→current on the first
+        // non-ramp frame, giving a near-zero flux delta instead of a
+        // silence→audio transient spike.
         this._rhythmTransient = 0
         this._rhythmEnergy = 0
         this.globalTransient = 0
