@@ -183,6 +183,8 @@ export class LayerManager {
                 if (pass === 'modifier' && !isModifier) continue
                 // Pass curve-fitting setting to the particle system
                 layer.ps.setCurveFitting(layer.data?.curveFitting === true)
+                // Pass layer source (spectrum vs fundamentals) — controls which CQT bins spawn
+                layer.ps.setLayerSource(layer.data?.layerSource || 'spectrum')
                 layer.ps.update(ae, params, canvasW, canvasH)
                 if (layer.ps._compiledRules?.cameraRuleCount > 0) hasCamRules = true
             }

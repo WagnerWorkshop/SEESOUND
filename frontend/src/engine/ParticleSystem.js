@@ -485,6 +485,10 @@ export class ParticleSystem {
         // ── Curve fitting (Hungarian method) ──
         /** @type {boolean} Whether to optimally assign particles to curve positions */
         this._curveFittingEnabled = false
+
+        // ── Layer source (spectrum vs fundamentals) ──
+        /** @type {string} 'spectrum' spawns all CQT bins; 'fundamentals' only spawns detected pitch entities */
+        this._layerSource = 'spectrum'
     }
 
     _allocateBuffers(maxParticles) {
@@ -1847,6 +1851,74 @@ export class ParticleSystem {
                 this._geo.setDrawRange(0, count)
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
+        } else if (this._layerSource === 'fundamentals') {
+            // ── Fundamentals-only mode: spawn only detected pitch entities ──
+            // Skip the full CQT bucket loop entirely. Only 1-5 particles per frame.
+            const shapeEntities = ae._shapeEntities || []
+            const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
+                'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
+            for (const entity of shapeEntities) {
+                if (writeIndex >= activeParticleCapacity) break
+                if (wroteParticles >= 5) break // cap at 5 fundamentals per frame
+                const fHz = entity.fundamentalHz || 0
+                if (fHz <= 0) continue
+                const f0Norm = Math.min(1, (Math.log2(Math.max(40, fHz)) - Math.log2(40)) / (Math.log2(16000) - Math.log2(40)))
+
+                const entityInputs = Object.assign({}, _frameRuleBase, {
+                    frequencyHz: fHz,
+                    normFreq: f0Norm,
+                    fundamentalNormHz: f0Norm,
+                    notePitchClass: midiToPitchClass(frequencyToMidi(fHz)),
+                    octave: midiToOctave(frequencyToMidi(fHz)),
+                })
+                const sa = entity.shapeActivations
+                if (sa) {
+                    for (let s = 0; s < 10; s++) entityInputs[entityShapeIds[s]] = sa[s] || 0
+                }
+                entityInputs.shapeDominant = entity.dominantShape?.replace('shape', '') || 'Sine'
+                entityInputs.shapeDominantValue = entity.dominantShapeValue || 0
+
+                const entityParticle = {
+                    x: 0, y: 0, z: 0, size: 3,
+                    red: 1, green: 1, blue: 1, opacity: 0.8,
+                    particleCount: 1, shapeType: 'circle',
+                }
+                hydrateColorState(entityParticle, entityParticle.red, entityParticle.green, entityParticle.blue)
+
+                if (emitLightParticles) {
+                    this.applySpawnRulesToParticle({ params, inputs: entityInputs, particle: entityParticle })
+                }
+                if (Number.isFinite(entityParticle.particleCount) && entityParticle.particleCount <= 0) continue
+
+                const epx = Number.isFinite(entityParticle.x) ? entityParticle.x : 0
+                const epy = Number.isFinite(entityParticle.y) ? entityParticle.y : 0
+                const epz = Number.isFinite(entityParticle.z) ? entityParticle.z : 0
+                const eSize = Number.isFinite(entityParticle.size) ? Math.max(0, entityParticle.size) : 3
+                const blended = blendHsbRgb(entityParticle.hue, entityParticle.saturation, entityParticle.brightness,
+                    entityParticle.red, entityParticle.green, entityParticle.blue)
+                const eR = blended ? clamp01(blended.r) : 1
+                const eG = blended ? clamp01(blended.g) : 1
+                const eB = blended ? clamp01(blended.b) : 1
+                const eAlpha = Number.isFinite(entityParticle.opacity) ? Math.max(0, Math.min(1, entityParticle.opacity)) : 0.8
+
+                this._pos[writeIndex * 3] = epx
+                this._pos[writeIndex * 3 + 1] = epy
+                this._pos[writeIndex * 3 + 2] = epz
+                this._sz[writeIndex] = eSize * sizeMultiplier
+                this._col[writeIndex * 3] = eR
+                this._col[writeIndex * 3 + 1] = eG
+                this._col[writeIndex * 3 + 2] = eB
+                this._alpha[writeIndex] = eAlpha
+                this._shape[writeIndex] = (entityParticle.shapeType === 'circle') ? 1 : 0
+                this._pan[writeIndex] = entityInputs.pan ?? 0
+                this._binRms[writeIndex] = entityInputs.binRMSEnergy ?? 0
+                this._isFundamental[writeIndex] = 1
+                this._particleAge[writeIndex] = 0
+                markPointDirty(writeIndex)
+                writeIndex++
+                wroteParticles++
+            }
+            // Skip the bucket loop entirely — fundamentals-only mode
         } else {
             // ── Entity spawning: one particle per detected fundamental ──
             const shapeEntities = ae._shapeEntities || []
@@ -2295,6 +2367,19 @@ export class ParticleSystem {
         this._mat.dispose()
         this._lineMesh.geometry.dispose()
         this._lineMat.dispose()
+    }
+
+    /**
+     * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
+     * @param {string} source
+     */
+    setLayerSource(source) {
+        this._layerSource = (source === 'fundamentals') ? 'fundamentals' : 'spectrum'
+        if (source === 'fundamentals') {
+            // Reset modifier state when switching to fundamentals — the few
+            // entity-based particles need a clean slate each frame
+            this._modifierSeeded = false
+        }
     }
 
     /**

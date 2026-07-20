@@ -132,31 +132,44 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 if (entry?.id) ids.add(entry.id)
             }
         }
-        // Source-based filtering: hide fundamental-only variables when source is "spectrum"
+        // ── Source-based filtering ──────────────────────────────────────
         if (activeOwner.type === 'layer') {
             const layer = getRuleLayers().find((entry) => entry.id === activeOwner.id)
-            if (layer && (layer.layerSource || 'spectrum') === 'spectrum') {
-                const fundVars = new Set([
+            const source = (layer?.layerSource || 'spectrum')
+
+            if (source === 'spectrum') {
+                // Spectrum: hide per-component, shape, and fundamental-frequency variables
+                const spectrumHidden = new Set([
+                    'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
+                    'componentOnset', 'componentCount', 'componentBinEnergy',
                     'shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                     'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad',
                     'shapeBuzzy', 'shapeBass', 'shapeDominant', 'shapeDominantValue',
-                    'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
-                    'componentOnset', 'componentCount', 'componentBinEnergy',
                     'fundamentalHz', 'fundamentalPitch', 'fundamentalNote', 'fundamentalNormHz',
                 ])
-                for (const v of fundVars) ids.delete(v)
+                for (const v of spectrumHidden) ids.delete(v)
+            } else {
+                // Fundamentals: hide global timbre and per-bin timbre variables
+                const fundamentalsHidden = new Set([
+                    // Global timbre
+                    'spectralCentroid', 'spectralFlatness', 'spectralFlux',
+                    'spectralRolloff', 'spectralSkewness', 'spectralSpread',
+                    'chromagram', 'inharmonicity', 'peakFreq',
+                    // Per-bin timbre
+                    'binFlux', 'binPhaseDeviation', 'binAttackTime',
+                    'binEnvelope', 'binEnvelopeState', 'binPhase',
+                    'harmonicEnergy', 'percussiveEnergy',
+                ])
+                for (const v of fundamentalsHidden) ids.delete(v)
             }
         }
         // Mode-gate by current engine mode (params.objectMode).
-        // Per-bin variables are particle-only; layer variables are cloud-only.
         const mode = String(params.objectMode || 'particle')
         const cloudOnly = new Set(['fundamentalHz', 'fundamentalPitch', 'fundamentalNote',
             'globalTransient', 'objectAge', 'streamId'])
-        // Per-bin variables are available in ALL modes; only layer variables are cloud-only.
         if (mode === 'particle') {
             for (const id of ids) if (cloudOnly.has(id)) ids.delete(id)
         }
-        // Cloud mode: all variables allowed (per-bin + layer + overall)
         return ids
     }
     const EVAL_HELPERS = Object.freeze({
