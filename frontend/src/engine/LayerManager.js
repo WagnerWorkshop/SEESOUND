@@ -111,6 +111,10 @@ export class LayerManager {
             const compiled = layer.ps.onRulesChanged(layerRules)
             // Update stored layer ref (rules may have changed on same layer)
             layer.data = layerObj
+            // Set particle system properties from layer data immediately
+            // so they are in effect before the next update() call
+            layer.ps.setCurveFitting(layerObj.curveFitting === true)
+            layer.ps.setLayerSource(layerObj.layerSource || 'spectrum')
 
             newLayers.push(layer)
 
