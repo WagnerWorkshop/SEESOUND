@@ -948,6 +948,7 @@ export class ParticleSystem {
      * @param {object}  params      Live param snapshot (from ParamStore)
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
+     * @param {string}  [layerSource='spectrum']  'spectrum' = all CQT bins; 'fundamentals' = only pitch entities
      */
     update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
         if (!ae.analyser) return   // AudioContext not yet initialised
@@ -2365,6 +2366,10 @@ export class ParticleSystem {
         this._lineMat.dispose()
     }
 
+    /**
+     * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
+     * @param {string} source
+     */
     /**
      * Enable or disable curve fitting via Hungarian algorithm.
      * When enabled, particles are optimally assigned to positions along a
