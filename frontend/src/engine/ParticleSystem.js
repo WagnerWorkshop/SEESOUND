@@ -1816,6 +1816,7 @@ export class ParticleSystem {
         let dedupedLineCount = 0
 
         // ── Modifier mode: skip bucket loop, seed proxy particles once ──
+        let isFundamentalsFrame = false
         if (this._isModifier) {
             this._insert_index = 0
             this._paint_count = 0
@@ -1855,15 +1856,19 @@ export class ParticleSystem {
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
         } else if (layerSource === 'fundamentals') {
-            // ── Fundamentals-only mode: spawn only detected pitch entities ──
-            // Reset accumulation to clear any paint-mode residue. Only
-            // fundamental particles should be visible.
+            isFundamentalsFrame = true
+            // ── Fundamentals-only mode: spawn ONLY detected pitch entities ──
+            // Clear ALL accumulation from previous frames. Only fundamental
+            // particles should exist. The bucket loop is completely skipped.
+            writeIndex = 0
+            lineWriteIndex = 0
+            this._visible_count = 0
+            this._lineVisibleCount = 0
             if (persistMode === 1) {
-                writeIndex = 0
-                this._visible_count = 0
                 this._insert_index = 0
                 this._paint_count = 0
             }
+
             const shapeEntities = ae._shapeEntities || []
             const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
@@ -1927,6 +1932,20 @@ export class ParticleSystem {
                 markPointDirty(writeIndex)
                 writeIndex++
                 wroteParticles++
+            }
+
+            // Explicitly set visible count — never let paint mode accumulation
+            // override this. Only fundamental entities are visible.
+            this._visible_count = Math.min(writeIndex, activeParticleCapacity)
+            this._lineVisibleCount = 0
+            this._lineGeo.setDrawRange(0, 0)
+
+            if (persistMode === 1) {
+                this._insert_index = writeIndex % activeParticleCapacity
+                if (wroteParticles > 0) {
+                    this._paint_count = Math.min(activeParticleCapacity,
+                        this._paint_count + wroteParticles)
+                }
             }
             // Skip the bucket loop entirely — fundamentals-only mode
         } else {
@@ -2258,7 +2277,12 @@ export class ParticleSystem {
             }
         } // end else (generator bucket loop)
 
-        if (persistMode === 1) {
+        // ── Fundamentals skip: all state was already set inside the block ──
+        if (isFundamentalsFrame) {
+            // _visible_count and _lineVisibleCount already set; just apply draw
+            this._geo.setDrawRange(0, this._visible_count)
+            // lineGeo already set to (0,0) inside fundamentals block
+        } else if (persistMode === 1) {
             if (emitLightParticles || wroteParticles > 0) {
                 this._insert_index = writeIndex % activeParticleCapacity
                 this._visible_count = Math.min(activeParticleCapacity, this._visible_count + wroteParticles)
