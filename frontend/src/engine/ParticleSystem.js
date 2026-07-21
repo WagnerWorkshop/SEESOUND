@@ -1877,6 +1877,10 @@ export class ParticleSystem {
             // Only shapeEntities.length particles are created; the CQT bucket
             // loop is never reached.
             const shapeEntities = ae._shapeEntities || []
+            // Diagnostic: log entity count every 60 frames
+            if ((this._frameCounter % 60) === 0) {
+                console.log(`[Fund] entities=${shapeEntities.length} writing=${writeIndex} source=${layerSource} frame=${this._frameCounter}`)
+            }
             const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
             for (const entity of shapeEntities) {
@@ -1946,6 +1950,23 @@ export class ParticleSystem {
             this._visible_count = Math.min(writeIndex, activeParticleCapacity)
             this._lineVisibleCount = 0
             this._lineGeo.setDrawRange(0, 0)
+
+            // ── Zero stale GPU buffer tails ──────────────────────────
+            // The _aPos.needsUpdate uploads the ENTIRE Float32Array to GPU.
+            // Indices beyond _visible_count still contain CQT bin positions
+            // from previous spectrum frames. Zero them out so that even if
+            // a WebGL edge case ignores setDrawRange, the ghost positions
+            // render at (0,0,0) — invisible or clustered at origin instead
+            // of displaying as stale spectrum particles.
+            const capacity = activeParticleCapacity
+            if (writeIndex < capacity) {
+                this._pos.fill(0, writeIndex * 3, capacity * 3)
+                this._sz.fill(0, writeIndex, capacity)
+                this._alpha.fill(0, writeIndex, capacity)
+                // Mark the zeroed tail as dirty so GPU gets the clean data
+                markPointDirty(writeIndex)
+                markPointDirty(capacity - 1)
+            }
 
             if (persistMode === 1) {
                 this._insert_index = writeIndex % activeParticleCapacity
