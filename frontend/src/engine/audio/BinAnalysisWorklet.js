@@ -49,6 +49,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._levelProduced = new Uint32Array(this._levelCount)
         this._levelHopCounter = new Uint32Array(this._levelCount)
         this._levelHopSize = new Uint32Array(this._levelCount)
+        this._levelLifetimeSamples = new Float64Array(this._levelCount)
 
         this._bins = []
         this._binsByLevel = Array.from({ length: this._levelCount }, () => [])
@@ -244,6 +245,18 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._outEnvelope = new Float32Array(binCount)
         this._outAttackTime = new Float32Array(binCount)
 
+        // Per-bin cold-start: _prevMag is zero-initialized, so the first valid
+        // magnitude for each bin would produce a massive artificial flux spike
+        // (rise = magNowLin - 0). Seed _prevMag with the first real value and
+        // skip derived metrics on that frame.
+        this._firstAnalysisDone = new Uint8Array(binCount)
+
+        // Per-bin convergence gate: records the _levelLifetimeSamples value
+        // when each bin first produced a valid Goertzel result. Used to
+        // compute the exponential fade-in taper.
+        this._binFirstLifetime = new Float64Array(binCount)
+        this._binFirstLifetime.fill(-1)
+
         this._resetFluxHistoryStorage()
     }
 
@@ -267,6 +280,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             this._levelFill[level] = 0
             this._levelProduced[level] = 0
             this._levelHopCounter[level] = 0
+            this._levelLifetimeSamples[level] = 0
 
             const hop = Math.max(8, Math.min(256, Math.floor(minWindow / 6)))
             this._levelHopSize[level] = hop
@@ -362,6 +376,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         const fill = this._levelFill[level]
         this._levelFill[level] = Math.min(len, fill + 1)
         this._levelProduced[level] += 1
+        this._levelLifetimeSamples[level] += 1
     }
 
     _pushSamples(input) {
@@ -439,7 +454,35 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
 
         const magNowDb = result.magDb
         const magNowLin = Math.max(0, Math.pow(10, magNowDb / 20))
-        if (needsMagnitude) this._outMagnitude[binIndex] = magNowDb
+
+        // ---- Per-bin convergence gate ----
+        // Cold-start zero→audio step functions contain 1/ω energy that
+        // excites low-frequency Goertzel filters. Fade in each bin's
+        // magnitude exponentially as its ring buffer fills. Time constant
+        // τ ∝ windowSize: lower frequency → larger window → slower convergence.
+        const windowSize = this._bins[binIndex].windowSize
+        const levelLifetime = this._levelLifetimeSamples[bin.level]
+        if (this._binFirstLifetime[binIndex] < 0) {
+            this._binFirstLifetime[binIndex] = levelLifetime
+        }
+        const samplesSinceFirst = levelLifetime - this._binFirstLifetime[binIndex]
+        const tau = Math.max(1.0, windowSize * 0.3)
+        const convergeScale = 1.0 - Math.exp(-samplesSinceFirst / Math.max(1.0, tau))
+
+        const magNowLinGated = magNowLin * convergeScale
+        const magNowDbGated = 20.0 * Math.log10(Math.max(1e-12, magNowLinGated))
+        if (needsMagnitude) this._outMagnitude[binIndex] = magNowDbGated
+
+        // ---- First-analysis guard ----
+        // _prevMag is zero-initialized; the first frame would compute
+        // rise = magNowLin - 0, creating a massive artificial flux spike.
+        // Seed _prevMag with the unscaled magnitude and skip derived
+        // metrics on this frame.
+        if (!this._firstAnalysisDone[binIndex]) {
+            this._prevMag[binIndex] = magNowLin
+            this._firstAnalysisDone[binIndex] = 1
+            return true
+        }
 
         const prevMag = this._prevMag[binIndex]
         const rise = magNowLin - prevMag
