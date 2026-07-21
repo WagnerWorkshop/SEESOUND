@@ -948,9 +948,8 @@ export class ParticleSystem {
      * @param {object}  params      Live param snapshot (from ParamStore)
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
-     * @param {string}  [layerSource='spectrum']  'spectrum' = all CQT bins; 'fundamentals' = only pitch entities
      */
-    update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
+    update(ae, params, canvasW, canvasH) {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
 
@@ -1848,7 +1847,7 @@ export class ParticleSystem {
                 this._geo.setDrawRange(0, count)
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
-        } else if (layerSource === 'fundamentals') {
+        } else if (params._layerSource === 'fundamentals') {
             // ── Fundamentals-only mode: spawn only detected pitch entities ──
             // Skip the full CQT bucket loop entirely. Only 1-5 particles per frame.
             const shapeEntities = ae._shapeEntities || []
@@ -2366,10 +2365,6 @@ export class ParticleSystem {
         this._lineMat.dispose()
     }
 
-    /**
-     * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
-     * @param {string} source
-     */
     /**
      * Enable or disable curve fitting via Hungarian algorithm.
      * When enabled, particles are optimally assigned to positions along a

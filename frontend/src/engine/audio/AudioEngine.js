@@ -488,12 +488,11 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 0
         }
-        // Do NOT zero prev buffers. _fadeRampWasActive already syncs
-        // prev→current on the first post-ramp frame, producing near-zero
-        // flux. Keeping real pre-pause data in prev buffers means the
-        // resume flux delta is natural music flux, not a transient spike.
-        // Only reset the rhythm per-bin state (Goertzel-specific buffers).
-        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
+        // Keep previous-frame buffers intact — they hold the last known
+        // real audio data. When fadeIn() restores audio, the _fadeRampWasActive
+        // mechanism syncs prev→current on the first post-ramp frame, producing
+        // near-zero flux. The spectralFlux computation then resumes from a
+        // pre-pause baseline rather than from zero, preventing a transient spike.
         // Zero transient accumulators
         this._rhythmTransient = 0
         this._rhythmEnergy = 0
