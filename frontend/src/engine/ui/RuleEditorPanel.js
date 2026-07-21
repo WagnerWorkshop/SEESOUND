@@ -646,6 +646,9 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
     }
 
     function renderInlineMeta() {
+        // Remove any existing settings cards first (prevent duplicates from
+        // multiple calls during the same expansion cycle)
+        document.querySelectorAll('.cp-layer-settings-card').forEach((el) => el.remove())
         if (!popupOpen) return
 
         const isBg = activeOwner.type === 'background'

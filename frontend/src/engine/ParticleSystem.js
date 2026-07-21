@@ -1880,23 +1880,21 @@ export class ParticleSystem {
 
                 if (emitLightParticles) {
                     this.applySpawnRulesToParticle({ params, inputs: entityInputs, particle: entityParticle })
+                } else {
+                    // No rules active — give fundamentals a default spread so
+                    // they're visible even without X/Y/Z positioning rules
+                    const idx = Math.min(wroteParticles, 4)
+                    const angle = (idx / 5) * Math.PI * 2
+                    const radius = Math.min(hw, hh) * 0.3
+                    entityParticle.x = Math.cos(angle) * radius
+                    entityParticle.y = Math.sin(angle) * radius
+                    entityParticle.z = 0
                 }
                 if (Number.isFinite(entityParticle.particleCount) && entityParticle.particleCount <= 0) continue
 
                 const epx = Number.isFinite(entityParticle.x) ? entityParticle.x : 0
                 const epy = Number.isFinite(entityParticle.y) ? entityParticle.y : 0
                 const epz = Number.isFinite(entityParticle.z) ? entityParticle.z : 0
-                const eSize = Number.isFinite(entityParticle.size) ? Math.max(0, entityParticle.size) : 3
-                const blended = blendHsbRgb(entityParticle.hue, entityParticle.saturation, entityParticle.brightness,
-                    entityParticle.red, entityParticle.green, entityParticle.blue)
-                const eR = blended ? clamp01(blended.r) : 1
-                const eG = blended ? clamp01(blended.g) : 1
-                const eB = blended ? clamp01(blended.b) : 1
-                const eAlpha = Number.isFinite(entityParticle.opacity) ? Math.max(0, Math.min(1, entityParticle.opacity)) : 0.8
-
-                this._pos[writeIndex * 3] = epx
-                this._pos[writeIndex * 3 + 1] = epy
-                this._pos[writeIndex * 3 + 2] = epz
                 this._sz[writeIndex] = eSize * sizeMultiplier
                 this._col[writeIndex * 3] = eR
                 this._col[writeIndex * 3 + 1] = eG
