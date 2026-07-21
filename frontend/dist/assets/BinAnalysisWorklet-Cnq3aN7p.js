@@ -102,22 +102,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         // output is already valid.
         this.bootTimer = 2
 
-        // Pause flag: when set, skip pushing samples to ring buffers.
-        // This preserves the last real audio data during pause, preventing
-        // a 0→audio step function when playback resumes.
-        this._paused = false
-
         this._rebuildCqtPlan()
 
         this.port.onmessage = (event) => {
             const msg = event.data || {}
-            if (msg.type === 'pause') {
-                this._paused = !!msg.paused
-                if (this._paused) {
-                    this._startupSuppress = 60
-                }
-                return
-            }
             if (msg.type !== 'config') return
 
             const cfg = msg.config || {}
@@ -688,24 +676,21 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             const channelCount = input.length
             const sampleCount = input[0]?.length || 0
 
-            // When paused, skip pushing samples to CQT ring buffers.
-            // The ring buffers retain their last non-silent data so
-            // Goertzel output is smooth when playback resumes.
-            // Rhythm analysis continues — it uses a short window and
-            // the pause flag suppresses its transient output.
-            if (!this._paused) {
-                if (sampleCount > 0) {
-                    for (let i = 0; i < sampleCount; i++) {
-                        let sum = 0
-                        for (let channel = 0; channel < channelCount; channel++) {
-                            sum += input[channel][i] || 0
-                        }
-                        this._pushRhythmSample(sum / Math.max(1, channelCount))
+            // No per-sample gain ramp. The CQT ring buffers start
+            // zero-filled, so Goertzel output already rises naturally
+            // from 0 to full over the window duration (~9s for 16 Hz).
+            // A short ramp (<1s) is invisible to the lowest bins.
+            if (sampleCount > 0) {
+                for (let i = 0; i < sampleCount; i++) {
+                    let sum = 0
+                    for (let channel = 0; channel < channelCount; channel++) {
+                        sum += input[channel][i] || 0
                     }
+                    this._pushRhythmSample(sum / Math.max(1, channelCount))
                 }
-                this._pushSamples(input)
-                this._analyzeAndPost()
             }
+            this._pushSamples(input)
+            this._analyzeAndPost()
             const brainPayload = this._analyzeBrains(sampleCount)
             if (brainPayload) this.port.postMessage(brainPayload)
         }

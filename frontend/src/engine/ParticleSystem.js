@@ -485,6 +485,10 @@ export class ParticleSystem {
         // ── Curve fitting (Hungarian method) ──
         /** @type {boolean} Whether to optimally assign particles to curve positions */
         this._curveFittingEnabled = false
+
+        // ── Layer source (spectrum vs fundamentals) ──
+        /** @type {string} 'spectrum' spawns all CQT bins; 'fundamentals' only spawns detected pitch entities */
+        this._layerSource = 'spectrum'
     }
 
     _allocateBuffers(maxParticles) {
@@ -949,14 +953,7 @@ export class ParticleSystem {
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
      */
-    /**
-     * @param {object} ae - AudioEngine instance
-     * @param {object} params - Live param snapshot
-     * @param {number} canvasW - Renderer width
-     * @param {number} canvasH - Renderer height
-     * @param {string} [layerSource] - 'spectrum' (all CQT bins) or 'fundamentals' (entities only)
-     */
-    update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
+    update(ae, params, canvasW, canvasH) {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
 
@@ -1324,21 +1321,6 @@ export class ParticleSystem {
             : 0
         let lineWriteIndex = (persistMode === 1 && emitLines) ? Math.min(this._lineVisibleCount, activeParticleCapacity) : 0
         let wroteParticles = 0
-
-        // ── Fundamentals pre-guard: if this frame is fundamentals-only,
-        //     force-clear all spawn state BEFORE any loop runs. The
-        //     fundamentals block below uses ONLY shapeEntities.length
-        //     as its iteration count — never the CQT bucket loop.
-        if (layerSource === 'fundamentals') {
-            writeIndex = 0
-            lineWriteIndex = 0
-            this._visible_count = 0
-            this._lineVisibleCount = 0
-            if (persistMode === 1) {
-                this._insert_index = 0
-                this._paint_count = 0
-            }
-        }
 
         let pointDirtyMin = Number.POSITIVE_INFINITY
         let pointDirtyMax = Number.NEGATIVE_INFINITY
@@ -1831,7 +1813,6 @@ export class ParticleSystem {
         let dedupedLineCount = 0
 
         // ── Modifier mode: skip bucket loop, seed proxy particles once ──
-        let isFundamentalsFrame = false
         if (this._isModifier) {
             this._insert_index = 0
             this._paint_count = 0
@@ -1870,17 +1851,10 @@ export class ParticleSystem {
                 this._geo.setDrawRange(0, count)
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
-        } else if (layerSource === 'fundamentals') {
-            isFundamentalsFrame = true
-            // ── Fundamentals-only mode: spawn ONLY detected pitch entities ──
-            // writeIndex/lineWriteIndex etc already zeroed by pre-guard above.
-            // Only shapeEntities.length particles are created; the CQT bucket
-            // loop is never reached.
+        } else if (this._layerSource === 'fundamentals') {
+            // ── Fundamentals-only mode: spawn only detected pitch entities ──
+            // Skip the full CQT bucket loop entirely. Only 1-5 particles per frame.
             const shapeEntities = ae._shapeEntities || []
-            // Diagnostic: log entity count every 60 frames
-            if ((this._frameCounter % 60) === 0) {
-                console.log(`[Fund] entities=${shapeEntities.length} writing=${writeIndex} source=${layerSource} frame=${this._frameCounter}`)
-            }
             const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
             for (const entity of shapeEntities) {
@@ -1943,37 +1917,6 @@ export class ParticleSystem {
                 markPointDirty(writeIndex)
                 writeIndex++
                 wroteParticles++
-            }
-
-            // Explicitly set visible count — never let paint mode accumulation
-            // override this. Only fundamental entities are visible.
-            this._visible_count = Math.min(writeIndex, activeParticleCapacity)
-            this._lineVisibleCount = 0
-            this._lineGeo.setDrawRange(0, 0)
-
-            // ── Zero stale GPU buffer tails ──────────────────────────
-            // The _aPos.needsUpdate uploads the ENTIRE Float32Array to GPU.
-            // Indices beyond _visible_count still contain CQT bin positions
-            // from previous spectrum frames. Zero them out so that even if
-            // a WebGL edge case ignores setDrawRange, the ghost positions
-            // render at (0,0,0) — invisible or clustered at origin instead
-            // of displaying as stale spectrum particles.
-            const capacity = activeParticleCapacity
-            if (writeIndex < capacity) {
-                this._pos.fill(0, writeIndex * 3, capacity * 3)
-                this._sz.fill(0, writeIndex, capacity)
-                this._alpha.fill(0, writeIndex, capacity)
-                // Mark the zeroed tail as dirty so GPU gets the clean data
-                markPointDirty(writeIndex)
-                markPointDirty(capacity - 1)
-            }
-
-            if (persistMode === 1) {
-                this._insert_index = writeIndex % activeParticleCapacity
-                if (wroteParticles > 0) {
-                    this._paint_count = Math.min(activeParticleCapacity,
-                        this._paint_count + wroteParticles)
-                }
             }
             // Skip the bucket loop entirely — fundamentals-only mode
         } else {
@@ -2305,12 +2248,7 @@ export class ParticleSystem {
             }
         } // end else (generator bucket loop)
 
-        // ── Fundamentals skip: all state was already set inside the block ──
-        if (isFundamentalsFrame) {
-            // _visible_count and _lineVisibleCount already set; just apply draw
-            this._geo.setDrawRange(0, this._visible_count)
-            // lineGeo already set to (0,0) inside fundamentals block
-        } else if (persistMode === 1) {
+        if (persistMode === 1) {
             if (emitLightParticles || wroteParticles > 0) {
                 this._insert_index = writeIndex % activeParticleCapacity
                 this._visible_count = Math.min(activeParticleCapacity, this._visible_count + wroteParticles)
@@ -2435,6 +2373,15 @@ export class ParticleSystem {
      * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
      * @param {string} source
      */
+    setLayerSource(source) {
+        this._layerSource = (source === 'fundamentals') ? 'fundamentals' : 'spectrum'
+        if (source === 'fundamentals') {
+            // Reset modifier state when switching to fundamentals — the few
+            // entity-based particles need a clean slate each frame
+            this._modifierSeeded = false
+        }
+    }
+
     /**
      * Enable or disable curve fitting via Hungarian algorithm.
      * When enabled, particles are optimally assigned to positions along a

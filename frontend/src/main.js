@@ -80,8 +80,56 @@ renderer.autoClear = true
 const composer = new EffectComposer(renderer)
 
 const scene = new THREE.Scene()
-const bgImageLoader = new THREE.TextureLoader()
 let bgImageTexture = null
+let bgImageOriginal = null  // original HTMLImageElement for resize-regeneration
+
+/** Create a THREE.CanvasTexture from an image with "cover" crop behaviour
+ *  (like CSS object-fit: cover + overflow:hidden).  The output always
+ *  matches the viewport pixel dimensions so scene.background is never
+ *  stretched or skewed. */
+function createBgCoverTexture(img, vpW, vpH) {
+    if (!img || !img.width || !img.height) return null
+    const imgRatio = img.width / img.height
+    const vpRatio = vpW / vpH
+
+    const canvas = document.createElement('canvas')
+    canvas.width = vpW
+    canvas.height = vpH
+    const ctx = canvas.getContext('2d')
+
+    let drawW, drawH, offsetX = 0, offsetY = 0
+    if (imgRatio > vpRatio) {
+        // Image wider than viewport — fit by height, crop sides
+        drawH = vpH
+        drawW = vpH * imgRatio
+        offsetX = (vpW - drawW) / 2
+    } else {
+        // Image taller than viewport — fit by width, crop top/bottom
+        drawW = vpW
+        drawH = vpW / imgRatio
+        offsetY = (vpH - drawH) / 2
+    }
+
+    ctx.drawImage(img, offsetX, offsetY, drawW, drawH)
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    return texture
+}
+
+/** Regenerate the background cover texture from the original image using
+ *  the current renderer pixel dimensions.  Safe to call even when no
+ *  background image is set. */
+function updateBgCoverTexture() {
+    if (!bgImageOriginal) return
+    const w = renderer.domElement.width
+    const h = renderer.domElement.height
+    if (!w || !h) return
+    if (bgImageTexture) bgImageTexture.dispose()
+    bgImageTexture = createBgCoverTexture(bgImageOriginal, w, h)
+    scene.background = bgImageTexture
+}
 const ORIGIN_SIGN_SIZE = 250
 const originAxes = new THREE.AxesHelper(ORIGIN_SIGN_SIZE)
 let originSignEnabled = true
@@ -632,6 +680,8 @@ function resizeRenderer(w, h) {
     renderer.setSize(w, h, false)   // false → do NOT set canvas style size
     composer.setSize(w, h)
     bloomPass.setSize(w, h)
+    // Regenerate background cover texture so it matches new viewport size
+    updateBgCoverTexture()
 }
 
 // Initial size
@@ -1789,16 +1839,24 @@ window.addEventListener('seesound:set-background-image', (e) => {
     const file = e?.detail?.file
     if (!(file instanceof File)) return
     const url = URL.createObjectURL(file)
-    bgImageLoader.load(url, (texture) => {
-        bgImageTexture = texture
-        bgImageTexture.minFilter = THREE.LinearFilter
-        bgImageTexture.magFilter = THREE.LinearFilter
-        scene.background = bgImageTexture
-        URL.revokeObjectURL(url)  // free blob after texture is loaded
-    })
+    const img = new Image()
+    img.onload = () => {
+        bgImageOriginal = img  // keep original for window-resize regeneration
+        updateBgCoverTexture()
+        URL.revokeObjectURL(url)
+    }
+    img.onerror = () => {
+        URL.revokeObjectURL(url)
+        console.warn('[Background] failed to load image')
+    }
+    img.src = url
 })
 window.addEventListener('seesound:clear-background-image', () => {
-    bgImageTexture = null
+    bgImageOriginal = null
+    if (bgImageTexture) {
+        bgImageTexture.dispose()
+        bgImageTexture = null
+    }
     scene.background = null
 })
 

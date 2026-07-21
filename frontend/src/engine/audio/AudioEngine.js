@@ -468,8 +468,6 @@ export class AudioEngine {
         // Mark that a fade ramp just started so the next non-ramp frame
         // will sync prev buffers to current data before computing flux.
         this._fadeRampWasActive = true
-        // Unpause the worklet — resume pushing samples to CQT ring buffers
-        this._setWorkletPaused(false)
         // Suppress cold-start transient for several frames after fade-in
         this._coldStartSuppressFrames = 15
         // Suppress worklet transient while fade completes
@@ -490,29 +488,19 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 0
         }
-        // Zero transient accumulators so any pending flux values don't leak
-        // into the next playback. Prev buffers are intentionally NOT zeroed —
-        // they hold the last real audio data so that when fadeIn() restores
-        // audio, _fadeRampWasActive syncs prev→current on the first post-ramp
-        // frame (near-zero flux), then subsequent frames compute flux from
-        // the pre-pause baseline, not from zeros.
+        // Reset previous-frame buffers so the flux/transient computation
+        // starts from a clean slate when fadeIn() restores audio.
+        this._prevRhythmData.fill(0)
+        this._prevFrequencyDataBins.fill(0)
+        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
+        // Zero transient accumulators
         this._rhythmTransient = 0
         this._rhythmEnergy = 0
         this.globalTransient = 0
         this.spectralFluxAU = 0
         this.spectralFlux = 0
-        // Pause the worklet — freeze CQT ring buffers so Goertzel
-        // filters hold their last real audio data instead of filling
-        // with zeros. Prevents 0→audio step function on resume.
-        this._setWorkletPaused(true)
         // Suppress worklet transient for a few frames while reconnecting
         this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
-    }
-
-    _setWorkletPaused(paused) {
-        if (this.binAnalysisNode) {
-            this.binAnalysisNode.port.postMessage({ type: 'pause', paused })
-        }
     }
 
     update() {

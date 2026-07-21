@@ -74,6 +74,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._rhythmWindowFill = 0
         this._rhythmHopCounter = 0
         this._rhythmEnergyAvg = 0
+        this._lastTransientFrame = 0
 
         this._fluxHistory = new Float32Array(0)
         this._fluxHistorySums = new Float32Array(0)
@@ -81,13 +82,12 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._fluxHistoryFill = new Uint8Array(0)
 
         this._framesUntilNextAnalysis = 0
-        // Suppress rhythm transient detection for the first 120 analysis
-        // windows (~2s at 60fps hop) while the CQT ring buffers fill.
-        // The lowest bin (16 Hz) has a ~9s Goertzel window at level 6; the
-        // ring buffer starts zero-filled so Goertzel output rises naturally
-        // from 0 to full over that entire window. No per-sample gain ramp
-        // is needed — the ring buffer IS the pre-roll.
-        this._startupSuppress = 120
+        this.rampGain = 0.0
+        // Short startup fade-in: apply 20 blocks (~58ms at 128-sample blocks @44.1kHz)
+        // to smooth the step function from 0→audio, preventing Goertzel filter ringing
+        // without introducing perceptible lag.
+        this._transientSuppressFrames = Math.ceil(0.05 * sampleRate / 128)
+        this._transientSuppressRemaining = 0
 
         // Internal math resolution is locked once at startup. UI changes to
         // `cqtDetailsPer10Octaves` will only affect the visual thinning layer
@@ -102,22 +102,10 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         // output is already valid.
         this.bootTimer = 2
 
-        // Pause flag: when set, skip pushing samples to ring buffers.
-        // This preserves the last real audio data during pause, preventing
-        // a 0→audio step function when playback resumes.
-        this._paused = false
-
         this._rebuildCqtPlan()
 
         this.port.onmessage = (event) => {
             const msg = event.data || {}
-            if (msg.type === 'pause') {
-                this._paused = !!msg.paused
-                if (this._paused) {
-                    this._startupSuppress = 60
-                }
-                return
-            }
             if (msg.type !== 'config') return
 
             const cfg = msg.config || {}
@@ -224,8 +212,7 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             }
             const baseline = Math.max(1e-6, this._rhythmEnergyAvg)
             globalTransient = Math.max(0, (rms - baseline) / baseline)
-            if (this._startupSuppress > 0) {
-                this._startupSuppress--
+            if (this._transientSuppressRemaining > 0) {
                 globalTransient = 0
             }
         }
@@ -688,24 +675,45 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             const channelCount = input.length
             const sampleCount = input[0]?.length || 0
 
-            // When paused, skip pushing samples to CQT ring buffers.
-            // The ring buffers retain their last non-silent data so
-            // Goertzel output is smooth when playback resumes.
-            // Rhythm analysis continues — it uses a short window and
-            // the pause flag suppresses its transient output.
-            if (!this._paused) {
-                if (sampleCount > 0) {
-                    for (let i = 0; i < sampleCount; i++) {
-                        let sum = 0
-                        for (let channel = 0; channel < channelCount; channel++) {
-                            sum += input[channel][i] || 0
-                        }
-                        this._pushRhythmSample(sum / Math.max(1, channelCount))
-                    }
+            // Startup fade-in: apply a short 20-block ramp (~58ms) to the
+            // incoming samples to prevent a step-function impulse from
+            // ringing through the Goertzel filters. The CQT's low-frequency
+            // kernels span thousands of samples; a hard 0→audio transition
+            // integrates as a wideband transient. A short fade-in smooths
+            // this without destroying filter convergence (never reset state).
+            if (this.rampGain < 1.0) {
+                const BLOCK_RAMP_STEP = 1.0 / 20
+                this.rampGain += BLOCK_RAMP_STEP
+                if (this.rampGain > 1.0) this.rampGain = 1.0
+                // While ramping, suppress transient detection — the
+                // fade-in itself looks like a flux event to the rhythm
+                // analyser. Once the ramp completes, the running energy
+                // average should stabilize within the suppression window.
+                if (this.rampGain >= 1.0) {
+                    this._transientSuppressRemaining = this._transientSuppressFrames
+                    this._rhythmEnergyAvg = 0
+                    this._lastTransientFrame = 0
                 }
-                this._pushSamples(input)
-                this._analyzeAndPost()
             }
+            const gain = this.rampGain
+            for (let channel = 0; channel < input.length; channel++) {
+                const channelData = input[channel]
+                if (!channelData) continue
+                for (let i = 0; i < channelData.length; i++) {
+                    channelData[i] *= gain
+                }
+            }
+            if (sampleCount > 0) {
+                for (let i = 0; i < sampleCount; i++) {
+                    let sum = 0
+                    for (let channel = 0; channel < channelCount; channel++) {
+                        sum += input[channel][i] || 0
+                    }
+                    this._pushRhythmSample(sum / Math.max(1, channelCount))
+                }
+            }
+            this._pushSamples(input)
+            this._analyzeAndPost()
             const brainPayload = this._analyzeBrains(sampleCount)
             if (brainPayload) this.port.postMessage(brainPayload)
         }
