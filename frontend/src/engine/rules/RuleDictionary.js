@@ -41,7 +41,6 @@ const _INPUT_RANGES = Object.freeze({
     globalTransient: [0, 10],
     objectAge: [0, Number.POSITIVE_INFINITY],
     streamId: [0, 1],
-    isFundamental: [0, 1],
     age: [0, Number.POSITIVE_INFINITY],
     time: [0, Number.POSITIVE_INFINITY],
     deltaTime: [0, 1],
@@ -134,7 +133,6 @@ const _INPUT_MODES = {
     globalTransient: ['particle', 'cloud', 'tracing', 'lines'],
     objectAge: ['cloud'],
     streamId: ['cloud'],
-    isFundamental: ['particle', 'cloud'],
     // Per-component analysis variables — available in all modes
     componentId: ['particle', 'cloud', 'tracing', 'lines'],
     componentCentroid: ['particle', 'cloud', 'tracing', 'lines'],

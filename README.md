@@ -236,8 +236,6 @@ All shapes are scaled by `cloudSize` (0-1).
 | `canvasHeight` | 0–∞ | Canvas height in units |
 | `canvasWidthPx` | 0–∞ | Canvas width in pixels |
 | `canvasHeightPx` | 0–∞ | Canvas height in pixels |
-| `isFundamental` | 0–1 | 1 if bin is a fundamental, 0 if harmonic |
-
 ### Time-Domain Variables (per-bin, particle mode)
 
 | Variable | Range | Description |

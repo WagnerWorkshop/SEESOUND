@@ -796,6 +796,65 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
 
         // Insert settings card at the top of the rules body (above the wrapper/rule cards)
         rulesBody.insertBefore(card, rulesBody.firstChild)
+
+        // Refresh condition/value selects with newly filtered variable IDs
+        refreshSelectOptionsInCards()
+    }
+
+    function refreshSelectOptionsInCards() {
+        const allowedIds = getAllowedRuleVariableIds()
+        const filterAllowed = (entries) => (allowedIds ? entries.filter((entry) => allowedIds.has(entry.id)) : entries)
+        const groups = [
+            { key: 'detail', label: getRuleText('detailVariables', 'Detail Variables') },
+            { key: 'overall', label: getRuleText('overallVariables', 'Overall Variables') },
+            { key: 'layer', label: getRuleText('layerVariables', 'Layer Variables') },
+        ]
+
+        for (const rowState of orderedRows) {
+            if (!rowState.card || rowState.card.style.display === 'none') continue
+            // Refresh condition input select
+            if (rowState.conditionRow) {
+                const condSentence = rowState.conditionRow.querySelector('.cp-rule-condition-sentence')
+                if (condSentence) {
+                    const selects = condSentence.querySelectorAll('select')
+                    for (const sel of selects) {
+                        if (sel.classList.contains('cp-rule-condition-operator')) continue
+                        if (sel.classList.contains('cp-rule-condition-value-input')) continue
+                        const currentValue = sel.value
+                        while (sel.children.length > 0) sel.removeChild(sel.children[0])
+                        sel.appendChild(el('option', '', { value: NONE_VAR, text: UI_TEXT.rules?.selectValue || '...' }))
+                        for (const group of groups) {
+                            const entries = filterAllowed(getRuleVariablesByGroupLocal(group.key))
+                            if (entries.length === 0) continue
+                            const optgroup = document.createElement('optgroup')
+                            optgroup.label = group.label
+                            for (const entry of entries) {
+                                optgroup.appendChild(el('option', '', { value: entry.id, text: entry.label }))
+                            }
+                            sel.appendChild(optgroup)
+                        }
+                        try { sel.value = currentValue } catch { }
+                    }
+                }
+            }
+            // Refresh value action select
+            if (rowState.valueActionSelect) {
+                const currentValue = rowState.valueActionSelect.value
+                while (rowState.valueActionSelect.children.length > 0) rowState.valueActionSelect.removeChild(rowState.valueActionSelect.children[0])
+                rowState.valueActionSelect.appendChild(el('option', '', { value: '', text: getRuleText('ruleAudioData', 'Audio data') }))
+                for (const group of groups) {
+                    const entries = filterAllowed(getRuleVariablesByGroupLocal(group.key))
+                    if (entries.length === 0) continue
+                    const optgroup = document.createElement('optgroup')
+                    optgroup.label = group.label
+                    for (const entry of entries) {
+                        optgroup.appendChild(el('option', '', { value: `var:${entry.id}`, text: entry.label }))
+                    }
+                    rowState.valueActionSelect.appendChild(optgroup)
+                }
+                try { rowState.valueActionSelect.value = currentValue } catch { }
+            }
+        }
     }
 
     function updateOwnerSectionVisibility() {

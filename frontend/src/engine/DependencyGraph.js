@@ -86,7 +86,6 @@ const MODE_GATED_VARS = new Map([
     ['shapeDominant', new Set(['particle', 'cloud', 'tracing', 'lines'])],
     ['shapeDominantValue', new Set(['particle', 'cloud', 'tracing', 'lines'])],
     // Shape activation variables — available in all modes
-    // isFundamental is legal in all modes (flagged at spawn/harmonic time)
     // globalTransient is available in all modes
     // ['globalTransient', new Set(['cloud'])],
     // Output variables gated by mode

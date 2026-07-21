@@ -499,7 +499,6 @@ export class ParticleSystem {
         const oldShape = this._shape
         const oldPan = this._pan
         const oldBinRms = this._binRms
-        const oldIsFund = this._isFundamental
         const oldLinePos = this._linePos
         const oldLineCol = this._lineCol
         const oldLineThick = this._lineThickness
@@ -528,8 +527,8 @@ export class ParticleSystem {
         this._shape = copy(oldShape, this._N)
         this._pan = copy(oldPan, this._N)
         this._binRms = copy(oldBinRms, this._N)
-        this._isFundamental = copy(oldIsFund, this._N)
-        this._particleAge = copy(oldIsFund, this._N) // reuse copy helper for age buffer
+        // Allocate age buffer separately (previously reused oldIsFund; now standalone)
+        this._particleAge = new Float32Array(this._N)
         this._linePos = copy(oldLinePos, this._N * 2 * 3)
         this._lineCol = copy(oldLineCol, this._N * 2 * 3)
         this._lineThickness = copy(oldLineThick, this._N)
@@ -621,7 +620,6 @@ export class ParticleSystem {
             shape: this._shape,
             pan: this._pan,
             binRms: this._binRms,
-            isFundamental: this._isFundamental
         }
         const { rehydrated, mode } = this._archive.rehydrateArchivedToActive(request, buffers, this._N)
 
@@ -799,7 +797,6 @@ export class ParticleSystem {
             if (touched >= maxTouches) break
             loopInputs.pan = Number.isFinite(this._pan[i]) ? this._pan[i] : 0
             loopInputs.binRMSEnergy = Number.isFinite(this._binRms[i]) ? this._binRms[i] : 0
-            loopInputs.isFundamental = Number.isFinite(this._isFundamental[i]) ? this._isFundamental[i] : 0
             const particle = {
                 x: this._pos[i * 3],
                 y: this._pos[i * 3 + 1],
@@ -817,7 +814,7 @@ export class ParticleSystem {
 
             // ── Aura → XYZ conversion ──
             // Aura outputs create offsets from the layer centroid (average of
-            // all fundamental isFundamental=1 particles). This ensures harmonics
+            // all particles). This ensures harmonics
             // distribute around the cloud centre, not around world origin (0,0,0).
             const cloudScale = Number.isFinite(particle.cloudSize) ? Math.max(0.01, particle.cloudSize) : 1
             const ec = this._layerCentroid || { x: 0, y: 0, z: 0 }
@@ -1382,7 +1379,7 @@ export class ParticleSystem {
             return maxInWindow > 1e-6
         }
 
-        const writeParticle = (bucket, alphaBoost = 1, isFundamentalFlag = 1) => {
+        const writeParticle = (bucket, alphaBoost = 1) => {
             if (activeParticleCapacity <= 0) return
             if (persistMode !== 1 && writeIndex >= activeParticleCapacity) return
 
@@ -1509,9 +1506,7 @@ export class ParticleSystem {
             this._shape[slotIndex] = shapeToValue(particle.shapeType)
             this._pan[slotIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
             this._binRms[slotIndex] = Number.isFinite(binRmsMetric) ? clamp01(binRmsMetric) : 0
-            // Set isFundamental based on harmonic object classification
-            // 1 = fundamental node, 0 = harmonic overtone
-            this._isFundamental[slotIndex] = isFundamentalFlag
+
             // Reset age for newly spawned particle
             this._particleAge[slotIndex] = 0
             markPointDirty(slotIndex)
@@ -1788,7 +1783,6 @@ export class ParticleSystem {
             'binAttackTime', 'binEnvelope', 'binEnvelopeState', 'binRMSEnergy',
             'pan',
             'bandFlatness', 'bandTransient', 'bandCentroid', 'bandFlux', 'bandInstability',
-            'isFundamental',
             // Per-component variables
             'componentId', 'componentCentroid', 'componentFlatness', 'componentFlux',
             'componentOnset', 'componentCount', 'componentBinEnergy',
@@ -1842,7 +1836,6 @@ export class ParticleSystem {
                     this._shape[i] = 1
                     this._pan[i] = 0
                     this._binRms[i] = 0
-                    this._isFundamental[i] = 1
                     this._particleAge[i] = 0
                     pointDirtyMin = Math.min(pointDirtyMin, i)
                     pointDirtyMax = Math.max(pointDirtyMax, i)
@@ -1912,7 +1905,6 @@ export class ParticleSystem {
                 this._shape[writeIndex] = (entityParticle.shapeType === 'circle') ? 1 : 0
                 this._pan[writeIndex] = entityInputs.pan ?? 0
                 this._binRms[writeIndex] = entityInputs.binRMSEnergy ?? 0
-                this._isFundamental[writeIndex] = 1
                 this._particleAge[writeIndex] = 0
                 markPointDirty(writeIndex)
                 writeIndex++
@@ -1996,7 +1988,6 @@ export class ParticleSystem {
                 this._shape[writeIndex] = (entityParticle.shapeType === 'circle') ? 1 : 0
                 this._pan[writeIndex] = entityInputs.pan ?? 0
                 this._binRms[writeIndex] = entityInputs.binRMSEnergy ?? 0
-                this._isFundamental[writeIndex] = 1
                 this._particleAge[writeIndex] = 0
                 markPointDirty(writeIndex)
                 writeIndex++
@@ -2197,7 +2188,7 @@ export class ParticleSystem {
                             compCount: compCount,
                             compBinEnergy,
                         }
-                        writeParticle(particleBucket, 1, isFund)
+                        writeParticle(particleBucket, 1)
                         writeLine(particleBucket)
                         if (persistMode !== 1 && writeIndex >= activeParticleCapacity) break
                     }
@@ -2235,11 +2226,11 @@ export class ParticleSystem {
                             compCount: compCount,
                             compBinEnergy,
                         }
-                        writeParticle(attachedBucket, 1, isFund)
+                        writeParticle(attachedBucket, 1)
                         writeLine(attachedBucket)
                     } else {
                         // No components — bare particle
-                        writeParticle(bucketBase, 1, isFund)
+                        writeParticle(bucketBase, 1)
                         writeLine(bucketBase)
                     }
                 }
@@ -2279,18 +2270,15 @@ export class ParticleSystem {
 
         const livingRulesActive = params.ruleEngineEnabled !== false && this._compiledRules.livingRuleCount > 0 && this._visible_count > 0
         if (livingRulesActive) {
-            // Compute layer centroid from all fundamental isFundamental=1 particles
-            let cx = 0, cy = 0, cz = 0, nFund = 0
+            // Compute layer centroid from all active particles
+            let cx = 0, cy = 0, cz = 0
             const n = Math.min(this._visible_count, this._pos.length / 3)
             for (let i = 0; i < n; i++) {
-                if (this._isFundamental[i] > 0.5) {
-                    cx += this._pos[i * 3]
-                    cy += this._pos[i * 3 + 1]
-                    cz += this._pos[i * 3 + 2]
-                    nFund++
-                }
+                cx += this._pos[i * 3]
+                cy += this._pos[i * 3 + 1]
+                cz += this._pos[i * 3 + 2]
             }
-            this._layerCentroid = nFund > 0 ? { x: cx / nFund, y: cy / nFund, z: cz / nFund } : null
+            this._layerCentroid = n > 0 ? { x: cx / n, y: cy / n, z: cz / n } : null
             this.applyLivingRulesToRange({ params, inputs: _frameRuleBase }, 0, this._visible_count)
         }
 
