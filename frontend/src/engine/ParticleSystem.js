@@ -1325,6 +1325,21 @@ export class ParticleSystem {
         let lineWriteIndex = (persistMode === 1 && emitLines) ? Math.min(this._lineVisibleCount, activeParticleCapacity) : 0
         let wroteParticles = 0
 
+        // ── Fundamentals pre-guard: if this frame is fundamentals-only,
+        //     force-clear all spawn state BEFORE any loop runs. The
+        //     fundamentals block below uses ONLY shapeEntities.length
+        //     as its iteration count — never the CQT bucket loop.
+        if (layerSource === 'fundamentals') {
+            writeIndex = 0
+            lineWriteIndex = 0
+            this._visible_count = 0
+            this._lineVisibleCount = 0
+            if (persistMode === 1) {
+                this._insert_index = 0
+                this._paint_count = 0
+            }
+        }
+
         let pointDirtyMin = Number.POSITIVE_INFINITY
         let pointDirtyMax = Number.NEGATIVE_INFINITY
         const markPointDirty = (index) => {
@@ -1858,17 +1873,9 @@ export class ParticleSystem {
         } else if (layerSource === 'fundamentals') {
             isFundamentalsFrame = true
             // ── Fundamentals-only mode: spawn ONLY detected pitch entities ──
-            // Clear ALL accumulation from previous frames. Only fundamental
-            // particles should exist. The bucket loop is completely skipped.
-            writeIndex = 0
-            lineWriteIndex = 0
-            this._visible_count = 0
-            this._lineVisibleCount = 0
-            if (persistMode === 1) {
-                this._insert_index = 0
-                this._paint_count = 0
-            }
-
+            // writeIndex/lineWriteIndex etc already zeroed by pre-guard above.
+            // Only shapeEntities.length particles are created; the CQT bucket
+            // loop is never reached.
             const shapeEntities = ae._shapeEntities || []
             const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
