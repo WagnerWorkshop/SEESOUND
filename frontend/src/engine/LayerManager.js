@@ -183,10 +183,8 @@ export class LayerManager {
                 if (pass === 'modifier' && !isModifier) continue
                 // Pass curve-fitting setting to the particle system
                 layer.ps.setCurveFitting(layer.data?.curveFitting === true)
-                // Bake layerSource into the params object so ParticleSystem reads it
-                // directly from the authoritative params store — no stateful setter needed.
-                params._layerSource = layer.data?.layerSource || 'spectrum'
-                layer.ps.update(ae, params, canvasW, canvasH)
+                // Pass layer source directly — no stateful property to go stale
+                layer.ps.update(ae, params, canvasW, canvasH, layer.data?.layerSource || 'spectrum')
                 if (layer.ps._compiledRules?.cameraRuleCount > 0) hasCamRules = true
             }
         }

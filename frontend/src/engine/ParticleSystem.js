@@ -949,7 +949,14 @@ export class ParticleSystem {
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
      */
-    update(ae, params, canvasW, canvasH) {
+    /**
+     * @param {object} ae - AudioEngine instance
+     * @param {object} params - Live param snapshot
+     * @param {number} canvasW - Renderer width
+     * @param {number} canvasH - Renderer height
+     * @param {string} [layerSource] - 'spectrum' (all CQT bins) or 'fundamentals' (entities only)
+     */
+    update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
         if (!ae.analyser) return   // AudioContext not yet initialised
         if (!(canvasW > 0) || !(canvasH > 0)) return
 
@@ -1847,9 +1854,16 @@ export class ParticleSystem {
                 this._geo.setDrawRange(0, count)
             }
             // Skip bucket loop — modifier layers don't spawn particles from audio
-        } else if (params._layerSource === 'fundamentals') {
+        } else if (layerSource === 'fundamentals') {
             // ── Fundamentals-only mode: spawn only detected pitch entities ──
-            // Skip the full CQT bucket loop entirely. Only 1-5 particles per frame.
+            // Reset accumulation to clear any paint-mode residue. Only
+            // fundamental particles should be visible.
+            if (persistMode === 1) {
+                writeIndex = 0
+                this._visible_count = 0
+                this._insert_index = 0
+                this._paint_count = 0
+            }
             const shapeEntities = ae._shapeEntities || []
             const entityShapeIds = ['shapeSine', 'shapeTriangle', 'shapeSawtooth', 'shapeSquare',
                 'shapeNoise', 'shapePinkNoise', 'shapeTransient', 'shapePad', 'shapeBuzzy', 'shapeBass']
@@ -2365,6 +2379,10 @@ export class ParticleSystem {
         this._lineMat.dispose()
     }
 
+    /**
+     * Set the layer source mode. 'spectrum' = all CQT bins, 'fundamentals' = only detect pitch entities.
+     * @param {string} source
+     */
     /**
      * Enable or disable curve fitting via Hungarian algorithm.
      * When enabled, particles are optimally assigned to positions along a
