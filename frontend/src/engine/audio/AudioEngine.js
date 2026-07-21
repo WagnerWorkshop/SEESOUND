@@ -488,10 +488,13 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 0
         }
-        // Don't zero prev buffers — preserve pre-pause audio data so
-        // the flux delta on resume is real music flux, not a transient
-        // spike from 0→signal. _fadeRampWasActive already ensures the
-        // first non-ramp frame syncs prev→current for near-zero flux.
+        // Reset previous-frame buffers so the flux/transient computation
+        // starts from a clean slate when fadeIn() restores audio.
+        // DON'T zero prev buffers — keep real audio data so the resume
+        // flux delta is natural music flux, not a silence→audio step.
+        // _fadeRampWasActive syncs prev→current on first non-ramp frame.
+        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
+        // Zero transient accumulators
         this._rhythmTransient = 0
         this._rhythmEnergy = 0
         this.globalTransient = 0

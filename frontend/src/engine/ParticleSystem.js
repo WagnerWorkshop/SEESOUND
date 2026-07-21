@@ -948,7 +948,6 @@ export class ParticleSystem {
      * @param {object}  params      Live param snapshot (from ParamStore)
      * @param {number}  canvasW     Renderer width in CSS pixels
      * @param {number}  canvasH     Renderer height in CSS pixels
-     * @param {string}  [layerSource='spectrum']  'spectrum' spawns all CQT bins; 'fundamentals' only detected pitch entities
      */
     update(ae, params, canvasW, canvasH, layerSource = 'spectrum') {
         if (!ae.analyser) return   // AudioContext not yet initialised
