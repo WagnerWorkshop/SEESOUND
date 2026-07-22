@@ -1691,11 +1691,25 @@ export class ParticleSystem {
         // Apply input gain (Sensitivity) to key amplitude-based rule inputs.
         // frameBinInputs goes FIRST so the explicit gain-scaled fields override it.
         const _applyGain = (v) => v * gainMult
+        // Global frame-level variables only — per-bin variables like
+        // binMagnitude, binFlux, etc. are NOT included here because they
+        // are per-bucket and get overridden inside writeParticle/writeLine.
+        // Including frame-average per-bin values would corrupt fundamentals
+        // mode where those overrides don't happen.
         const _frameRuleBase = {
-            ...frameBinInputs,
             amplitude: _applyGain(Number.isFinite(frameBinInputs.globalRmsEnergy) ? Number(frameBinInputs.globalRmsEnergy) : (ae.amplitude ?? 0)),
             globalRmsEnergy: _applyGain(frameBinInputs.globalRmsEnergy),
-            binRMSEnergy: _applyGain(frameBinInputs.binRMSEnergy),
+            globalTransient: frameBinInputs.globalTransient,
+            spectralCentroid: frameBinInputs.spectralCentroid,
+            spectralFlux: frameBinInputs.spectralFlux,
+            spectralFlatness: frameBinInputs.spectralFlatness,
+            spectralRolloff: frameBinInputs.spectralRolloff,
+            spectralSpread: frameBinInputs.spectralSpread,
+            spectralSkewness: frameBinInputs.spectralSkewness,
+            chromagram: frameBinInputs.chromagram,
+            inharmonicity: frameBinInputs.inharmonicity,
+            peakAmplitude: frameBinInputs.peakAmplitude,
+            zeroCrossingRate: frameBinInputs.zeroCrossingRate,
             bass: _applyGain(ae.bass ?? 0),
             mid: _applyGain(ae.mid ?? 0),
             high: _applyGain(ae.high ?? 0),

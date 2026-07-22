@@ -97,11 +97,13 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
         this._internalResolution = DEFAULT_CQT_DETAILS_PER_10_OCTAVES
         this._visualResolution = this._cfg.cqtDetailsPer10Octaves
 
-        // Boot muzzle: suppress the first 2 blocks (~5ms) to avoid sending
-        // data from a completely empty ring buffer. After that, Goertzel
-        // filters receive a smooth fade-in (not a step) so their initial
-        // output is already valid.
-        this.bootTimer = 2
+        // Boot muzzle: suppress the first ~80 blocks (~230ms at 128-sample
+        // blocks @ 44.1kHz) so the multi-rate cascaded decimator has time
+        // to fill all 7 levels of ring buffers before any CQT analysis runs.
+        // The deepest level (decimated to ~344 Hz) needs ~33 blocks to
+        // collect enough samples for valid low-frequency Goertzel output.
+        // A fade-in ramp smooths the transition, preventing filter ringing.
+        this.bootTimer = 80
 
         this._rebuildCqtPlan()
 
@@ -718,20 +720,15 @@ class BinAnalysisProcessor extends AudioWorkletProcessor {
             const channelCount = input.length
             const sampleCount = input[0]?.length || 0
 
-            // Startup fade-in: apply a short 20-block ramp (~58ms) to the
-            // incoming samples to prevent a step-function impulse from
-            // ringing through the Goertzel filters. The CQT's low-frequency
-            // kernels span thousands of samples; a hard 0→audio transition
-            // integrates as a wideband transient. A short fade-in smooths
-            // this without destroying filter convergence (never reset state).
+            // Startup fade-in: ramp 0→1 over 80 blocks so the Goertzel
+            // filters see a smooth transition from silence to audio.
+            // This prevents filter ringing from the step-function impulse.
+            // The ramp duration matches bootTimer, so the first analysis
+            // output happens at full gain with converged filters.
             if (this.rampGain < 1.0) {
-                const BLOCK_RAMP_STEP = 1.0 / 20
+                const BLOCK_RAMP_STEP = 1.0 / 80
                 this.rampGain += BLOCK_RAMP_STEP
                 if (this.rampGain > 1.0) this.rampGain = 1.0
-                // While ramping, suppress transient detection — the
-                // fade-in itself looks like a flux event to the rhythm
-                // analyser. Once the ramp completes, the running energy
-                // average should stabilize within the suppression window.
                 if (this.rampGain >= 1.0) {
                     this._transientSuppressRemaining = this._transientSuppressFrames
                     this._rhythmEnergyAvg = 0

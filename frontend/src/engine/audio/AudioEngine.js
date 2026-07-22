@@ -182,10 +182,10 @@ export class AudioEngine {
         this._fadeRampSeconds = 0.05
         /** Frames to ignore worklet transient messages after fade-in/out */
         this._workletTransientSuppress = 0
-        /** Tracks whether we just exited a fade ramp — next non-ramp frame syncs prev */
-        this._fadeRampWasActive = false
         /** Tracks cumulative suppressed transient from cold-start (cleared gradually) */
         this._coldStartSuppressFrames = 0
+        /** True after first playback — cold-start path is separate from pause/resume */
+        this._hasPlayedOnce = false
     }
 
     /** Number of frames to suppress worklet transient after fade events */
@@ -465,12 +465,15 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 1
         }
-        // Mark that a fade ramp just started so the next non-ramp frame
-        // will sync prev buffers to current data before computing flux.
-        this._fadeRampWasActive = true
-        // Suppress cold-start transient for several frames after fade-in
-        this._coldStartSuppressFrames = 15
-        // Suppress worklet transient while fade completes
+        // Don't reset state — prev buffers hold valid data from the last
+        // playback, so when audio resumes, the flux delta is near-zero
+        // (no silence→signal boundary). The fade-in ramp smooths the
+        // amplitude transition on the main-thread analyser anyway.
+        // Only suppress cold-start transient on the very first play.
+        if (!this._hasPlayedOnce) {
+            this._hasPlayedOnce = true
+            this._coldStartSuppressFrames = 15
+        }
         this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
 
@@ -488,18 +491,9 @@ export class AudioEngine {
         } catch {
             this._fadeGain.gain.value = 0
         }
-        // Reset previous-frame buffers so the flux/transient computation
-        // starts from a clean slate when fadeIn() restores audio.
-        this._prevRhythmData.fill(0)
-        this._prevFrequencyDataBins.fill(0)
-        if (this._rhythmBinPrevMag) this._rhythmBinPrevMag.fill(0)
-        // Zero transient accumulators
-        this._rhythmTransient = 0
-        this._rhythmEnergy = 0
-        this.globalTransient = 0
-        this.spectralFluxAU = 0
-        this.spectralFlux = 0
-        // Suppress worklet transient for a few frames while reconnecting
+        // Don't reset buffers on pause — keep them intact so playback
+        // resumes continuously where it left off.
+        // Only suppress worklet transient while the fade-out completes.
         this._workletTransientSuppress = AudioEngine.TRANSIENT_SUPPRESS_FRAMES
     }
 
@@ -529,29 +523,14 @@ export class AudioEngine {
 
             if (fadeRamping) {
                 // While fade gain is ramping, suppress transient computation.
-                // Keep prev buffers in sync (read data but don't let flux through)
-                // so when the ramp completes the flux delta is near-zero.
-                // The longer ramp duration gives the CQT worklet time to stabilize
-                // before any transient detection begins, preventing cold-start spikes.
+                // Sync prev buffers on every ramp frame so the transition to
+                // full gain produces a near-zero flux delta.
                 this._prevRhythmData.set(this._rhythmFrequencyData)
                 this._rhythmTransient = 0
                 this._rhythmEnergy = 0
                 this.globalTransient = 0
-                // Skip per-bin rhythm brain arrays during ramp
                 this._rhythmBrainActive = false
-                this._fadeRampWasActive = true
             } else {
-                // ── Transition: first non-ramp frame after a ramp period ──
-                // Sync prev to current so the flux delta is zero. This prevents
-                // the silence→signal boundary from registering as a transient.
-                // Same mechanism that fixes pause-play transients also handles
-                // cold-start, provided the fade ramp lasts long enough for CQT
-                // worklet buffers to fill with stable data.
-                if (this._fadeRampWasActive) {
-                    this._fadeRampWasActive = false
-                    this._prevRhythmData.set(this._rhythmFrequencyData)
-                    this._prevFrequencyDataBins.set(this.frequencyData)
-                }
 
                 // ── Cold-start transient suppression ──
                 // Force transient to zero for a few frames after fade-in completes
