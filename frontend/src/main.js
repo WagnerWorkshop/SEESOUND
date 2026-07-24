@@ -702,6 +702,7 @@ const ps = new LayerManager(scene, { maxParticlesPerLayer: params.maxParticles ?
 ps.rebuild({
     ruleLayers: params.ruleLayers ?? [],
     ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+    layerGradients: params.layerGradients ?? {},
 })
 const _initialCompileState = ps.getRuleCompileState()
 window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: _initialCompileState }))
@@ -1815,6 +1816,7 @@ subscribe((_, key) => {
         ps.rebuild({
             ruleLayers: params.ruleLayers ?? [],
             ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] },
+            layerGradients: params.layerGradients ?? {},
         })
         const state = ps.getRuleCompileState()
         window.dispatchEvent(new CustomEvent('seesound:rule-compile-state', { detail: state }))

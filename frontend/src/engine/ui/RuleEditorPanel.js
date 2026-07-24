@@ -12,6 +12,15 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         getRuleFunctionName, getRuleFunctionSlotLabel,
         getOutputDictionary,
     } = deps
+
+    // Lazy-load gradient editor to avoid circular dependency
+    let _gradientModule = null
+    const _getGradientModule = async () => {
+        if (!_gradientModule) {
+            _gradientModule = await import('../color/GradientEditor.js')
+        }
+        return _gradientModule
+    }
     const panel = el('div', 'cp-menu-pane-inner')
     const wrapper = el('div', 'cp-rules-wrapper')
 
@@ -385,6 +394,10 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             const actualIndex = isSpecial ? -1 : regularLayers.indexOf(entry)
             const layerId = entry.id
             const layerName = getLayerDisplayName(entry)
+            // Build the owner ref for this entry so expand/collapse handlers work
+            const ownerRef = isSpecial
+                ? { type: entry.layerShapeType === 'background' ? 'background' : 'camera' }
+                : { type: 'layer', id: entry.id }
 
             const row = el('div', 'cp-styles-layer-row')
             row.dataset.layerId = layerId
@@ -428,32 +441,29 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             })
             if (isSpecial) { moveUpBtn.style.display = 'none'; moveDownBtn.style.display = 'none' }
 
-            // Name — input for regular layers, plain readonly for special
-            const ownerType = isSpecial ? (entry.layerShapeType === 'background' ? 'background' : 'camera') : 'layer'
-            const ownerRef = isSpecial ? { type: ownerType } : { type: 'layer', id: entry.id }
-            const nameInput = el('input', 'cp-styles-layer-name-input', {
-                type: 'text',
-                value: layerName,
-                readonly: isSpecial ? 'readonly' : undefined,
+            // Name — fixed label for all layers, changeable via right-click rename
+            const nameLabel = el('span', 'cp-styles-layer-name-label', {
+                text: layerName,
             })
-            if (isSpecial) nameInput.classList.add('is-special')
+            if (isSpecial) nameLabel.classList.add('is-special')
+            // Right-click to rename regular layers
             if (!isSpecial) {
-                nameInput.addEventListener('blur', () => {
-                    const val = nameInput.value.trim()
-                    if (val && val !== entry.name) {
-                        setRuleLayers(getRuleLayers().map((l) =>
-                            l.id === entry.id ? { ...l, name: val } : l
-                        ))
-                    } else {
-                        nameInput.value = entry.name || ''
+                nameLabel.style.cursor = 'context-menu'
+                nameLabel.title = 'Right-click to rename'
+                nameLabel.addEventListener('contextmenu', (e) => {
+                    e.preventDefault()
+                    const newName = prompt('Rename layer:', entry.name || '')
+                    if (newName !== null) {
+                        const trimmed = newName.trim()
+                        if (trimmed && trimmed !== entry.name) {
+                            setRuleLayers(getRuleLayers().map((l) =>
+                                l.id === entry.id ? { ...l, name: trimmed } : l
+                            ))
+                            renderLayerList()
+                        }
                     }
                 })
-                nameInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') nameInput.blur()
-                    if (e.key === 'Escape') { nameInput.value = entry.name || ''; nameInput.blur() }
-                })
-                // Stop row click from interfering with input focus
-                nameInput.addEventListener('mousedown', (e) => e.stopPropagation())
+                // Label is transparent to clicks — clicking it acts like clicking the row
             }
 
             // Edit/expand button — toggles between edit and close icons
@@ -483,7 +493,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 }
             }
 
-            row.append(toggleCheck, moveUpBtn, moveDownBtn, nameInput, expandBtn, removeBtn, rulesBody)
+            row.append(toggleCheck, moveUpBtn, moveDownBtn, nameLabel, expandBtn, removeBtn, rulesBody)
             layerList.appendChild(row)
 
             // ── Row click → toggle expand/collapse ──
@@ -494,7 +504,7 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
                 if (target.closest('.cp-styles-move-btn')) return
                 if (target.closest('.cp-btn-danger')) return
                 if (target.closest('.cp-layer-expand-btn')) return
-                if (target.closest('.cp-styles-layer-name-input')) return
+
                 if (target.closest('.cp-layer-rules-body')) return
                 toggleOwnerExpanded(ownerRef)
             })
@@ -794,6 +804,58 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
         })
         curveFitRow.append(curveFitLabel, curveFitToggle)
         body.appendChild(curveFitRow)
+
+        // ── Gradient preview ──
+        const gradientRow = el('div', 'cp-layer-gradient-row')
+        const gradientLabel = el('span', 'cp-layer-settings-toggle-label', {
+            text: 'Gradient',
+            title: 'Click to edit the colour gradient for this layer.',
+        })
+        const gradientSwatch = el('canvas', 'cp-gradient-swatch')
+        gradientSwatch.width = 72
+        gradientSwatch.height = 22
+        gradientSwatch.title = 'Click to edit gradient'
+        gradientSwatch.style.cursor = 'pointer'
+
+        // Render current gradient onto swatch
+        const _renderGradientSwatch = () => {
+            const gradDef = params.layerGradients?.[layer.id] || { mode: 'basic', preset: null, stops: [{ position: 0, color: '#ff4444' }, { position: 1, color: '#4444ff' }] }
+            const stops = gradDef.preset ? null : gradDef.stops
+            // For presets we need the module, so lazy-render
+            _getGradientModule().then(({ getEffectiveStops }) => {
+                const effective = getEffectiveStops(gradDef)
+                const w = gradientSwatch.width
+                const ctx = gradientSwatch.getContext('2d')
+                const grd = ctx.createLinearGradient(0, 0, w, 0)
+                for (const s of effective) grd.addColorStop(s.position, s.color)
+                ctx.fillStyle = grd
+                ctx.fillRect(0, 0, w, gradientSwatch.height)
+            }).catch(() => {
+                // Fallback: simple 2-color gradient
+                const w = gradientSwatch.width
+                const ctx = gradientSwatch.getContext('2d')
+                const grd = ctx.createLinearGradient(0, 0, w, 0)
+                grd.addColorStop(0, '#ff4444')
+                grd.addColorStop(1, '#4444ff')
+                ctx.fillStyle = grd
+                ctx.fillRect(0, 0, w, gradientSwatch.height)
+            })
+        }
+        _renderGradientSwatch()
+
+        gradientSwatch.addEventListener('click', async () => {
+            const { openGradientEditor, getDefaultGradient } = await _getGradientModule()
+            const current = params.layerGradients?.[layer.id] || getDefaultGradient()
+            openGradientEditor(current, (newDef) => {
+                const gradients = { ...(params.layerGradients || {}) }
+                gradients[layer.id] = newDef
+                set('layerGradients', gradients)
+                _renderGradientSwatch()
+            })
+        })
+
+        gradientRow.append(gradientLabel, gradientSwatch)
+        body.appendChild(gradientRow)
 
         card.append(header, body)
 
@@ -2020,7 +2082,56 @@ export function buildRulesMenu(body, headerActions, syncRegistry, deps) {
             rowState.parameterHint = parameterHint
         }
 
-        card.append(header, outputRow, conditionRow, expressionRow)
+        card.append(header, outputRow)
+
+        // ── Gradient swatch inside Color rule card ──
+        if (definition.output === 'gradientU' && activeOwner.type === 'layer') {
+            const swatchRow = el('div', 'cp-rule-gradient-row')
+            const swatchCanvas = el('canvas', 'cp-gradient-swatch cp-gradient-swatch--rule')
+            swatchCanvas.width = 120
+            swatchCanvas.height = 18
+            swatchCanvas.title = 'Click to edit gradient'
+            swatchCanvas.style.cursor = 'pointer'
+
+            const _renderRuleSwatch = () => {
+                const gradDef = params.layerGradients?.[activeOwner.id] || { mode: 'basic', preset: null, stops: [{ position: 0, color: '#ff4444' }, { position: 1, color: '#4444ff' }] }
+                _getGradientModule().then(({ getEffectiveStops }) => {
+                    const effective = getEffectiveStops(gradDef)
+                    const w = swatchCanvas.width
+                    const ctx = swatchCanvas.getContext('2d')
+                    const grd = ctx.createLinearGradient(0, 0, w, 0)
+                    for (const s of effective) grd.addColorStop(s.position, s.color)
+                    ctx.fillStyle = grd
+                    ctx.fillRect(0, 0, w, swatchCanvas.height)
+                }).catch(() => {
+                    const w = swatchCanvas.width
+                    const ctx = swatchCanvas.getContext('2d')
+                    const grd = ctx.createLinearGradient(0, 0, w, 0)
+                    grd.addColorStop(0, '#ff4444')
+                    grd.addColorStop(1, '#4444ff')
+                    ctx.fillStyle = grd
+                    ctx.fillRect(0, 0, w, swatchCanvas.height)
+                })
+            }
+            _renderRuleSwatch()
+
+            swatchCanvas.addEventListener('click', async () => {
+                const { openGradientEditor, getDefaultGradient } = await _getGradientModule()
+                const current = params.layerGradients?.[activeOwner.id] || getDefaultGradient()
+                openGradientEditor(current, (newDef) => {
+                    const gradients = { ...(params.layerGradients || {}) }
+                    gradients[activeOwner.id] = newDef
+                    set('layerGradients', gradients)
+                    _renderRuleSwatch()
+                })
+            })
+
+            const swatchLabel = el('span', 'cp-rule-gradient-label', { text: 'Gradient' })
+            swatchRow.append(swatchLabel, swatchCanvas)
+            card.appendChild(swatchRow)
+        }
+
+        card.append(conditionRow, expressionRow)
         if (insertAfterCard?.parentNode === sectionBody) {
             insertAfterCard.after(card)
         } else {

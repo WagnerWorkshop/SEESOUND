@@ -224,16 +224,28 @@ function hsvToRgb(h, s, v) {
 const POINT_VERTEX_SHADER = `
 attribute float psize;
 attribute vec3 color;
+attribute float gradientU;
+attribute float sat;
+attribute float bri;
 attribute float valpha;
 attribute float shapeType;
 uniform float uViewportHeight;
+uniform float uUseGradient;
 varying vec3 vColor;
+varying float vGradientU;
+varying float vSat;
+varying float vBri;
+varying float vUseGradient;
 varying float vAlpha;
 varying float vShapeType;
 varying float vFogDepth;
 
 void main() {
     vColor = color;
+    vGradientU = gradientU;
+    vSat = sat;
+    vBri = bri;
+    vUseGradient = uUseGradient;
     vAlpha = valpha;
     vShapeType = shapeType;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -249,9 +261,14 @@ void main() {
 const POINT_FRAGMENT_SHADER = `
 precision mediump float;
 varying vec3 vColor;
+varying float vGradientU;
+varying float vSat;
+varying float vBri;
+varying float vUseGradient;
 varying float vAlpha;
 varying float vShapeType;
 varying float vFogDepth;
+uniform sampler2D uGradientTexture;
 uniform float uFogEnabled;
 uniform float uFogDensity;
 uniform vec3 uFogColor;
@@ -265,7 +282,21 @@ void main() {
 
     float alpha = clamp(vAlpha, 0.0, 1.0);
     if (alpha <= 0.001) discard;
-    vec3 color = vColor;
+
+    vec3 color;
+    if (vUseGradient > 0.5) {
+        // Sample gradient texture at the particle's gradientU position
+        color = texture2D(uGradientTexture, vec2(clamp(vGradientU, 0.0, 1.0), 0.5)).rgb;
+        // Apply saturation: lerp toward grayscale
+        float gray = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(gray), color, clamp(vSat, 0.0, 1.0));
+        // Multiply by brightness (vBri defaults to 1 when no rule overrides it;
+        // the CPU-side writeParticle sets it to binMagnitude only for the fallback _col path)
+        color *= clamp(vBri, 0.0, 2.0);
+    } else {
+        color = vColor;
+    }
+
     if (uFogEnabled > 0.5 && uFogDensity > 0.0) {
         float fogFactor = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
         fogFactor = clamp(fogFactor, 0.0, 1.0);
@@ -408,6 +439,16 @@ export class ParticleSystem {
         this._lineGeo = lineGeo
         this._allocateBuffers(this._N)
 
+        // ── Gradient texture (baked from user gradient definition) ──
+        /** @type {THREE.CanvasTexture|null} */
+        this._gradientTexture = null
+        /** @type {HTMLCanvasElement|null} Cached gradient bake canvas */
+        this._gradientCanvas = null
+        /** @type {Uint8ClampedArray|null} Cached gradient pixel data for fast CPU sampling */
+        this._gradientPixels = null
+        /** @type {string|null} Last gradient hash to avoid redundant bakes */
+        this._gradientHash = null
+
         const mat = new THREE.ShaderMaterial({
             vertexShader: POINT_VERTEX_SHADER,
             fragmentShader: POINT_FRAGMENT_SHADER,
@@ -416,6 +457,8 @@ export class ParticleSystem {
                 uFogEnabled: { value: 0 },
                 uFogDensity: { value: 0 },
                 uFogColor: { value: new THREE.Color(0, 0, 0) },
+                uGradientTexture: { value: null },
+                uUseGradient: { value: 0 },
             },
             transparent: true,
             depthWrite: true,
@@ -494,6 +537,9 @@ export class ParticleSystem {
     _allocateBuffers(maxParticles) {
         const oldPos = this._pos
         const oldCol = this._col
+        const oldGradU = this._gradU
+        const oldSat = this._sat
+        const oldBri = this._bri
         const oldSz = this._sz
         const oldAlpha = this._alpha
         const oldShape = this._shape
@@ -522,6 +568,9 @@ export class ParticleSystem {
         }
         this._pos = copy(oldPos, this._N * 3)
         this._col = copy(oldCol, this._N * 3)
+        this._gradU = copy(oldGradU, this._N)
+        this._sat = copy(oldSat, this._N)
+        this._bri = copy(oldBri, this._N)
         this._sz = copy(oldSz, this._N)
         this._alpha = copy(oldAlpha, this._N)
         this._shape = copy(oldShape, this._N)
@@ -536,17 +585,22 @@ export class ParticleSystem {
 
         this._aPos = new THREE.BufferAttribute(this._pos, 3)
         this._aCol = new THREE.BufferAttribute(this._col, 3)
+        this._aGradU = new THREE.BufferAttribute(this._gradU, 1)
+        this._aSat = new THREE.BufferAttribute(this._sat, 1)
+        this._aBri = new THREE.BufferAttribute(this._bri, 1)
         this._aSz = new THREE.BufferAttribute(this._sz, 1)
         this._aAlpha = new THREE.BufferAttribute(this._alpha, 1)
         this._aShape = new THREE.BufferAttribute(this._shape, 1)
         this._aLinePos = new THREE.BufferAttribute(this._linePos, 3)
         this._aLineCol = new THREE.BufferAttribute(this._lineCol, 3)
 
-        for (const a of [this._aPos, this._aCol, this._aSz, this._aAlpha, this._aShape, this._aLinePos, this._aLineCol]) a.setUsage(THREE.DynamicDrawUsage)
+        for (const a of [this._aPos, this._aCol, this._aGradU, this._aSat, this._aBri, this._aSz, this._aAlpha, this._aShape, this._aLinePos, this._aLineCol]) a.setUsage(THREE.DynamicDrawUsage)
 
         this._geo.setAttribute('position', this._aPos)
         this._geo.setAttribute('color', this._aCol)
-        this._geo.setAttribute('vcolor', this._aCol)
+        this._geo.setAttribute('gradientU', this._aGradU)
+        this._geo.setAttribute('sat', this._aSat)
+        this._geo.setAttribute('bri', this._aBri)
         this._geo.setAttribute('psize', this._aSz)
         this._geo.setAttribute('valpha', this._aAlpha)
         this._geo.setAttribute('shapeType', this._aShape)
@@ -681,13 +735,16 @@ export class ParticleSystem {
         if (this._archive) this._archive.clear()
         this._geo.setDrawRange(0, 0)
         this._lineGeo.setDrawRange(0, 0)
-        this._aPos.needsUpdate = true
-        this._aCol.needsUpdate = true
-        this._aSz.needsUpdate = true
-        this._aAlpha.needsUpdate = true
-        this._aShape.needsUpdate = true
-        this._aLinePos.needsUpdate = true
-        this._aLineCol.needsUpdate = true
+        if (this._aPos) this._aPos.needsUpdate = true
+        if (this._aCol) this._aCol.needsUpdate = true
+        if (this._aGradU) this._aGradU.needsUpdate = true
+        if (this._aSat) this._aSat.needsUpdate = true
+        if (this._aBri) this._aBri.needsUpdate = true
+        if (this._aSz) this._aSz.needsUpdate = true
+        if (this._aAlpha) this._aAlpha.needsUpdate = true
+        if (this._aShape) this._aShape.needsUpdate = true
+        if (this._aLinePos) this._aLinePos.needsUpdate = true
+        if (this._aLineCol) this._aLineCol.needsUpdate = true
     }
 
     scaleAllParticleSizes(ratio) {
@@ -802,13 +859,12 @@ export class ParticleSystem {
                 y: this._pos[i * 3 + 1],
                 z: this._pos[i * 3 + 2],
                 size: this._sz[i],
-                red: this._col[i * 3],
-                green: this._col[i * 3 + 1],
-                blue: this._col[i * 3 + 2],
+                gradientU: this._gradU[i],
+                saturation: this._sat[i],
+                brightness: this._bri[i],
                 opacity: this._alpha[i],
                 shapeType: this._shape[i] > 0.5 ? 'circle' : 'square',
             }
-            hydrateColorState(particle, particle.red, particle.green, particle.blue)
 
             this._compiledRules.applyLivingRules(loopCtx, particle)
 
@@ -857,16 +913,25 @@ export class ParticleSystem {
             this._pos[i * 3 + 1] = Number.isFinite(particle.y) ? particle.y : this._pos[i * 3 + 1]
             this._pos[i * 3 + 2] = Number.isFinite(particle.z) ? particle.z : this._pos[i * 3 + 2]
             this._sz[i] = Number.isFinite(particle.size) ? Math.max(0, particle.size) : this._sz[i]
-            // Blend HSB + RGB together (no gating). The blend function handles
-            // cases where only one system is active.
-            const blended = blendHsbRgb(particle.hue, particle.saturation, particle.brightness,
-                particle.red, particle.green, particle.blue)
-            let nextR = blended ? (Number.isFinite(blended.r) ? clamp01(blended.r) : this._col[i * 3]) : this._col[i * 3]
-            let nextG = blended ? (Number.isFinite(blended.g) ? clamp01(blended.g) : this._col[i * 3 + 1]) : this._col[i * 3 + 1]
-            let nextB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : this._col[i * 3 + 2]) : this._col[i * 3 + 2]
-            this._col[i * 3] = nextR
-            this._col[i * 3 + 1] = nextG
-            this._col[i * 3 + 2] = nextB
+            // Colour via gradient: sample gradientU → apply sat/bri → store to GPU buffers
+            const liveGradU = Number.isFinite(particle.gradientU) ? clamp01(particle.gradientU) : this._gradU[i]
+            const liveSat = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : this._sat[i]
+            const liveBri = Number.isFinite(particle.brightness) ? Math.max(0, particle.brightness) : this._bri[i]
+            this._gradU[i] = liveGradU
+            this._sat[i] = liveSat
+            this._bri[i] = liveBri
+            // Compute CPU-side colour for backward compat
+            const liveCol = this._sampleGradient(liveGradU)
+            let nextR = liveCol.r * liveBri
+            let nextG = liveCol.g * liveBri
+            let nextB = liveCol.b * liveBri
+            const liveGray = 0.299 * nextR + 0.587 * nextG + 0.114 * nextB
+            nextR = liveGray + (nextR - liveGray) * liveSat
+            nextG = liveGray + (nextG - liveGray) * liveSat
+            nextB = liveGray + (nextB - liveGray) * liveSat
+            this._col[i * 3] = clamp01(nextR)
+            this._col[i * 3 + 1] = clamp01(nextG)
+            this._col[i * 3 + 2] = clamp01(nextB)
             this._alpha[i] = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : this._alpha[i]
             this._shape[i] = shapeToValue(particle.shapeType)
             // Increment particle age
@@ -887,31 +952,26 @@ export class ParticleSystem {
 
     applyBackgroundRules(ctx) {
         const bg = this._background
-        const hsv = rgbToHsv(bg.r, bg.g, bg.b)
         const state = {
-            red: bg.r,
-            green: bg.g,
-            blue: bg.b,
-            hue: hsv.h,
-            saturation: hsv.s,
-            brightness: hsv.v,
+            gradientU: 0.5,
+            saturation: 1.0,
+            brightness: 1.0,
         }
         this._compiledRules.applyBackgroundRules(ctx, state)
 
-        let outR = Number.isFinite(state.red) ? clamp01(state.red) : bg.r
-        let outG = Number.isFinite(state.green) ? clamp01(state.green) : bg.g
-        let outB = Number.isFinite(state.blue) ? clamp01(state.blue) : bg.b
-        if (this._compiledRules.usesBackgroundHsb) {
-            // Use the same blendHsbRgb pipeline (lstar brightness, 50-50 hue blend)
-            const blended = blendHsbRgb(state.hue, state.saturation, state.brightness,
-                state.red, state.green, state.blue)
-            if (blended) {
-                outR = blended.r
-                outG = blended.g
-                outB = blended.b
-            }
-        }
-        bg.setRGB(outR, outG, outB)
+        // Sample gradient on CPU for background colour
+        const gradU = Number.isFinite(state.gradientU) ? clamp01(state.gradientU) : 0.5
+        const sat = Number.isFinite(state.saturation) ? clamp01(state.saturation) : 1.0
+        const bri = Number.isFinite(state.brightness) ? Math.max(0, state.brightness) : 1.0
+        const gradCol = this._sampleGradient(gradU)
+        let outR = gradCol.r * bri
+        let outG = gradCol.g * bri
+        let outB = gradCol.b * bri
+        const gray = 0.299 * outR + 0.587 * outG + 0.114 * outB
+        outR = gray + (outR - gray) * sat
+        outG = gray + (outG - gray) * sat
+        outB = gray + (outB - gray) * sat
+        bg.setRGB(clamp01(outR), clamp01(outG), clamp01(outB))
     }
 
     applyLineRules(ctx, lineState) {
@@ -1420,14 +1480,13 @@ export class ParticleSystem {
                 y,
                 z,
                 size: Math.max(1.0, 0.5 + energy * 1.5),
-                red: brightness,
-                green: brightness,
-                blue: brightness,
-                opacity: Math.min(1, (0.08 + energy * 1.9) * alphaBoost),
+                gradientU: freqNorm,
+                saturation: undefined,
+                brightness: undefined,
+                opacity: undefined,
                 particleCount: 1,
                 shapeType: 'square',
             }
-            hydrateColorState(particle, particle.red, particle.green, particle.blue)
 
             if (emitLightParticles) {
                 this.applySpawnRulesToParticle({
@@ -1475,13 +1534,26 @@ export class ParticleSystem {
             const py = Number.isFinite(particle.y) ? particle.y : y
             const pz = Number.isFinite(particle.z) ? particle.z : z
             const outSize = Number.isFinite(particle.size) ? Math.max(0, particle.size) : Math.max(1.0, 0.5 + energy * 1.5)
-            // Blend HSB + RGB — both work together, no gating
-            const blended = blendHsbRgb(particle.hue, particle.saturation, particle.brightness,
-                particle.red, particle.green, particle.blue)
-            let outR = blended ? (Number.isFinite(blended.r) ? clamp01(blended.r) : brightness) : brightness
-            let outG = blended ? (Number.isFinite(blended.g) ? clamp01(blended.g) : brightness) : brightness
-            let outB = blended ? (Number.isFinite(blended.b) ? clamp01(blended.b) : brightness) : brightness
-            const outAlpha = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + energy * 1.9) * alphaBoost)
+            // Colour via gradient: gradientU (0-1) maps to gradient texture, sat/bri post-process
+            const outGradU = Number.isFinite(particle.gradientU) ? clamp01(particle.gradientU) : freqNorm
+            const outSat = Number.isFinite(particle.saturation) ? clamp01(particle.saturation) : brightness
+            const outBri = Number.isFinite(particle.brightness) ? Math.max(0, particle.brightness) : brightness
+
+            // Compute CPU-side colour for backward compat (used when gradient not active)
+            const gradCol = this._sampleGradient(outGradU)
+            let outR = gradCol.r * outBri
+            let outG = gradCol.g * outBri
+            let outB = gradCol.b * outBri
+            // Apply saturation: lerp toward grayscale
+            const gray = 0.299 * outR + 0.587 * outG + 0.114 * outB
+            outR = gray + (outR - gray) * outSat
+            outG = gray + (outG - gray) * outSat
+            outB = gray + (outB - gray) * outSat
+            outR = clamp01(outR)
+            outG = clamp01(outG)
+            outB = clamp01(outB)
+
+            const outAlpha = Number.isFinite(particle.opacity) ? Math.max(0, Math.min(1, particle.opacity)) : Math.min(1, (0.08 + brightness * 1.9) * alphaBoost)
 
             // Dedup: skip if a particle with the same position AND component was already written this frame.
             // When rules use only global inputs (e.g. spectralCentroid for x/y/z), every
@@ -1502,6 +1574,9 @@ export class ParticleSystem {
             this._col[slotIndex * 3] = outR
             this._col[slotIndex * 3 + 1] = outG
             this._col[slotIndex * 3 + 2] = outB
+            this._gradU[slotIndex] = outGradU
+            this._sat[slotIndex] = outSat
+            this._bri[slotIndex] = outBri
             this._alpha[slotIndex] = outAlpha
             this._shape[slotIndex] = shapeToValue(particle.shapeType)
             this._pan[slotIndex] = Number.isFinite(binPan) ? Math.max(-1, Math.min(1, binPan)) : 0
@@ -1559,12 +1634,11 @@ export class ParticleSystem {
                 // Default to visible when line rules are active.
                 // lineCount remains available as an explicit spawn/probability override.
                 lineCount: 1,
-                red: brightness,
-                green: brightness,
-                blue: brightness,
-                opacity: Math.min(1, (0.08 + energy * 1.4) * alphaBoost),
+                gradientU: freqNorm,
+                saturation: undefined,
+                brightness: undefined,
+                opacity: undefined,
             }
-            hydrateColorState(line, line.red, line.green, line.blue)
 
             if (emitLines) {
                 this.applyLineRules({
@@ -1604,19 +1678,23 @@ export class ParticleSystem {
             if (spawnProb <= 0) return
             if (spawnProb < 1 && Math.random() > spawnProb) return
 
-            let nextR = Number.isFinite(line.red) ? clamp01(line.red) : brightness
-            let nextG = Number.isFinite(line.green) ? clamp01(line.green) : brightness
-            let nextB = Number.isFinite(line.blue) ? clamp01(line.blue) : brightness
-            if (this._compiledRules.usesLineHsb) {
-                const baseHsv = rgbToHsv(nextR, nextG, nextB)
-                const hhv = normalizeHue(line.hue)
-                const ss = Number.isFinite(line.saturation) ? clamp01(line.saturation) : baseHsv.s
-                const vv = Number.isFinite(line.brightness) ? clamp01(line.brightness) : baseHsv.v
-                const rgb = hsvToRgb(hhv ?? baseHsv.h, ss, vv)
-                nextR = rgb.r
-                nextG = rgb.g
-                nextB = rgb.b
-            }
+            let nextR, nextG, nextB
+            // Use gradient for line colour (CPU-side sampling from gradient texture)
+            const lineGradU = Number.isFinite(line.gradientU) ? clamp01(line.gradientU) : freqNorm
+            const lineSat = Number.isFinite(line.saturation) ? clamp01(line.saturation) : 1.0
+            const lineBri = Number.isFinite(line.brightness) ? Math.max(0, line.brightness) : 1.0
+            const gradCol = this._sampleGradient(lineGradU)
+            nextR = gradCol.r * lineBri
+            nextG = gradCol.g * lineBri
+            nextB = gradCol.b * lineBri
+            // Apply saturation: lerp toward grayscale
+            const lgray = 0.299 * nextR + 0.587 * nextG + 0.114 * nextB
+            nextR = lgray + (nextR - lgray) * lineSat
+            nextG = lgray + (nextG - lgray) * lineSat
+            nextB = lgray + (nextB - lgray) * lineSat
+            nextR = clamp01(nextR)
+            nextG = clamp01(nextG)
+            nextB = clamp01(nextB)
 
             const opacity = Number.isFinite(line.opacity) ? Math.max(0, Math.min(1, line.opacity)) : 0.4
             const outR = nextR * opacity
@@ -1735,7 +1813,7 @@ export class ParticleSystem {
         // Fundamental from PitchFirstClassifier (log-norm 0=40Hz, 1=16000Hz)
         _frameRuleBase.fundamentalNormHz = ae._detectedFundamentalHz > 0
             ? Math.min(1, (Math.log2(Math.max(40, ae._detectedFundamentalHz)) - Math.log2(40)) / (Math.log2(16000) - Math.log2(40)))
-            : (typeof _n === 'function' ? _n(ae.peakFreq ?? 0, 0, 22050) : 0)
+            : (typeof normalizeByRange === 'function' ? normalizeByRange(ae.peakFreq ?? 0, 0, 22050) : 0)
         // Shape activations from PitchFirstClassifier (global 10-shape vector)
         const gsa = ae.getGlobalShapeActivations?.()
         if (gsa) {
@@ -1909,6 +1987,17 @@ export class ParticleSystem {
                 const epx = Number.isFinite(entityParticle.x) ? entityParticle.x : 0
                 const epy = Number.isFinite(entityParticle.y) ? entityParticle.y : 0
                 const epz = Number.isFinite(entityParticle.z) ? entityParticle.z : 0
+                const eSize = Number.isFinite(entityParticle.size) ? Math.max(0, entityParticle.size) : 3
+                const blended = blendHsbRgb(entityParticle.hue, entityParticle.saturation, entityParticle.brightness,
+                    entityParticle.red, entityParticle.green, entityParticle.blue)
+                const eR = blended ? clamp01(blended.r) : 1
+                const eG = blended ? clamp01(blended.g) : 1
+                const eB = blended ? clamp01(blended.b) : 1
+                const eAlpha = Number.isFinite(entityParticle.opacity) ? Math.max(0, Math.min(1, entityParticle.opacity)) : 0.8
+
+                this._pos[writeIndex * 3] = epx
+                this._pos[writeIndex * 3 + 1] = epy
+                this._pos[writeIndex * 3 + 2] = epz
                 this._sz[writeIndex] = eSize * sizeMultiplier
                 this._col[writeIndex * 3] = eR
                 this._col[writeIndex * 3 + 1] = eG
@@ -2390,6 +2479,94 @@ export class ParticleSystem {
      */
     setCurveFitting(enabled) {
         this._curveFittingEnabled = !!enabled
+    }
+
+    /**
+     * Set the gradient definition for colour mapping.
+     * Bakes the gradient to a 1×256 CanvasTexture and sends it to the GPU.
+     * @param {object|null} gradientDef - gradient definition { mode, preset, stops }
+     */
+    setGradient(gradientDef) {
+        // Build a quick hash to avoid redundant bakes
+        const hash = gradientDef ? JSON.stringify(gradientDef) : 'null'
+        if (hash === this._gradientHash) return
+        this._gradientHash = hash
+
+        if (!gradientDef) {
+            this._mat.uniforms.uUseGradient.value = 0
+            this._mat.uniforms.uGradientTexture.value = null
+            if (this._gradientTexture) {
+                this._gradientTexture.dispose()
+                this._gradientTexture = null
+            }
+            this._gradientCanvas = null
+            this._gradientPixels = null
+            return
+        }
+
+        // Resolve effective stops via lazy import for presets
+        let stops = []
+        if (gradientDef.preset && typeof gradientDef.preset === 'string') {
+            import('./color/GradientEditor.js').then(({ PREDEFINED_GRADIENTS: PG }) => {
+                const presetStops = PG[gradientDef.preset]
+                if (presetStops) {
+                    gradientDef._resolvedStops = presetStops
+                    this.setGradient(gradientDef)
+                }
+            }).catch(() => {})
+            stops = Array.isArray(gradientDef.stops) && gradientDef.stops.length > 0
+                ? gradientDef.stops
+                : [{ position: 0, color: '#ff4444' }, { position: 1, color: '#4444ff' }]
+        } else {
+            stops = Array.isArray(gradientDef.stops) && gradientDef.stops.length > 0
+                ? gradientDef.stops
+                : [{ position: 0, color: '#ff4444' }, { position: 1, color: '#4444ff' }]
+        }
+
+        // Also check _resolvedStops
+        if (gradientDef._resolvedStops) stops = gradientDef._resolvedStops
+
+        // Bake to 1×256 canvas
+        const width = 256
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = 1
+        const ctx = canvas.getContext('2d')
+        const grd = ctx.createLinearGradient(0, 0, width, 0)
+        for (const s of stops) grd.addColorStop(s.position, s.color)
+        ctx.fillStyle = grd
+        ctx.fillRect(0, 0, width, 1)
+        this._gradientCanvas = canvas
+
+        // Cache pixel data as flat array for O(1) CPU sampling
+        const imgData = ctx.getImageData(0, 0, width, 1)
+        this._gradientPixels = imgData.data
+
+        // Create / update CanvasTexture
+        if (this._gradientTexture) this._gradientTexture.dispose()
+        this._gradientTexture = new THREE.CanvasTexture(canvas)
+        this._gradientTexture.minFilter = THREE.LinearFilter
+        this._gradientTexture.magFilter = THREE.LinearFilter
+        this._gradientTexture.needsUpdate = true
+
+        this._mat.uniforms.uGradientTexture.value = this._gradientTexture
+        this._mat.uniforms.uUseGradient.value = 1
+    }
+
+    /**
+     * Sample the gradient at a position (0–1) and return {r, g, b} 0–1.
+     * Uses cached pixel array for O(1) lookup — safe for per-particle calls.
+     * @param {number} u - gradient position 0–1
+     * @returns {{ r: number, g: number, b: number }}
+     */
+    _sampleGradient(u) {
+        const pixels = this._gradientPixels
+        if (!pixels || pixels.length === 0) return { r: 0.5, g: 0.5, b: 0.5 }
+        const width = (pixels.length / 4) | 0
+        if (width <= 0) return { r: 0.5, g: 0.5, b: 0.5 }
+        const x = Math.max(0, Math.min(width - 1, Math.round(u * (width - 1))))
+        const i = x * 4
+        return { r: pixels[i] / 255, g: pixels[i + 1] / 255, b: pixels[i + 2] / 255 }
     }
 
     /**

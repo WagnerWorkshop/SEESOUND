@@ -61,8 +61,9 @@ export class LayerManager {
      * @param {object} param0
      * @param {object[]} [param0.ruleLayers]
      * @param {object} [param0.ruleGlobalBlocks]
+     * @param {object} [param0.layerGradients]
      */
-    rebuild({ ruleLayers = [], ruleGlobalBlocks = { background: [], camera: [] } } = {}) {
+    rebuild({ ruleLayers = [], ruleGlobalBlocks = { background: [], camera: [] }, layerGradients = {} } = {}) {
         // Build a hash to detect changes quickly
         const hash = JSON.stringify({ layers: ruleLayers, globals: ruleGlobalBlocks })
         if (hash === this._lastLayerHash) return
@@ -112,6 +113,10 @@ export class LayerManager {
             // Update stored layer ref (rules may have changed on same layer)
             layer.data = layerObj
 
+            // Set gradient for this layer
+            const gradDef = layerGradients[layerObj.id] || null
+            layer.ps.setGradient(gradDef)
+
             newLayers.push(layer)
 
             if (!isDisabled && !primaryAssigned) {
@@ -142,13 +147,14 @@ export class LayerManager {
      * Compile background and camera rules from global blocks.
      */
     /**
-     * Compat alias — calls rebuild(). Accepts { ruleBlocks, ruleLayers, ruleGlobalBlocks }.
+     * Compat alias — calls rebuild(). Accepts { ruleBlocks, ruleLayers, ruleGlobalBlocks, layerGradients }.
      */
     onRulesChanged(rules) {
         if (rules && typeof rules === 'object') {
             this.rebuild({
                 ruleLayers: Array.isArray(rules.ruleLayers) ? rules.ruleLayers : [],
                 ruleGlobalBlocks: rules.ruleGlobalBlocks || { background: [], camera: [] },
+                layerGradients: rules.layerGradients || {},
             })
         }
         return this.getRuleCompileState()

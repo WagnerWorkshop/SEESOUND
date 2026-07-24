@@ -32,6 +32,7 @@ const DEFAULT_RULE_ENGINE_STATE = Object.freeze({
     ruleSchemaVersion: RULE_SCHEMA_VERSION,
     palettes: [],
     tuners: [],
+    layerGradients: {},
     ruleUiState: {
         collapsedGroups: [],
         collapsedSubgroups: [],
@@ -868,6 +869,7 @@ function _buildInitial() {
     out.ruleBlocks = saved.ruleBlocks
     out.ruleLayers = saved.ruleLayers ?? []
     out.ruleGlobalBlocks = saved.ruleGlobalBlocks ?? { background: [], camera: [] }
+    out.layerGradients = (saved.layerGradients && typeof saved.layerGradients === 'object') ? saved.layerGradients : {}
     out.ruleEngineEnabled = saved.ruleEngineEnabled
     out.ruleSchemaVersion = saved.ruleSchemaVersion
     out.palettes = _sanitizePalettes(saved.palettes)
@@ -997,7 +999,7 @@ function _notify(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function set(key, value) {
-    const ruleSchemaKeys = new Set(['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState'])
+    const ruleSchemaKeys = new Set(['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'layerGradients', 'ruleUiState'])
     if (ruleSchemaKeys.has(key)) {
         setMany({ [key]: value })
         return
@@ -1027,7 +1029,7 @@ export function setMany(updates) {
         changed[key] = nextValue
     }
 
-    const ruleSchemaKeys = ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'ruleUiState']
+    const ruleSchemaKeys = ['ruleBlocks', 'ruleLayers', 'ruleGlobalBlocks', 'ruleEngineEnabled', 'ruleSchemaVersion', 'palettes', 'layerGradients', 'ruleUiState']
     const includesRuleSchemaField = ruleSchemaKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))
     if (includesRuleSchemaField) {
         for (const key of ruleSchemaKeys) {
@@ -1052,7 +1054,7 @@ export function setMany(updates) {
         try {
             const snapshot = {}
             for (const key of Object.keys(params)) {
-                if (key === 'ruleEngineEnabled' || key === 'ruleLayers' || key === 'ruleGlobalBlocks' || key === 'ruleSchemaVersion' || key === 'palettes' || key === 'tuners' || key === 'ruleUiState' || key === 'ruleBlocks') {
+                if (key === 'ruleEngineEnabled' || key === 'ruleLayers' || key === 'ruleGlobalBlocks' || key === 'ruleSchemaVersion' || key === 'palettes' || key === 'tuners' || key === 'layerGradients' || key === 'ruleUiState' || key === 'ruleBlocks') {
                     snapshot[key] = params[key]
                 }
             }

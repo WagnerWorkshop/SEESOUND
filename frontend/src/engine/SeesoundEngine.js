@@ -505,8 +505,8 @@ export class SeesoundEngine {
         // Pass layer structure directly so LayerManager can separate per-layer.
         // compileRules in RuleCompiler handles both { ruleBlocks } and { ruleLayers } formats.
         const layerPayload = params.ruleEngineEnabled !== false
-            ? { ruleLayers: entities, ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] } }
-            : { ruleLayers: [], ruleGlobalBlocks: { background: [], camera: [] } }
+            ? { ruleLayers: entities, ruleGlobalBlocks: params.ruleGlobalBlocks ?? { background: [], camera: [] }, layerGradients: params.layerGradients ?? {} }
+            : { ruleLayers: [], ruleGlobalBlocks: { background: [], camera: [] }, layerGradients: {} }
         const cr = this._ps.onRulesChanged(layerPayload)
         if (cr) this._emit(EngineEvent.COMPILE_STATE, cr)
         this._emit(EngineEvent.GRAPH_UPDATED, { referencedInputs: [...graph.referencedInputs], mode: this._mode })

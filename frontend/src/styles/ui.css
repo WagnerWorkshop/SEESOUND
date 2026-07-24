@@ -2384,6 +2384,49 @@ input[type=number]::-webkit-inner-spin-button {
     color: var(--color-text-muted);
 }
 
+/* ── Gradient row in layer settings ── */
+.cp-layer-gradient-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-m);
+}
+
+.cp-gradient-swatch {
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-s);
+    flex-shrink: 0;
+}
+
+.cp-gradient-swatch:hover {
+    border-color: var(--color-accent);
+}
+
+/* ── Gradient swatch inside Color rule card ── */
+.cp-rule-gradient-row {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-s);
+    padding: var(--padding-xs) 0;
+}
+
+.cp-rule-gradient-label {
+    font-family: var(--font-ui);
+    font-size: var(--fs-aux);
+    color: var(--color-text-dim);
+    flex-shrink: 0;
+}
+
+.cp-gradient-swatch--rule {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-s);
+    flex-shrink: 0;
+}
+
+.cp-gradient-swatch--rule:hover {
+    border-color: var(--color-accent);
+}
+
 /* ── Layer row when expanded ── */
 .cp-styles-layer-row {
     flex-wrap: wrap;
@@ -2401,8 +2444,8 @@ input[type=number]::-webkit-inner-spin-button {
     padding-top: 0;
 }
 
-/* ── Inline name input ── */
-.cp-styles-layer-name-input {
+/* ── Layer name label (fixed, right-click to rename) ── */
+.cp-styles-layer-name-label {
     flex: 1;
     min-width: 0;
     background: transparent;
@@ -2413,14 +2456,11 @@ input[type=number]::-webkit-inner-spin-button {
     padding: 2px 4px;
     border-radius: var(--radius-s);
     outline: none;
+    cursor: pointer;
+    user-select: none;
 }
 
-.cp-styles-layer-name-input:focus {
-    background: var(--color-bg);
-    border: var(--border-soft);
-}
-
-.cp-styles-layer-name-input.is-special {
+.cp-styles-layer-name-label.is-special {
     pointer-events: none;
     opacity: 0.85;
 }
@@ -2700,7 +2740,7 @@ input[type=number]::-webkit-inner-spin-button {
     opacity: 0.5;
 }
 
-.cp-styles-layer-row.is-disabled .cp-styles-layer-name {
+.cp-styles-layer-row.is-disabled .cp-styles-layer-name-label {
     text-decoration: line-through;
     opacity: 0.6;
 }
